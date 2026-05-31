@@ -125,6 +125,7 @@ Set these values before running against a real VPS:
 | `group_vars/all/vars.yml` | `docker_apt_arch` | Docker apt repo architecture, mapped from `ansible_architecture` by default |
 | `group_vars/all/vars.yml` | `vps_hardening_apply_package_upgrade` | Opt-in package upgrade switch, default `false` |
 | `group_vars/all/vars.yml` | `fail2ban_ignore_ips` | IP/CIDR list excluded from fail2ban bans |
+| `group_vars/all/vars.yml` | `ssh_allow_tcp_forwarding` | SSH forwarding mode; default `yes` for OpenSSH 8.x compatibility |
 | `group_vars/all/vault_services.yml` | `vault_adguard_password_hash` | AdGuard admin bcrypt password hash |
 | `group_vars/all/vault_ssh.yml` | `vault_admin_ssh_pubkey` | SSH public key for `admin_user` |
 
@@ -144,6 +145,19 @@ installs required packages without running a full distribution upgrade; enable
 
 Do not add the WireGuard client subnet to `fail2ban_ignore_ips` unless you
 accept that compromised VPN clients can bypass SSH brute-force lockouts.
+
+`ssh_allow_tcp_forwarding` defaults to `yes` for compatibility with older
+OpenSSH releases such as Ubuntu 20.04's OpenSSH 8.2. `PermitOpen` still limits
+the bootstrap tunnels to the wg-easy and AdGuard localhost ports. On newer
+OpenSSH releases, set this value to `local` if you want the stricter mode.
+
+After the first successful run, update the local ignored `inventory/hosts.yml`
+to use the hardened SSH port and admin user for later runs:
+
+```yaml
+ansible_user: "<admin_user>"
+ansible_port: <ssh_port>
+```
 
 The user may change ports, domains, usernames, image tags, subnets, and fixed
 container IPs. If the Docker subnet or fixed IPs change, also use matching

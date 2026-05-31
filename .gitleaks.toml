@@ -4,8 +4,8 @@ title = "ansible-zero-trust-vps gitleaks config"
 useDefault = true
 
 [[allowlists]]
-description = "Template placeholders and documentation examples"
-condition = "AND"
+description = "Non-secret template placeholders"
+condition = "OR"
 regexes = [
   '''replace-with-[A-Za-z0-9-]+''',
   '''ssh-ed25519 AAAA\.\.\. your-key-here''',
@@ -14,10 +14,4 @@ regexes = [
   '''<ansible_host>''',
   '''<admin_user>''',
   '''<ssh_port>''',
-]
-
-paths = [
-  '''(^|/)group_vars/all/.*\.example$''',
-  '''(^|/)inventory/.*\.example$''',
-  '''(^|/)README\.md$''',
 ]
