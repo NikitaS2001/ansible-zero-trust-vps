@@ -13,9 +13,8 @@
   register: vps_orchestration_ufw_docker_install
   notify: reload ufw
   changed_when: >
-    'skipping' not in ((vps_orchestration_ufw_docker_install.stdout ~ vps_orchestration_ufw_docker_install.stderr) | lower) and
-    'already' not in ((vps_orchestration_ufw_docker_install.stdout ~ vps_orchestration_ufw_docker_install.stderr) | lower) and
-    'exist' not in ((vps_orchestration_ufw_docker_install.stdout ~ vps_orchestration_ufw_docker_install.stderr) | lower)
+    ((vps_orchestration_ufw_docker_install.stdout ~ vps_orchestration_ufw_docker_install.stderr)
+    is regex('(?m)(Rules updated|Rules installed|Reloading|Skipping adding existing rule)', ignorecase=True))
   tags: [ufw_docker]
 
 - name: "UFW-Docker | Install | Apply UFW-Docker rules immediately"
@@ -25,8 +24,12 @@
 - name: "UFW-Docker | Allow | wg-easy WireGuard UDP"
   command: "ufw-docker allow wg-easy {{ wg_container_port }}/udp"
   register: vps_orchestration_ufw_docker_allow_wg
+  notify: reload ufw
   changed_when: >
-    'skipping' not in ((vps_orchestration_ufw_docker_allow_wg.stdout ~ vps_orchestration_ufw_docker_allow_wg.stderr) | lower) and
-    'already' not in ((vps_orchestration_ufw_docker_allow_wg.stdout ~ vps_orchestration_ufw_docker_allow_wg.stderr) | lower) and
-    'exist' not in ((vps_orchestration_ufw_docker_allow_wg.stdout ~ vps_orchestration_ufw_docker_allow_wg.stderr) | lower)
+    ((vps_orchestration_ufw_docker_allow_wg.stdout ~ vps_orchestration_ufw_docker_allow_wg.stderr)
+    is regex('(?m)(^ufw route allow|^Rule added|^Rule updated|Remove outdated rule)', ignorecase=True))
+  tags: [ufw_docker]
+
+- name: "UFW-Docker | Allow | Apply container allow rules immediately"
+  meta: flush_handlers
   tags: [ufw_docker]

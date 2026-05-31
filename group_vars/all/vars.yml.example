@@ -48,6 +48,9 @@ fail2ban_ignore_ips:
 # Admin user created by Ansible
 admin_user: "sysadmin"
 ssh_service_name: "ssh"
+# Use "yes" for OpenSSH 8.x compatibility. On OpenSSH 9.x, "local" can be used
+# for stricter local-only forwarding.
+ssh_allow_tcp_forwarding: "yes"
 
 # Certificate fetch settings
 root_ca_path_on_host: "{{ project_root }}/volumes/caddy/data/caddy/pki/authorities/local/root.crt"
