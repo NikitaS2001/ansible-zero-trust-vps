@@ -1,0 +1,54 @@
+# Network
+ssh_port: 2222
+wg_port: 51820
+wg_container_port: 51820
+wg_vpn_subnet: "10.8.0.0/24"
+wg_server_ip: "10.8.0.1"
+wg_client_dns: "172.20.0.2"
+
+# Docker network
+docker_network_subnet: "172.20.0.0/24"
+adguard_container_ip: "172.20.0.2"
+caddy_container_ip: "172.20.0.3"
+wg_easy_container_ip: "172.20.0.4"
+
+# Internal domains
+wg_internal_domain: "wg.internal"
+adguard_internal_domain: "adguard.internal"
+
+# Bootstrap admin UI access through SSH local forwarding
+wg_easy_bootstrap_ui_port: 51821
+adguard_bootstrap_ui_port: 3000
+
+# Remote host paths
+project_root: "/opt/zero-trust-vpn"
+
+# Pinned upstream installer artifacts
+docker_apt_distribution: "{{ ansible_distribution | lower }}"
+docker_apt_release: "{{ ansible_distribution_release }}"
+docker_apt_arch_map:
+  x86_64: amd64
+  aarch64: arm64
+  armv7l: armhf
+docker_apt_arch: "{{ docker_apt_arch_map[ansible_architecture] | default(ansible_architecture) }}"
+docker_apt_gpg_url: "https://download.docker.com/linux/{{ docker_apt_distribution }}/gpg"
+docker_apt_repo_url: "https://download.docker.com/linux/{{ docker_apt_distribution }}"
+docker_apt_gpg_checksum: "sha256:1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+ufw_docker_commit: "020a8699f95592561f254d8d4ad1bb40d401dfc7"
+ufw_docker_checksum: "sha256:643e56b080567c567b4aa28650196849b2a2da5dd0473fd3e5216b0886035ab0"
+
+# Package upgrade policy
+vps_hardening_apply_package_upgrade: false
+vps_hardening_package_upgrade_mode: "safe"
+
+# Fail2Ban should not ignore the VPN subnet by default.
+fail2ban_ignore_ips:
+  - "127.0.0.1/8"
+
+# Admin user created by Ansible
+admin_user: "sysadmin"
+ssh_service_name: "ssh"
+
+# Certificate fetch settings
+root_ca_path_on_host: "{{ project_root }}/volumes/caddy/data/caddy/pki/authorities/local/root.crt"
+fetched_certs_dir: "fetched_certs"

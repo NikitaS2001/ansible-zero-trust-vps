@@ -1,0 +1,31 @@
+---
+extends: default
+
+ignore: |
+  .agents/
+  .git/
+  .sisyphus/
+  fetched_certs/
+  volumes/
+  group_vars/all/vars.yml
+  group_vars/all/vault_services.yml
+  group_vars/all/vault_ssh.yml
+  inventory/hosts.yml
+  roles/**/*.j2
+
+rules:
+  braces:
+    max-spaces-inside: 1
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  document-start:
+    present: true
+  line-length:
+    max: 140
+    level: warning
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']

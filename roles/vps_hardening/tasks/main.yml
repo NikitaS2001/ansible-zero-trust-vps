@@ -1,0 +1,21 @@
+---
+- name: "VPS Hardening | Main | Include preflight checks"
+  include_tasks: preflight.yml
+
+- name: "VPS Hardening | Main | Include package setup"
+  include_tasks: packages.yml
+
+- name: "VPS Hardening | Main | Include user setup"
+  include_tasks: user.yml
+
+- name: "VPS Hardening | Main | Include sysctl hardening"
+  include_tasks: sysctl.yml
+
+- name: "VPS Hardening | Main | Include UFW setup [C1]"
+  include_tasks: ufw.yml
+
+- name: "VPS Hardening | Main | Include SSH hardening [C1]"
+  include_tasks: ssh.yml
+
+- name: "VPS Hardening | Main | Include Fail2Ban setup"
+  include_tasks: fail2ban.yml

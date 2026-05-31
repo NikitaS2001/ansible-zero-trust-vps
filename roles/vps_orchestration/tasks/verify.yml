@@ -1,0 +1,40 @@
+---
+- name: "Verify | CA | Wait for Caddy Root CA generation"
+  wait_for:
+    path: "{{ root_ca_path_on_host }}"
+    timeout: 90
+  tags: [verify]
+
+- name: "Verify | CA | Fetch Root CA certificate"
+  fetch:
+    src: "{{ root_ca_path_on_host }}"
+    dest: "{{ fetched_certs_dir }}/{{ inventory_hostname }}/root.crt"
+    flat: yes
+  tags: [verify]
+
+- name: "Verify | SSH | Confirm SSH still accessible"
+  wait_for:
+    host: "{{ ansible_host }}"
+    port: "{{ ssh_port }}"
+    timeout: 30
+  delegate_to: localhost
+  tags: [verify]
+
+- name: "Verify | Security | Confirm 443 is closed externally"
+  wait_for:
+    host: "{{ ansible_host }}"
+    port: 443
+    state: stopped
+    timeout: 5
+  delegate_to: localhost
+  tags: [verify]
+
+- name: "Verify | Summary | Print completion message"
+  debug:
+    msg:
+      - "✅ Zero-Trust VPN deployment complete!"
+      - "📄 Root CA: {{ fetched_certs_dir }}/{{ inventory_hostname }}/root.crt"
+      - "🔗 WireGuard panel: https://{{ wg_internal_domain }}"
+      - "🔗 AdGuard panel: https://{{ adguard_internal_domain }}"
+      - "📖 Import the Root CA into your browser/OS to trust .internal certificates"
+  tags: [verify]

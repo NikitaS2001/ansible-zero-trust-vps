@@ -1,0 +1,44 @@
+---
+- name: "VPS Hardening | Preflight | Check TUN device"
+  stat:
+    path: /dev/net/tun
+  register: vps_hardening_tun_device
+  tags: [preflight]
+
+- name: "VPS Hardening | Preflight | Verify WireGuard module"
+  command: modinfo wireguard
+  changed_when: false
+  failed_when: false
+  register: vps_hardening_wireguard_module
+  tags: [preflight]
+
+- name: "VPS Hardening | Preflight | Verify WireGuard netlink support"
+  command: ip link add dev wg-preflight type wireguard
+  changed_when: false
+  failed_when: false
+  register: vps_hardening_wireguard_netlink
+  tags: [preflight]
+
+- name: "VPS Hardening | Preflight | Remove temporary WireGuard interface"
+  command: ip link delete dev wg-preflight
+  changed_when: false
+  when: vps_hardening_wireguard_netlink.rc == 0
+  tags: [preflight]
+
+- name: "VPS Hardening | Preflight | Fail when TUN is missing"
+  fail:
+    msg: >-
+      /dev/net/tun is not available. WireGuard requires TUN support; enable TUN in the VPS control panel
+      or use a kernel/VPS type that exposes TUN.
+  when: not vps_hardening_tun_device.stat.exists
+  tags: [preflight]
+
+- name: "VPS Hardening | Preflight | Fail when WireGuard module is missing"
+  fail:
+    msg: >-
+      WireGuard support is unavailable. modinfo wireguard failed and creating a temporary WireGuard
+      interface with ip link also failed. Install or enable WireGuard support, or use a VPS image/kernel
+      with WireGuard built in.
+  when: vps_hardening_wireguard_module.rc != 0
+    and vps_hardening_wireguard_netlink.rc != 0
+  tags: [preflight]

@@ -1,0 +1,52 @@
+---
+- name: "SSH | Config | Apply and verify hardened sshd_config"
+  block:
+    - name: "SSH | Config | Apply hardened sshd_config"
+      template:
+        src: sshd_config.j2
+        dest: /etc/ssh/sshd_config
+        validate: '/usr/sbin/sshd -t -f %s'
+        backup: yes
+        mode: '0644'
+      register: vps_hardening_sshd_config
+      notify: restart sshd
+      tags: [ssh]
+
+    - name: "SSH | Flush | Force handler execution now"
+      meta: flush_handlers
+      tags: [ssh]
+
+    - name: "SSH | Verify | Wait for sshd on new port"
+      wait_for:
+        port: "{{ ssh_port }}"
+        host: "{{ ansible_host }}"
+        timeout: 30
+      delegate_to: localhost
+      tags: [ssh]
+  rescue:
+    - name: "SSH | Rescue | Restore previous sshd_config"
+      copy:
+        src: "{{ vps_hardening_sshd_config.backup_file }}"
+        dest: /etc/ssh/sshd_config
+        remote_src: true
+        mode: '0644'
+      when: vps_hardening_sshd_config.backup_file is defined
+      notify: restart sshd
+      tags: [ssh]
+
+    - name: "SSH | Rescue | Restart sshd after rollback"
+      meta: flush_handlers
+      tags: [ssh]
+
+    - name: "SSH | Rescue | Fail after restoring previous sshd_config"
+      fail:
+        msg: >-
+          Hardened SSH config was applied but the new SSH port was unreachable.
+          The previous sshd_config was restored when a backup was available.
+      tags: [ssh]
+
+- name: "SSH | Update | Set ansible connection for remainder"  # noqa: var-naming[no-role-prefix]
+  set_fact:
+    ansible_port: "{{ ssh_port }}"
+    ansible_user: "{{ admin_user }}"
+  tags: [ssh]

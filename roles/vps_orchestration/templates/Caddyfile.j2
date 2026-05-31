@@ -1,0 +1,14 @@
+# Drop requests without a valid .internal SNI.
+:443 {
+    abort
+}
+
+{{ wg_internal_domain }} {
+    tls internal
+    reverse_proxy wg-easy:51821
+}
+
+{{ adguard_internal_domain }} {
+    tls internal
+    reverse_proxy adguard:3000
+}

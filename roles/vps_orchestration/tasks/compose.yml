@@ -1,0 +1,23 @@
+---
+- name: "Compose | Deploy | Write docker-compose.yml"
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ project_root }}/docker-compose.yml"
+    backup: yes
+    mode: '0644'
+  tags: [compose]
+
+- name: "Compose | Deploy | Write Caddyfile"
+  template:
+    src: Caddyfile.j2
+    dest: "{{ project_root }}/Caddyfile"
+    backup: yes
+    mode: '0644'
+  tags: [compose]
+
+- name: "Compose | Run | Start Docker Compose stack"
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_root }}"
+    state: present
+    recreate: auto
+  tags: [compose]

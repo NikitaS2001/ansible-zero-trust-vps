@@ -1,0 +1,42 @@
+---
+name: security
+
+'on':
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  lint-and-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Ansible lint tooling
+        run: |
+          python3 -m pip install --user ansible-core ansible-lint yamllint
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Prepare example inventory for syntax checks
+        run: |
+          cp inventory/hosts.yml.example inventory/hosts.yml
+          cp group_vars/all/vars.yml.example group_vars/all/vars.yml
+          cp group_vars/all/vault_services.yml.example group_vars/all/vault_services.yml
+          cp group_vars/all/vault_ssh.yml.example group_vars/all/vault_ssh.yml
+
+      - name: Ansible syntax check
+        run: ansible-playbook --syntax-check site.yml
+
+      - name: Run ansible-lint
+        run: ansible-lint
+
+      - name: Run yamllint
+        run: yamllint .
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

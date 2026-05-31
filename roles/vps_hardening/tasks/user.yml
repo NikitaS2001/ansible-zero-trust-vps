@@ -1,0 +1,30 @@
+---
+- name: "VPS Hardening | User | Ensure docker group exists"
+  group:
+    name: docker
+    state: present
+  tags: [user]
+
+- name: "VPS Hardening | User | Create admin user"
+  user:
+    name: "{{ admin_user }}"
+    groups: sudo,docker
+    append: yes
+    state: present
+  tags: [user]
+
+- name: "VPS Hardening | User | Add SSH authorized key"
+  authorized_key:
+    user: "{{ admin_user }}"
+    key: "{{ vault_admin_ssh_pubkey }}"
+    state: present
+  no_log: true
+  tags: [user]
+
+- name: "VPS Hardening | User | Configure passwordless sudo"
+  copy:
+    dest: "/etc/sudoers.d/{{ admin_user }}"
+    content: "{{ admin_user }} ALL=(ALL) NOPASSWD: ALL\n"
+    validate: 'visudo -cf %s'
+    mode: '0440'
+  tags: [user]

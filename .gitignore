@@ -1,0 +1,13 @@
+*.log
+volumes/
+fetched_certs/
+.agents/
+.sisyphus/
+.vault_password
+group_vars/all/vars.yml
+group_vars/all/vault_services.yml
+group_vars/all/vault_ssh.yml
+inventory/hosts.yml
+*.retry
+__pycache__/
+*.pyc

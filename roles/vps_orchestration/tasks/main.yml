@@ -1,0 +1,18 @@
+---
+- name: "VPS Orchestration | Main | Include Docker setup"
+  include_tasks: docker.yml
+
+- name: "VPS Orchestration | Main | Include volume setup"
+  include_tasks: volumes.yml
+
+- name: "VPS Orchestration | Main | Include AdGuard config"
+  include_tasks: adguard_config.yml
+
+- name: "VPS Orchestration | Main | Include Compose deployment"
+  include_tasks: compose.yml
+
+- name: "VPS Orchestration | Main | Include UFW-Docker integration [C2]"
+  include_tasks: ufw_docker.yml
+
+- name: "VPS Orchestration | Main | Include verification"
+  include_tasks: verify.yml

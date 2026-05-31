@@ -1,0 +1,33 @@
+---
+# Critical order: open SSH before default deny and firewall enable.
+- name: "UFW | Allow | Custom SSH port before any deny policies"
+  ufw:
+    rule: allow
+    port: "{{ ssh_port }}"
+    proto: tcp
+  tags: [ufw]
+
+- name: "UFW | Allow | WireGuard UDP port"
+  ufw:
+    rule: allow
+    port: "{{ wg_port }}"
+    proto: udp
+  tags: [ufw]
+
+- name: "UFW | Policy | Default deny incoming"
+  ufw:
+    default: deny
+    direction: incoming
+  tags: [ufw]
+
+- name: "UFW | State | Enable firewall"
+  ufw:
+    state: enabled
+  when: ansible_virtualization_type not in ['lxc', 'openvz']
+  tags: [ufw]
+
+- name: "UFW | Debug | Skip enable on LXC/OpenVZ"
+  debug:
+    msg: "Skipping UFW enable on LXC/OpenVZ — UFW may not be supported in container."
+  when: ansible_virtualization_type in ['lxc', 'openvz']
+  tags: [ufw]
