@@ -1,0 +1,38 @@
+---
+- name: "VPS Hardening | Packages | Update apt cache"
+  apt:
+    update_cache: yes
+  tags: [packages]
+
+- name: "VPS Hardening | Packages | Apply package upgrades when enabled"
+  apt:
+    upgrade: "{{ vps_hardening_package_upgrade_mode }}"
+  when: vps_hardening_apply_package_upgrade | bool
+  tags: [packages]
+
+- name: "VPS Hardening | Packages | Install required packages"
+  apt:
+    name:
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - apt-listchanges
+      - curl
+      - wget
+      - gnupg2
+      - ca-certificates
+    state: present
+  tags: [packages]
+
+- name: "VPS Hardening | Packages | Configure unattended-upgrades (security only)"
+  copy:
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    content: |
+      Unattended-Upgrade::Allowed-Origins {
+          "${distro_id}:${distro_codename}-security";
+      };
+      Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+      Unattended-Upgrade::MinimalSteps "true";
+    backup: yes
+    mode: '0644'
+  tags: [packages]

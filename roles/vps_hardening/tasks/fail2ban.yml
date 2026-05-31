@@ -1,0 +1,9 @@
+---
+- name: "Fail2Ban | Config | Deploy jail.local"
+  template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    backup: yes
+    mode: '0644'
+  notify: restart fail2ban
+  tags: [fail2ban]

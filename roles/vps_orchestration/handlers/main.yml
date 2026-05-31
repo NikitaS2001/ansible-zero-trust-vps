@@ -1,0 +1,12 @@
+---
+- name: Restart docker
+  service:
+    name: docker
+    state: restarted
+  listen: restart docker
+
+- name: Restart ufw
+  service:
+    name: ufw
+    state: reloaded
+  listen: reload ufw

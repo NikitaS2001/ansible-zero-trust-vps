@@ -1,0 +1,9 @@
+---
+- name: "AdGuard | Config | Deploy AdGuardHome.yaml before containers start"
+  template:
+    src: AdGuardHome.yaml.j2
+    dest: "{{ project_root }}/volumes/adguard/conf/AdGuardHome.yaml"
+    backup: yes
+    mode: '0600'
+  no_log: true
+  tags: [adguard]

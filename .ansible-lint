@@ -1,0 +1,17 @@
+---
+profile: safety
+offline: true
+exclude_paths:
+  - .agents/
+  - .git/
+  - .sisyphus/
+  - fetched_certs/
+  - volumes/
+  - group_vars/all/vars.yml
+  - group_vars/all/vault_services.yml
+  - group_vars/all/vault_ssh.yml
+  - inventory/hosts.yml
+
+skip_list:
+  # These commands are explicit integration points without equivalent modules.
+  - command-instead-of-module
