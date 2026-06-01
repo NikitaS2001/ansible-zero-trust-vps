@@ -233,3 +233,14 @@ This is by design in local bootstrap mode. UFW rules are installed but the firew
 ```bash
 ufw enable
 ```
+
+**Security note — plaintext secrets**
+
+In bootstrap mode, secrets (SSH public key, password hashes) are stored in plaintext `group_vars/all/vars.yml`. This is a trade-off to avoid modifying existing roles. Future iteration should pass secrets via `ansible-playbook -e` flags instead:
+```bash
+ansible-playbook -i inventory/localhost.yml site.yml \
+  -e "vault_admin_ssh_pubkey=$SSH_PUBKEY" \
+  -e "vault_admin_password_hash=$ADMIN_HASH" \
+  -e "vault_adguard_password_hash=$ADGUARD_HASH"
+```
+This approach keeps secrets out of files on disk.
