@@ -412,3 +412,61 @@ Tasks [9/9 compliant] | Contamination [CLEAN] | Unaccounted [CLEAN] | VERDICT: P
 **PR URL**: https://github.com/NikitaS2001/ansible-zero-trust-vps/pull/1
 **Created**: 2026-06-01
 **Title**: feat(bootstrap): add interactive bootstrap.sh for local VPS deployment
+
+### 2026-06-01 - CI Failure Investigation
+
+**Status**: Two consecutive failures on `bootstrap` branch (run IDs `26751724075`, `26751213936`)
+
+**Root Cause**:
+```
+yaml[new-line-at-end-of-file]: No new line character at the end of file
+inventory/localhost.yml:8
+```
+
+**Evidence**:
+- `yamllint inventory/localhost.yml` → `8:36 error no new line character at the end of file (new-line-at-end-of-file)`
+- `ansible-lint site.yml` → `Failed: 1 failure(s), 0 warning(s)` — same newline violation
+- CI log (`gh run view 26751724075 --log-failed`) confirms `ansible-lint` exited with code 2 due to this single violation
+
+**Fix Applied**:
+- Added trailing newline to `inventory/localhost.yml`
+- Commit: `6ff817a` — `fix: add trailing newline to inventory/localhost.yml`
+- Pushed to `bootstrap` branch
+
+**Post-Fix Verification**:
+- `yamllint inventory/localhost.yml` → PASS (no output)
+- `ansible-lint site.yml` → PASS (`0 failure(s), 0 warning(s)`)
+
+**Lesson**: Always run `yamllint .` before pushing — a missing trailing newline is enough to fail CI.
+
+### 2026-06-01 - CI Failure Investigation (Wave 2)
+
+**Status**: Three consecutive failures on `bootstrap` branch (run IDs `26751869359`, `26751724075`, `26751213936`)
+
+**Root Cause**:
+```
+RequestError [HttpError]: Resource not accessible by integration
+```
+
+**Step**: `Run gitleaks` (gitleaks/gitleaks-action@v2)
+
+**Evidence**:
+- `gh run view 26751869359 --log-failed` confirms gitleaks-action fails with 403 when trying to fetch PR commits (`GET /repos/NikitaS2001/ansible-zero-trust-vps/pulls/1/commits`)
+- Error: `x-accepted-github-permissions: pull_requests=read` — the action needs `pull-requests: read` permission
+- Workflow `.github/workflows/security.yml` had no explicit `permissions:` block, so default token permissions were insufficient for PR-scanned gitleaks
+
+**Fix Applied**:
+- Added explicit `permissions:` block to `.github/workflows/security.yml`:
+  ```yaml
+  permissions:
+    contents: read
+    pull-requests: read
+  ```
+- Commit: TBD — pushed to `bootstrap` branch
+
+**Post-Fix Verification**:
+- `yamllint .` → PASS (no output)
+- `ansible-lint site.yml` → PASS (`0 failure(s), 0 warning(s)`)
+- `bash -n bootstrap.sh` → PASS (no output)
+
+**Lesson**: GitHub Actions workflows using `gitleaks-action@v2` on pull requests require explicit `pull-requests: read` permission. Default token permissions are not enough when the action needs to enumerate PR commits.
