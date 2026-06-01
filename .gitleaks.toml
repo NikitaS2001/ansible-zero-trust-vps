@@ -4,7 +4,7 @@ title = "ansible-zero-trust-vps gitleaks config"
 useDefault = true
 
 [allowlist]
-description = "Non-secret template placeholders"
+description = "Non-secret template placeholders and README network values"
 regexes = [
   '''replace-with-[A-Za-z0-9-]+''',
   '''ssh-ed25519 AAAA\.\.\. your-key-here''',
@@ -13,4 +13,10 @@ regexes = [
   '''<ansible_host>''',
   '''<admin_user>''',
   '''<ssh_port>''',
+  '''10\.8\.0\.(0/24|[0-9]+)''',
+  '''172\.20\.0\.(0/24|[0-9]+)''',
+  '''127\.0\.0\.1''',
+  '''51820''',
+  '''51821''',
+  '''2222''',
 ]
