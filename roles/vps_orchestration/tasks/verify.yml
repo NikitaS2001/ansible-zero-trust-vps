@@ -18,6 +18,7 @@
     port: "{{ ssh_port }}"
     timeout: 30
   delegate_to: localhost
+  when: ansible_connection != "local"
   tags: [verify]
 
 - name: "Verify | Security | Confirm 443 is closed externally"
@@ -27,6 +28,7 @@
     state: stopped
     timeout: 5
   delegate_to: localhost
+  when: ansible_connection != "local"
   tags: [verify]
 
 - name: "Verify | Summary | Print completion message"

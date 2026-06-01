@@ -23,7 +23,7 @@
 - name: "UFW | State | Enable firewall"
   ufw:
     state: enabled
-  when: ansible_virtualization_type not in ['lxc', 'openvz']
+  when: ansible_virtualization_type not in ['lxc', 'openvz'] and ansible_connection != "local"
   tags: [ufw]
 
 - name: "UFW | Debug | Skip enable on LXC/OpenVZ"
