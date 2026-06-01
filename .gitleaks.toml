@@ -3,9 +3,8 @@ title = "ansible-zero-trust-vps gitleaks config"
 [extend]
 useDefault = true
 
-[[allowlists]]
+[allowlist]
 description = "Non-secret template placeholders"
-condition = "OR"
 regexes = [
   '''replace-with-[A-Za-z0-9-]+''',
   '''ssh-ed25519 AAAA\.\.\. your-key-here''',
