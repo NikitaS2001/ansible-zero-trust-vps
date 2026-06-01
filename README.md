@@ -1,7 +1,7 @@
 # Ansible Zero-Trust VPS
 
 ![CI](https://github.com/NikitaS2001/ansible-zero-trust-vps/actions/workflows/security.yml/badge.svg)
-![License](https://img.shields.io/github/license/NikitaS2001/ansible-zero-trust-vps.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 Ansible playbooks for a self-hosted zero-trust VPS stack: WireGuard VPN,
 wg-easy web UI, AdGuard Home DNS, Caddy reverse proxy, UFW, and fail2ban.
@@ -40,6 +40,18 @@ flowchart LR
 | wg-easy | `ghcr.io/wg-easy/wg-easy:15` |
 | AdGuard Home | `adguard/adguardhome:v0.107.76` |
 | Caddy | `caddy:2.11.3` |
+
+## Stack Licenses
+
+| Component | License |
+|-----------|---------|
+| This playbook | [MIT](LICENSE) |
+| wg-easy | AGPL-3.0-only |
+| AdGuard Home | Proprietary |
+| Caddy | Apache-2.0 |
+
+> ⚠️ **wg-easy** is licensed under AGPL-3.0-only. If you modify or redistribute
+> the deployed stack, ensure compliance with the AGPL terms.
 
 ## Quick Start
 
