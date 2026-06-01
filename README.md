@@ -10,10 +10,14 @@ wg-easy web UI, AdGuard Home DNS, Caddy reverse proxy, UFW, and fail2ban.
 
 - [Architecture](#architecture)
 - [Stack Overview](#stack-overview)
-- [Quick Start](#quick-start)
+- [Deployment Modes](#deployment-modes)
+- [Local Bootstrap Mode](#local-bootstrap-mode)
+- [Remote Deployment Mode](#remote-deployment-mode)
+- [Deployment Modes Comparison](#deployment-modes-comparison)
 - [Configuration](#configuration)
 - [Security Model](#security-model)
 - [First Client Bootstrap](#first-client-bootstrap)
+- [Troubleshooting](#troubleshooting)
 
 ## Architecture
 
@@ -53,7 +57,43 @@ flowchart LR
 > ⚠️ **wg-easy** is licensed under AGPL-3.0-only. If you modify or redistribute
 > the deployed stack, ensure compliance with the AGPL terms.
 
-## Quick Start
+## Deployment Modes
+
+This project supports two deployment modes:
+
+| Mode | Purpose |
+|------|---------|
+| [Local Bootstrap Mode](#local-bootstrap-mode) | One-command setup on a fresh VPS via SSH |
+| [Remote Deployment Mode](#remote-deployment-mode) | Manage one or more VPS from your laptop |
+
+Choose the mode that matches your use case.
+
+## Local Bootstrap Mode
+
+SSH onto your VPS and run:
+
+```bash
+curl -O https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/main/bootstrap.sh
+chmod +x bootstrap.sh
+./bootstrap.sh
+```
+
+The script will interactively ask for:
+
+- **SSH port** (default: 2222)
+- **WireGuard port** (default: 51820)
+- **Admin username** (default: sysadmin)
+- **Admin password** (for console access)
+- **AdGuard admin password**
+- **Internal domains** (default: wg.internal adguard.internal)
+- **SSH public key** (paste your `id_ed25519.pub`)
+
+Then it installs Ansible and runs the playbook locally.
+
+> **UFW note**: Bootstrap mode skips UFW enable to prevent lockout. After
+> bootstrap, you can manually enable UFW with `ufw enable` if desired.
+
+## Remote Deployment Mode
 
 ```sh
 # 1. Copy and edit example files
@@ -73,6 +113,13 @@ ansible-galaxy collection install -r requirements.yml
 ansible-playbook --vault-password-file .vault_password --syntax-check site.yml
 ansible-playbook --vault-password-file .vault_password site.yml -u root
 ```
+
+## Deployment Modes Comparison
+
+| Mode | Use Case | Command | Requires |
+|------|----------|---------|----------|
+| Remote | Manage multiple VPS from laptop | `ansible-playbook -i inventory/hosts.yml site.yml` | Ansible on local machine |
+| Bootstrap | One-command setup on fresh VPS | `./bootstrap.sh` on VPS | SSH access to VPS only |
 
 ## Configuration
 
@@ -159,4 +206,30 @@ AdGuard is also reachable during bootstrap at `http://127.0.0.1:3000` via:
 
 ```sh
 ssh -p <ssh_port> -L 3000:127.0.0.1:3000 <admin_user>@<ansible_host>
+```
+
+## Troubleshooting
+
+### Bootstrap mode
+
+**"Already bootstrapped" error**
+
+The script detects a previous deployment via `inventory/localhost.yml` or `.bootstrapped`. To overwrite:
+```bash
+./bootstrap.sh --force
+```
+
+**"Ansible not found"**
+
+The bootstrap script installs Ansible automatically on Debian/Ubuntu. If installation fails, install manually:
+```bash
+apt-get update && apt-get install -y python3 python3-pip
+pip3 install ansible "community.docker>=4.0.0,<5.0.0"
+```
+
+**"UFW not enabled"**
+
+This is by design in local bootstrap mode. UFW rules are installed but the firewall is not enabled to prevent lockout. To enable UFW manually after bootstrap:
+```bash
+ufw enable
 ```
