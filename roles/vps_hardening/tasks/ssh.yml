@@ -22,6 +22,7 @@
         host: "{{ ansible_host }}"
         timeout: 30
       delegate_to: localhost
+      when: ansible_connection != "local"
       tags: [ssh]
   rescue:
     - name: "SSH | Rescue | Restore previous sshd_config"
@@ -49,4 +50,5 @@
   set_fact:
     ansible_port: "{{ ssh_port }}"
     ansible_user: "{{ admin_user }}"
+  when: ansible_connection != "local"
   tags: [ssh]
