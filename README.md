@@ -19,9 +19,9 @@ wg-easy web UI, AdGuard Home DNS, Caddy reverse proxy, UFW, and fail2ban.
 
 ```mermaid
 flowchart LR
-    Internet(("&#127760; Internet"))
-    Client["&#128268; VPN Client\n10.8.0.0/24"]
-    VPS["&#128421; VPS Public IP\n&#40;SSH + WireGuard UDP&#41;"]
+    Internet(("#127760; Internet"))
+    Client["#128268; VPN Client\n10.8.0.0/24"]
+    VPS["#128421; VPS Public IP\n#40;SSH + WireGuard UDP#41;"]
     subgraph Docker_Network["Docker Network 172.20.0.0/24"]
         WG["wg-easy :51821\n10.8.0.1 → 172.20.0.4"]
         AD["AdGuard Home :3000\n172.20.0.2"]
