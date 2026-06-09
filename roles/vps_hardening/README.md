@@ -89,6 +89,9 @@ ssh -p 2222 -L 3000:127.0.0.1:3000 sysadmin@<vps-ip>
 # Open http://127.0.0.1:3000 in your browser
 ```
 
+### Check Mode Support
+This role supports Ansible check mode (`--check`). Tasks are idempotent and safe to run in check mode.
+
 ## Dependencies
 
 None.
