@@ -1,4 +1,17 @@
 ---
+- name: "AdGuard | Config | Generate password hash"
+  shell: htpasswd -nbB admin "{{ adguard_password }}" | cut -d: -f2
+  register: adguard_password_hash
+  no_log: true
+  changed_when: false
+  when: adguard_password is defined
+
+- name: "AdGuard | Config | Set vault_adguard_password_hash from generated hash"
+  set_fact:
+    vault_adguard_password_hash: "{{ adguard_password_hash.stdout }}"
+  no_log: true
+  when: adguard_password is defined
+
 - name: "AdGuard | Config | Deploy AdGuardHome.yaml before containers start"
   template:
     src: AdGuardHome.yaml.j2

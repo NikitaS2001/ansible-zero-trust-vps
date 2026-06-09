@@ -5,10 +5,17 @@
     state: present
   tags: [user]
 
+- name: "VPS Hardening | User | Generate admin password hash"
+  shell: openssl passwd -6 "{{ admin_password }}"
+  register: admin_password_hash
+  no_log: true
+  changed_when: false
+  when: admin_password is defined
+
 - name: "VPS Hardening | User | Create admin user"
   user:
     name: "{{ admin_user }}"
-    groups: sudo,docker
+    groups: "{{ admin_group }},docker"
     append: yes
     state: present
     password: "{{ admin_password_hash | default(omit) }}"

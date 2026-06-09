@@ -184,19 +184,6 @@ if ! [[ "${SSH_PUBKEY}" =~ ^(ssh-|ecdsa-) ]]; then
 fi
 
 # =============================================================================
-# Generate password hashes
-# =============================================================================
-info "Generating password hashes..."
-
-# Admin password hash (SHA512 via openssl)
-ADMIN_PASSWORD_HASH="$(openssl passwd -6 "${ADMIN_PASSWORD}")" \
-    || error "Failed to generate admin password hash."
-
-# AdGuard password hash (bcrypt via htpasswd)
-ADGUARD_PASSWORD_HASH="$(htpasswd -nbB admin "${ADGUARD_PASSWORD}" | cut -d: -f2)" \
-    || error "Failed to generate AdGuard password hash."
-
-# =============================================================================
 # Generate inventory/localhost.yml
 # =============================================================================
 info "Generating ${INVENTORY_FILE}..."
@@ -288,8 +275,8 @@ fetched_certs_dir: "fetched_certs"
 
 # Plaintext vault-compatible vars (roles consume these directly)
 vault_admin_ssh_pubkey: "${SSH_PUBKEY}"
-vault_admin_password_hash: "${ADMIN_PASSWORD_HASH}"
-vault_adguard_password_hash: "${ADGUARD_PASSWORD_HASH}"
+admin_password: "${ADMIN_PASSWORD}"
+adguard_password: "${ADGUARD_PASSWORD}"
 EOF
 
 # =============================================================================

@@ -1,0 +1,26 @@
+---
+# Network
+ssh_port: 2222
+wg_port: 51820
+
+# Admin user
+admin_user: sysadmin
+admin_group: sudo
+admin_password_hash: ""
+vault_admin_ssh_pubkey: ""
+
+# SSH
+ssh_service_name: ssh
+ssh_allow_tcp_forwarding: "yes"
+
+# Bootstrap admin UI access through SSH local forwarding
+wg_easy_bootstrap_ui_port: 51821
+adguard_bootstrap_ui_port: 3000
+
+# Fail2Ban
+fail2ban_ignore_ips:
+  - "127.0.0.1/8"
+
+# Package upgrade policy
+vps_hardening_apply_package_upgrade: false
+vps_hardening_package_upgrade_mode: "safe"
