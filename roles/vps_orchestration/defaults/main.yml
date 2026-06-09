@@ -12,6 +12,12 @@ wg_easy_container_ip: "172.20.0.4"
 wg_easy_version: "15.3.0"
 wg_container_port: 51820
 
+# AdGuard Home
+adguard_version: "v0.107.76"
+
+# Caddy
+caddy_version: "2.11.3"
+
 # Internal domains
 wg_internal_domain: "wg.internal"
 adguard_internal_domain: "adguard.internal"

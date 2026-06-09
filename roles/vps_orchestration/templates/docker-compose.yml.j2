@@ -33,7 +33,7 @@ services:
         ipv4_address: "{{ wg_easy_container_ip }}"
 
   adguard:
-    image: adguard/adguardhome:v0.107.76
+    image: adguard/adguardhome:{{ adguard_version }}
     container_name: adguard
     restart: unless-stopped
     networks:
@@ -46,7 +46,7 @@ services:
       - "{{ project_root }}/volumes/adguard/conf:/opt/adguardhome/conf"
 
   caddy:
-    image: caddy:2.11.3
+    image: caddy:{{ caddy_version }}
     container_name: caddy
     restart: unless-stopped
     networks:
