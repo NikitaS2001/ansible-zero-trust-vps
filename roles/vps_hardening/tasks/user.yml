@@ -12,6 +12,7 @@
     append: yes
     state: present
     password: "{{ admin_password_hash | default(omit) }}"
+  no_log: true
   tags: [user]
 
 - name: "VPS Hardening | User | Add SSH authorized key"

@@ -193,9 +193,6 @@ ADMIN_PASSWORD_HASH="$(openssl passwd -6 "${ADMIN_PASSWORD}")" \
     || error "Failed to generate admin password hash."
 
 # AdGuard password hash (bcrypt via htpasswd)
-if ! command -v htpasswd &>/dev/null; then
-    apt-get install -y -qq apache2-utils >/dev/null 2>&1 || true
-fi
 ADGUARD_PASSWORD_HASH="$(htpasswd -nbB admin "${ADGUARD_PASSWORD}" | cut -d: -f2)" \
     || error "Failed to generate AdGuard password hash."
 
