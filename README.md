@@ -18,6 +18,15 @@ wg-easy web UI, AdGuard Home DNS, Caddy reverse proxy, UFW, and fail2ban.
 - [Security Model](#security-model)
 - [First Client Bootstrap](#first-client-bootstrap)
 - [Troubleshooting](#troubleshooting)
+- [Development Setup](#development-setup)
+
+## Development Setup
+
+```bash
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files
+```
 
 ## Architecture
 
