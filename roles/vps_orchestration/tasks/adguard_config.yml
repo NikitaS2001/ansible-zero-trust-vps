@@ -1,6 +1,6 @@
 ---
 - name: "AdGuard | Config | Generate password hash"
-  shell: htpasswd -nbB admin "{{ adguard_password }}" | cut -d: -f2
+  shell: "set -o pipefail && htpasswd -nbB admin '{{ adguard_password }}' | cut -d: -f2"
   register: adguard_password_hash
   no_log: true
   changed_when: false

@@ -152,11 +152,11 @@ EXTRA_VARS=(
 )
 
 info "Running ansible-playbook..."
-if ! ansible-playbook -i localhost, site.yml "${EXTRA_VARS[@]}" --syntax-check 2>/dev/null; then
+if ! ansible-playbook -i inventory/localhost.yml site.yml "${EXTRA_VARS[@]}" --syntax-check 2>/dev/null; then
     warn "Syntax check failed. Review playbook before re-running."
     error "Aborting deployment."
 fi
-if ansible-playbook -i localhost, site.yml "${EXTRA_VARS[@]}"; then
+if ansible-playbook -i inventory/localhost.yml site.yml "${EXTRA_VARS[@]}"; then
     info "Playbook completed successfully."
 else
     error "Playbook failed. Check output above for details."
