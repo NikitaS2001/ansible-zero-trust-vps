@@ -1,6 +1,6 @@
 ---
 - name: "Zero-Trust VPN | Preflight"
-  hosts: all
+  hosts: vps
   gather_facts: yes
   become: yes
   roles:
