@@ -1,6 +1,6 @@
 ---
 - name: "Zero-Trust VPN | Preflight"
-  hosts: vps
+  hosts: all
   gather_facts: yes
   become: yes
   roles:
@@ -8,7 +8,7 @@
       tags: [hardening]
 
 - name: "Zero-Trust VPN | Orchestration"
-  hosts: vps
+  hosts: all
   gather_facts: yes
   become: yes
   roles:
