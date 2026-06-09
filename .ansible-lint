@@ -15,3 +15,5 @@ exclude_paths:
 skip_list:
   # These commands are explicit integration points without equivalent modules.
   - command-instead-of-module
+  # Vars in defaults/main.yml use names matching group_vars (templates depend on exact names)
+  - var-naming[no-role-prefix]
