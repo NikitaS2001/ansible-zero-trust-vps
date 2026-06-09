@@ -21,7 +21,7 @@ wg_easy_bootstrap_ui_port: 51821
 adguard_bootstrap_ui_port: 3000
 
 # Remote host paths
-project_root: "/opt/zero-trust-vpn"
+project_root: "/opt/zero-trust-vps"
 
 # Pinned upstream installer artifacts
 docker_apt_distribution: "{{ ansible_distribution | lower }}"
