@@ -275,8 +275,6 @@ fetched_certs_dir: "fetched_certs"
 
 # Plaintext vault-compatible vars (roles consume these directly)
 vault_admin_ssh_pubkey: "${SSH_PUBKEY}"
-admin_password: "${ADMIN_PASSWORD}"
-adguard_password: "${ADGUARD_PASSWORD}"
 EOF
 
 # =============================================================================
@@ -286,13 +284,18 @@ info "Running ansible-playbook..."
 cd "${REPO_ROOT}"
 
 # Check syntax first
-if ! ansible-playbook -i "${INVENTORY_FILE}" site.yml --syntax-check 2>/dev/null; then
+if ! ansible-playbook -i "${INVENTORY_FILE}" site.yml \
+  -e "admin_password=${ADMIN_PASSWORD}" \
+  -e "adguard_password=${ADGUARD_PASSWORD}" \
+  --syntax-check 2>/dev/null; then
     warn "Syntax check failed. Review generated files before re-running."
     error "Aborting deployment."
 fi
 
 # Run the playbook
-if ansible-playbook -i "${INVENTORY_FILE}" site.yml; then
+if ansible-playbook -i "${INVENTORY_FILE}" site.yml \
+  -e "admin_password=${ADMIN_PASSWORD}" \
+  -e "adguard_password=${ADGUARD_PASSWORD}"; then
     info "Playbook completed successfully."
 else
     error "Playbook failed. Check output above for details."
