@@ -31,11 +31,11 @@ cleanup_on_failure() {
         return
     fi
 
-    if [[ "${CREATED_REPO_DIR}" == "true" ]]; then
+    if [[ "${CREATED_REPO_DIR}" == "true" && "${CREATED_INSTALL_ROOT}" != "true" ]]; then
         warn "Installation failed. Removing partial repository checkout at ${REPO_DIR}."
         rm -rf "${REPO_DIR}"
     fi
-    if [[ "${CREATED_VENV_DIR}" == "true" ]]; then
+    if [[ "${CREATED_VENV_DIR}" == "true" && "${CREATED_INSTALL_ROOT}" != "true" ]]; then
         warn "Installation failed. Removing partial Ansible virtualenv at ${VENV_DIR}."
         rm -rf "${VENV_DIR}"
     fi
@@ -96,7 +96,7 @@ open_tty() {
     if [[ ! -r /dev/tty ]]; then
         error "Interactive installation requires a TTY. SSH into the VPS and run the installer from a terminal."
     fi
-    exec 3<>/dev/tty
+    exec 3<>/dev/tty || error "Failed to open /dev/tty for interactive prompts."
 }
 
 prompt_optional() {
@@ -172,9 +172,25 @@ validate_optional_admin_user() {
     if [[ -z "${value}" ]]; then
         return 0
     fi
-    if ! [[ "${value}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
+    if ! [[ "${value}" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
         error "Admin username must be a valid Linux user name. Got: ${value}"
     fi
+}
+
+validate_hostname() {
+    local value="$1"
+    local label
+    local -a labels
+
+    if [[ "${#value}" -gt 253 || "${value}" == .* || "${value}" == *. ]]; then
+        return 1
+    fi
+    IFS=. read -r -a labels <<<"${value}"
+    for label in "${labels[@]}"; do
+        if [[ -z "${label}" || "${#label}" -gt 63 || ! "${label}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
+            return 1
+        fi
+    done
 }
 
 validate_internal_domains() {
@@ -192,6 +208,8 @@ validate_internal_domains() {
     if [[ "${#internal_domains[@]}" -ne 2 ]]; then
         error "Internal domains must be exactly two hostnames, for example: wg.internal adguard.internal"
     fi
+    validate_hostname "${internal_domains[0]}" || error "Invalid internal hostname: ${internal_domains[0]}"
+    validate_hostname "${internal_domains[1]}" || error "Invalid internal hostname: ${internal_domains[1]}"
 
     WG_INTERNAL_DOMAIN="${internal_domains[0]}"
     ADGUARD_INTERNAL_DOMAIN="${internal_domains[1]}"
@@ -200,8 +218,9 @@ validate_internal_domains() {
 validate_ssh_pubkey() {
     local value="$1"
     local key_type
+    local key_body
 
-    key_type="${value%%[[:space:]]*}"
+    read -r key_type key_body _ <<<"${value}"
     case "${key_type}" in
         ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)
             ;;
@@ -209,6 +228,9 @@ validate_ssh_pubkey() {
             error "Unsupported SSH public key type '${key_type}'. Use an OpenSSH public key, including FIDO/U2F sk-* keys."
             ;;
     esac
+    if [[ "${#key_body}" -lt 32 || ! "${key_body}" =~ ^[A-Za-z0-9+/]+={0,3}$ ]]; then
+        error "SSH public key body does not look like valid base64."
+    fi
 }
 
 validate_release_source() {
