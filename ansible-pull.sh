@@ -193,7 +193,7 @@ ADGUARD_BOOTSTRAP_UI_PORT="3000"
 info "Running ansible-pull from ${REPO_URL}..."
 
 ansible-pull -U "${REPO_URL}" \
-    -i localhost, \
+    -i inventory/localhost.yml \
     -e "ansible_connection=local" \
     -e "admin_user=${ADMIN_USER}" \
     -e "admin_password=${ADMIN_PASSWORD}" \
