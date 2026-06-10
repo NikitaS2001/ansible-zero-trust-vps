@@ -23,9 +23,9 @@ templates, service versions, password hashing, firewall behavior, Docker
 networking, and deployment logic should stay in Ansible roles.
 
 The v1.0 public installer is `install.sh`. The existing `bootstrap.sh` remains
-the local clone/development entrypoint. The existing `ansible-pull.sh` is not
-the public quickstart interface and may be removed or folded into `install.sh`
-after the public installer has stabilized.
+the local clone/development entrypoint. A separate `ansible-pull.sh` entrypoint
+is intentionally not shipped; public `ansible-pull` execution is owned by
+`install.sh`.
 
 The installer UX is interactive, but uses strict single-source-of-truth
 defaults: prompts may allow the user to press Enter for the role default, but

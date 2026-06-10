@@ -119,11 +119,10 @@ grep -q 'ansible-pull' install.sh \
     || fail "install.sh must call ansible-pull"
 grep -q 'ansible-galaxy.*collection install -r' install.sh \
     || fail "install.sh must install collections from requirements.yml"
-! grep -Eiq 'community[._-]?docker|community[[:space:]]*:[[:space:]]*docker' install.sh bootstrap.sh ansible-pull.sh \
+! grep -Eiq 'community[._-]?docker|community[[:space:]]*:[[:space:]]*docker' install.sh bootstrap.sh \
     || fail "installer scripts must not install Ansible collections through pip"
 assert_no_role_defaults_in_script install.sh
 assert_no_role_defaults_in_script bootstrap.sh
-assert_no_role_defaults_in_script ansible-pull.sh
 assert_no_role_defaults_in_script scripts/installer-common.sh
 assert_role_defaults_cover_bootstrap_values
 pass "installer entrypoints follow tagged quickstart and strict SSOT rules"
