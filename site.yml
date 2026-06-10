@@ -8,7 +8,7 @@
       tags: [hardening]
 
 - name: "Zero-Trust VPN | Orchestration"
-  hosts: all
+  hosts: vps
   gather_facts: yes
   become: yes
   roles:
