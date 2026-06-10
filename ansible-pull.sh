@@ -9,7 +9,8 @@
 set -euo pipefail
 
 # ---- Constants ----------------------------------------------------------------
-readonly SCRIPT_NAME="$(basename "$0")"
+SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_NAME
 readonly REPO_URL="https://github.com/NikitaS2001/ansible-zero-trust-vps.git"
 readonly MARKER_FILE=".ansible_pull_bootstrapped"
 
@@ -112,7 +113,7 @@ pip3 install --quiet ansible "community.docker>=4.0.0,<5.0.0" 2>/dev/null \
 info "Starting interactive configuration..."
 
 # --- 1. SSH port ---
-read -p "SSH port [${DEFAULT_SSH_PORT}]: " SSH_PORT
+read -r -p "SSH port [${DEFAULT_SSH_PORT}]: " SSH_PORT
 SSH_PORT="${SSH_PORT:-${DEFAULT_SSH_PORT}}"
 if ! [[ "${SSH_PORT}" =~ ^[0-9]+$ ]] || \
    [[ "${SSH_PORT}" -lt 1024 ]] || [[ "${SSH_PORT}" -gt 65535 ]]; then
@@ -120,7 +121,7 @@ if ! [[ "${SSH_PORT}" =~ ^[0-9]+$ ]] || \
 fi
 
 # --- 2. WireGuard port ---
-read -p "WireGuard port [${DEFAULT_WG_PORT}]: " WG_PORT
+read -r -p "WireGuard port [${DEFAULT_WG_PORT}]: " WG_PORT
 WG_PORT="${WG_PORT:-${DEFAULT_WG_PORT}}"
 if ! [[ "${WG_PORT}" =~ ^[0-9]+$ ]] || \
    [[ "${WG_PORT}" -lt 1024 ]] || [[ "${WG_PORT}" -gt 65535 ]]; then
@@ -128,7 +129,7 @@ if ! [[ "${WG_PORT}" =~ ^[0-9]+$ ]] || \
 fi
 
 # --- 3. Admin username ---
-read -p "Admin username [${DEFAULT_ADMIN_USER}]: " ADMIN_USER
+read -r -p "Admin username [${DEFAULT_ADMIN_USER}]: " ADMIN_USER
 ADMIN_USER="${ADMIN_USER:-${DEFAULT_ADMIN_USER}}"
 if ! [[ "${ADMIN_USER}" =~ ^[a-z0-9]+$ ]]; then
     error "Admin username must be lowercase alphanumeric. Got: ${ADMIN_USER}"
@@ -136,7 +137,7 @@ fi
 
 # --- 4. Admin password ---
 while true; do
-    read -s -p "Admin password (min 8 chars): " ADMIN_PASSWORD
+    read -r -s -p "Admin password (min 8 chars): " ADMIN_PASSWORD
     echo
     if [[ ${#ADMIN_PASSWORD} -lt 8 ]]; then
         warn "Password must be at least 8 characters."
@@ -147,7 +148,7 @@ done
 
 # --- 5. AdGuard admin password ---
 while true; do
-    read -s -p "AdGuard admin password (min 8 chars): " ADGUARD_PASSWORD
+    read -r -s -p "AdGuard admin password (min 8 chars): " ADGUARD_PASSWORD
     echo
     if [[ ${#ADGUARD_PASSWORD} -lt 8 ]]; then
         warn "Password must be at least 8 characters."
@@ -157,16 +158,15 @@ while true; do
 done
 
 # --- 6. Internal domains ---
-read -p "Internal domains [${DEFAULT_INTERNAL_DOMAINS}]: " INTERNAL_DOMAINS
+read -r -p "Internal domains [${DEFAULT_INTERNAL_DOMAINS}]: " INTERNAL_DOMAINS
 INTERNAL_DOMAINS="${INTERNAL_DOMAINS:-${DEFAULT_INTERNAL_DOMAINS}}"
-WG_INTERNAL_DOMAIN="$(echo "${INTERNAL_DOMAINS}" | awk '{print $1}')"
-ADGUARD_INTERNAL_DOMAIN="$(echo "${INTERNAL_DOMAINS}" | awk '{print $2}')"
+read -r WG_INTERNAL_DOMAIN ADGUARD_INTERNAL_DOMAIN _ <<<"${INTERNAL_DOMAINS}"
 if [[ -z "${WG_INTERNAL_DOMAIN}" ]] || [[ -z "${ADGUARD_INTERNAL_DOMAIN}" ]]; then
     error "Need at least 2 domains (e.g. 'wg.internal adguard.internal'). Got: ${INTERNAL_DOMAINS}"
 fi
 
 # --- 7. SSH public key ---
-read -p "SSH public key: " SSH_PUBKEY
+read -r -p "SSH public key: " SSH_PUBKEY
 SSH_PUBKEY="${SSH_PUBKEY#"${SSH_PUBKEY%%[![:space:]]*}"}"  # trim leading whitespace
 SSH_PUBKEY="${SSH_PUBKEY%"${SSH_PUBKEY##*[![:space:]]}"}"  # trim trailing whitespace
 if ! [[ "${SSH_PUBKEY}" =~ ^(ssh-|ecdsa-) ]]; then

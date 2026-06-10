@@ -54,6 +54,21 @@ grep -q 'image: caddy:{{ caddy_version }}' roles/vps_orchestration/templates/doc
     || fail "Caddy image tag must be variable-driven"
 pass "service image tags are variable-driven"
 
+[[ -x install.sh ]] || fail "install.sh must exist and be executable"
+grep -q 'v1.0.0/install.sh' README.md \
+    || fail "README.md must document the tagged public install.sh quickstart"
+! grep -q 'raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/main/bootstrap.sh' README.md \
+    || fail "README.md public quickstart must not install bootstrap.sh from main"
+grep -q 'ansible-pull' install.sh \
+    || fail "install.sh must call ansible-pull"
+grep -q 'ansible-galaxy.*collection install -r' install.sh \
+    || fail "install.sh must install collections from requirements.yml"
+! grep -q 'community.docker' install.sh \
+    || fail "install.sh must not install Ansible collections through pip"
+! grep -Eq '(^|[^0-9])(2222|51820|51821|3000)([^0-9]|$)|sysadmin|10\.8\.0\.|172\.20\.0\.|project_root' install.sh \
+    || fail "install.sh must not duplicate Ansible role defaults"
+pass "public installer follows tagged quickstart and strict SSOT rules"
+
 ansible-inventory -i inventory/localhost.yml --graph vps >/dev/null \
     || fail "inventory/localhost.yml must define the vps group"
 pass "local inventory defines vps"

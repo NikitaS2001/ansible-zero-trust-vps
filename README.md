@@ -11,7 +11,8 @@ wg-easy web UI, AdGuard Home DNS, Caddy reverse proxy, UFW, and fail2ban.
 - [Architecture](#architecture)
 - [Stack Overview](#stack-overview)
 - [Deployment Modes](#deployment-modes)
-- [Local Bootstrap Mode](#local-bootstrap-mode)
+- [Public Install Mode](#public-install-mode)
+- [Local Clone Bootstrap Mode](#local-clone-bootstrap-mode)
 - [Remote Deployment Mode](#remote-deployment-mode)
 - [Deployment Modes Comparison](#deployment-modes-comparison)
 - [Configuration](#configuration)
@@ -68,36 +69,51 @@ flowchart LR
 
 ## Deployment Modes
 
-This project supports two deployment modes:
+This project supports three deployment modes:
 
 | Mode | Purpose |
 |------|---------|
-| [Local Bootstrap Mode](#local-bootstrap-mode) | One-command setup on a fresh VPS via SSH |
+| [Public Install Mode](#public-install-mode) | Tagged one-command setup on a fresh VPS |
+| [Local Clone Bootstrap Mode](#local-clone-bootstrap-mode) | Local repository bootstrap for development/testing |
 | [Remote Deployment Mode](#remote-deployment-mode) | Manage one or more VPS from your laptop |
 
 Choose the mode that matches your use case.
 
-## Local Bootstrap Mode
+## Public Install Mode
 
 SSH onto your VPS and run:
 
 ```bash
-curl -O https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/main/bootstrap.sh
-chmod +x bootstrap.sh
+curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.0.0/install.sh | sudo bash
+```
+
+The installer is interactive and asks for:
+
+- **SSH port** (press Enter to use the role default)
+- **WireGuard port** (press Enter to use the role default)
+- **Admin username** (press Enter to use the role default)
+- **Admin password** (for console access)
+- **AdGuard admin password**
+- **Internal domains** (press Enter to use the role defaults)
+- **SSH public key** (paste your `id_ed25519.pub`)
+
+Then it installs a local Ansible toolchain and runs `ansible-pull` against the
+tagged public repository.
+
+Use release tags for public installs. Do not install from `main` unless you are
+testing unreleased changes.
+
+## Local Clone Bootstrap Mode
+
+Clone the repository on a VPS and run:
+
+```bash
 ./bootstrap.sh
 ```
 
-The script will interactively ask for:
-
-- **SSH port** (default: 2222)
-- **WireGuard port** (default: 51820)
-- **Admin username** (default: sysadmin)
-- **Admin password** (for console access)
-- **AdGuard admin password**
-- **Internal domains** (default: wg.internal adguard.internal)
-- **SSH public key** (paste your `id_ed25519.pub`)
-
-Then it installs Ansible and runs the playbook locally.
+This mode is for local development and testing from a checked-out repository.
+It asks the same operational questions as the public installer, installs
+Ansible, and runs the local playbook.
 
 > **UFW note**: Bootstrap mode skips UFW enable to prevent lockout. After
 > bootstrap, you can manually enable UFW with `ufw enable` if desired.
@@ -127,8 +143,9 @@ ansible-playbook --vault-password-file .vault_password site.yml -u root
 
 | Mode | Use Case | Command | Requires |
 |------|----------|---------|----------|
+| Public install | Fresh single VPS | `curl -fsSL .../v1.0.0/install.sh \| sudo bash` | SSH access to VPS |
 | Remote | Manage multiple VPS from laptop | `ansible-playbook -i inventory/hosts.yml site.yml` | Ansible on local machine |
-| Bootstrap | One-command setup on fresh VPS | `./bootstrap.sh` on VPS | SSH access to VPS only |
+| Local clone bootstrap | Develop/test from a clone | `./bootstrap.sh` on VPS | Repository clone on VPS |
 
 ## Configuration
 
@@ -219,11 +236,24 @@ ssh -p <ssh_port> -L 3000:127.0.0.1:3000 <admin_user>@<ansible_host>
 
 ## Troubleshooting
 
-### Bootstrap mode
+### Public install mode
+
+**"Interactive installation requires a TTY"**
+
+The public installer reads prompts from `/dev/tty` so it works with
+`curl | sudo bash`. SSH into the VPS with an interactive terminal and run the
+command again.
+
+**"Unsupported OS"**
+
+The public installer supports Debian/Ubuntu systems with `apt-get`. Use remote
+Ansible mode for other targets after adapting the roles.
+
+### Local clone bootstrap mode
 
 **"Already bootstrapped" error**
 
-The script detects a previous deployment via `inventory/localhost.yml` or `.bootstrapped`. To overwrite:
+The script detects a previous deployment via `.bootstrapped`. To overwrite:
 ```bash
 ./bootstrap.sh --force
 ```
@@ -242,14 +272,3 @@ This is by design in local bootstrap mode. UFW rules are installed but the firew
 ```bash
 ufw enable
 ```
-
-**Security note — plaintext secrets**
-
-In bootstrap mode, secrets (SSH public key, password hashes) are stored in plaintext `group_vars/all/vars.yml`. This is a trade-off to avoid modifying existing roles. Future iteration should pass secrets via `ansible-playbook -e` flags instead:
-```bash
-ansible-playbook -i inventory/localhost.yml site.yml \
-  -e "vault_admin_ssh_pubkey=$SSH_PUBKEY" \
-  -e "vault_admin_password_hash=$ADMIN_HASH" \
-  -e "vault_adguard_password_hash=$ADGUARD_HASH"
-```
-This approach keeps secrets out of files on disk.

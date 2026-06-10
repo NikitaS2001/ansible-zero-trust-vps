@@ -23,7 +23,7 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
 | `wg_port` | `51820` | WireGuard UDP port (opened in UFW) |
 | `admin_user` | `sysadmin` | Name of the non-root admin account |
 | `admin_group` | `sudo` | Primary group for `admin_user` |
-| `admin_password_hash` | `""` | bcrypt hash of the admin password (optional; key auth is primary) |
+| `admin_password_hash` | `""` | Precomputed admin password hash (optional; key auth is primary) |
 | `vault_admin_ssh_pubkey` | `""` | SSH public key content for `admin_user` (required for key auth) |
 | `ssh_service_name` | `ssh` | Name of the SSH service to restart |
 | `ssh_allow_tcp_forwarding` | `"yes"` | Allow SSH TCP forwarding (`"yes"` or `"no"`) |

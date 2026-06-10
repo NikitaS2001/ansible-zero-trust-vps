@@ -7,7 +7,7 @@
 
 - name: "VPS Hardening | User | Generate admin password hash"
   command: openssl passwd -6 "{{ admin_password }}"
-  register: admin_password_hash
+  register: vps_hardening_generated_admin_password_hash
   no_log: true
   changed_when: false
   when: admin_password is defined
@@ -18,7 +18,14 @@
     groups: "{{ admin_group }},docker"
     append: yes
     state: present
-    password: "{{ admin_password_hash | default(omit) }}"
+    password: >-
+      {{
+        (
+          vps_hardening_generated_admin_password_hash.stdout
+          if admin_password is defined
+          else admin_password_hash
+        ) | default(omit, true)
+      }}
   no_log: true
   tags: [user]
 
