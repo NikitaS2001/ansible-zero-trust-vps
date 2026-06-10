@@ -8,9 +8,11 @@ REMOTE_TEMP="${TMP_BASE%/}/ansible-remote"
 REMOTE_INVENTORY="$(mktemp "${TMP_BASE%/}/hosts.XXXXXX.yml")"
 LOCAL_INVENTORY_JSON="$(mktemp "${TMP_BASE%/}/ssot-local-inventory.XXXXXX.json")"
 REMOTE_INVENTORY_JSON="$(mktemp "${TMP_BASE%/}/ssot-remote-inventory.XXXXXX.json")"
+PULL_CHECKOUT="$(mktemp -d "${TMP_BASE%/}/ssot-ansible-pull.XXXXXX")"
 
 cleanup() {
     rm -f "${REMOTE_INVENTORY}" "${LOCAL_INVENTORY_JSON}" "${REMOTE_INVENTORY_JSON}"
+    rm -rf "${PULL_CHECKOUT}"
 }
 trap cleanup EXIT
 
@@ -61,6 +63,12 @@ pass "remote inventory example defines vps"
 ansible-playbook -i inventory/localhost.yml site.yml --syntax-check >/dev/null
 ansible-playbook -i "${REMOTE_INVENTORY}" site.yml --syntax-check >/dev/null
 pass "syntax-check passes for local and remote inventories"
+
+ansible-pull -U "file://${ROOT_DIR}" \
+    -d "${PULL_CHECKOUT}" \
+    -i inventory/localhost.yml \
+    tests/ansible-pull-smoke.yml >/dev/null
+pass "ansible-pull resolves the repo inventory"
 
 ansible-lint site.yml roles/vps_hardening roles/vps_orchestration >/dev/null
 pass "ansible-lint passes"

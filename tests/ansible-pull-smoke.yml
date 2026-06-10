@@ -1,0 +1,8 @@
+---
+- name: "Smoke | Ansible pull inventory"
+  hosts: vps
+  gather_facts: false
+  tasks:
+    - name: "Smoke | Confirm inventory resolved"
+      ansible.builtin.debug:
+        msg: "vps inventory resolved"
