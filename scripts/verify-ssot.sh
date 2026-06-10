@@ -8,6 +8,7 @@ LOCAL_TEMP="${WORK_DIR}/ansible-local"
 REMOTE_TEMP="${WORK_DIR}/ansible-remote"
 REMOTE_INVENTORY="${WORK_DIR}/hosts.yml"
 PULL_CHECKOUT="${WORK_DIR}/ansible-pull-checkout"
+PULL_LOG="${WORK_DIR}/ansible-pull-smoke.log"
 
 cleanup() {
     if [[ -n "${WORK_DIR:-}" ]]; then
@@ -140,10 +141,13 @@ ansible-playbook -i inventory/localhost.yml site.yml --syntax-check >/dev/null
 ansible-playbook -i "${REMOTE_INVENTORY}" site.yml --syntax-check >/dev/null
 pass "syntax-check passes for local and remote inventories"
 
-ansible-pull -U "file://${ROOT_DIR}" \
+if ! env GIT_ALLOW_PROTOCOL=file ansible-pull -U "file://${ROOT_DIR}" \
     -d "${PULL_CHECKOUT}" \
     -i inventory/localhost.yml \
-    tests/ansible-pull-smoke.yml >/dev/null
+    tests/ansible-pull-smoke.yml >"${PULL_LOG}" 2>&1; then
+    cat "${PULL_LOG}" >&2
+    fail "ansible-pull must resolve the repo inventory"
+fi
 pass "ansible-pull resolves the repo inventory"
 
 ansible-lint site.yml roles/vps_hardening roles/vps_orchestration >/dev/null
