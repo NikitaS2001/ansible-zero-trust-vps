@@ -3,16 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_BASE="${TMPDIR:-/tmp}"
-LOCAL_TEMP="${TMP_BASE%/}/ansible-local"
-REMOTE_TEMP="${TMP_BASE%/}/ansible-remote"
-REMOTE_INVENTORY="$(mktemp "${TMP_BASE%/}/hosts.XXXXXX.yml")"
-LOCAL_INVENTORY_JSON="$(mktemp "${TMP_BASE%/}/ssot-local-inventory.XXXXXX.json")"
-REMOTE_INVENTORY_JSON="$(mktemp "${TMP_BASE%/}/ssot-remote-inventory.XXXXXX.json")"
-PULL_CHECKOUT="$(mktemp -d "${TMP_BASE%/}/ssot-ansible-pull.XXXXXX")"
+WORK_DIR="$(mktemp -d "${TMP_BASE%/}/ssot-verify.XXXXXX")"
+LOCAL_TEMP="${WORK_DIR}/ansible-local"
+REMOTE_TEMP="${WORK_DIR}/ansible-remote"
+REMOTE_INVENTORY="${WORK_DIR}/hosts.yml"
+PULL_CHECKOUT="${WORK_DIR}/ansible-pull-checkout"
 
 cleanup() {
-    rm -f "${REMOTE_INVENTORY}" "${LOCAL_INVENTORY_JSON}" "${REMOTE_INVENTORY_JSON}"
-    rm -rf "${PULL_CHECKOUT}"
+    rm -rf "${WORK_DIR}"
 }
 trap cleanup EXIT
 
@@ -26,7 +24,12 @@ pass() {
 }
 
 cd "${ROOT_DIR}"
-mkdir -p "${LOCAL_TEMP}" "${REMOTE_TEMP}"
+for tool in ansible-inventory ansible-playbook ansible-pull ansible-lint yamllint; do
+    command -v "${tool}" >/dev/null 2>&1 || fail "required tool not found: ${tool}"
+done
+pass "required tools are available"
+
+mkdir -p "${LOCAL_TEMP}" "${REMOTE_TEMP}" "${PULL_CHECKOUT}"
 export ANSIBLE_LOCAL_TEMP="${ANSIBLE_LOCAL_TEMP:-${LOCAL_TEMP}}"
 export ANSIBLE_REMOTE_TEMP="${ANSIBLE_REMOTE_TEMP:-${REMOTE_TEMP}}"
 
@@ -49,14 +52,12 @@ grep -q 'image: caddy:{{ caddy_version }}' roles/vps_orchestration/templates/doc
     || fail "Caddy image tag must be variable-driven"
 pass "service image tags are variable-driven"
 
-ansible-inventory -i inventory/localhost.yml --list >"${LOCAL_INVENTORY_JSON}"
-grep -q '"vps"' "${LOCAL_INVENTORY_JSON}" \
+ansible-inventory -i inventory/localhost.yml --graph vps >/dev/null \
     || fail "inventory/localhost.yml must define the vps group"
 pass "local inventory defines vps"
 
 cp inventory/hosts.yml.example "${REMOTE_INVENTORY}"
-ansible-inventory -i "${REMOTE_INVENTORY}" --list >"${REMOTE_INVENTORY_JSON}"
-grep -q '"vps"' "${REMOTE_INVENTORY_JSON}" \
+ansible-inventory -i "${REMOTE_INVENTORY}" --graph vps >/dev/null \
     || fail "inventory/hosts.yml.example must define the vps group when parsed as YAML"
 pass "remote inventory example defines vps"
 

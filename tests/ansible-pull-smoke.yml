@@ -4,5 +4,7 @@
   gather_facts: false
   tasks:
     - name: "Smoke | Confirm inventory resolved"
-      ansible.builtin.debug:
-        msg: "vps inventory resolved"
+      ansible.builtin.assert:
+        that:
+          - "'vps' in group_names"
+          - "inventory_hostname == 'localhost'"
