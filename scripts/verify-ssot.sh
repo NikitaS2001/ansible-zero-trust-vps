@@ -10,7 +10,9 @@ REMOTE_INVENTORY="${WORK_DIR}/hosts.yml"
 PULL_CHECKOUT="${WORK_DIR}/ansible-pull-checkout"
 
 cleanup() {
-    rm -rf "${WORK_DIR}"
+    if [[ -n "${WORK_DIR:-}" ]]; then
+        rm -rf "${WORK_DIR}"
+    fi
 }
 trap cleanup EXIT
 
