@@ -20,14 +20,6 @@ wg-easy web UI, AdGuard Home DNS, Caddy reverse proxy, UFW, and fail2ban.
 - [Troubleshooting](#troubleshooting)
 - [Development Setup](#development-setup)
 
-## Development Setup
-
-```bash
-pip install pre-commit
-pre-commit install
-pre-commit run --all-files
-```
-
 ## Architecture
 
 ```mermaid
@@ -240,3 +232,11 @@ command again.
 
 The public installer supports Debian/Ubuntu systems with `apt-get`. Use remote
 Ansible mode for other targets after adapting the roles.
+
+## Development Setup
+
+```bash
+pip install pre-commit
+pre-commit install
+pre-commit run --all-files
+```
