@@ -57,9 +57,57 @@ pass "service image tags are variable-driven"
 assert_no_role_defaults_in_script() {
     local script_path="$1"
 
-    if grep -Eq '(^|[^0-9])(2222|51820|51821|3000)([^0-9]|$)|sysadmin|10\.8\.0\.|172\.20\.0\.|project_root[[:space:]]*=|PROJECT_ROOT=' "${script_path}"; then
+    if awk '!/^[[:space:]]*#/' "${script_path}" \
+        | grep -Eq '(^|[^0-9])(2222|51820|51821|3000)([^0-9]|$)|sysadmin|10\.8\.0\.|172\.20\.0\.|project_root[[:space:]]*=|PROJECT_ROOT='; then
         fail "${script_path} must not duplicate Ansible role defaults"
     fi
+}
+
+assert_yaml_scalar_default() {
+    local defaults_file="$1"
+    local key="$2"
+    local expected="$3"
+    local actual
+
+    actual="$(
+        awk -F: -v key="${key}" '
+            $1 == key {
+                value = $0
+                sub(/^[^:]+:[[:space:]]*/, "", value)
+                gsub(/^["'\''"]|["'\''"]$/, "", value)
+                print value
+                exit
+            }
+        ' "${defaults_file}"
+    )"
+    [[ "${actual}" == "${expected}" ]] \
+        || fail "${defaults_file} must set ${key} to ${expected}; got '${actual}'"
+}
+
+assert_role_defaults_cover_bootstrap_values() {
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml ssh_port 2222
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml wg_port 51820
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml admin_user sysadmin
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml admin_group sudo
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml ssh_service_name ssh
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml ssh_allow_tcp_forwarding yes
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml wg_easy_bootstrap_ui_port 51821
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml adguard_bootstrap_ui_port 3000
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_apply_package_upgrade false
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_package_upgrade_mode safe
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml project_root /opt/zero-trust-vps
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml docker_network_subnet 172.20.0.0/24
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_container_ip 172.20.0.2
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml caddy_container_ip 172.20.0.3
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_easy_container_ip 172.20.0.4
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_vpn_subnet 10.8.0.0/24
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_server_ip 10.8.0.1
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_client_dns 172.20.0.2
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_container_port 51820
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_internal_domain wg.internal
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_internal_domain adguard.internal
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_easy_bootstrap_ui_port 51821
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_bootstrap_ui_port 3000
 }
 
 [[ -x install.sh ]] || fail "install.sh must exist and be executable"
@@ -71,12 +119,14 @@ grep -q 'ansible-pull' install.sh \
     || fail "install.sh must call ansible-pull"
 grep -q 'ansible-galaxy.*collection install -r' install.sh \
     || fail "install.sh must install collections from requirements.yml"
-! grep -Eiq 'community[._-]?docker|community[[:space:]]*:[[:space:]]*docker' install.sh \
-    || fail "install.sh must not install Ansible collections through pip"
+! grep -Eiq 'community[._-]?docker|community[[:space:]]*:[[:space:]]*docker' install.sh bootstrap.sh ansible-pull.sh \
+    || fail "installer scripts must not install Ansible collections through pip"
 assert_no_role_defaults_in_script install.sh
 assert_no_role_defaults_in_script bootstrap.sh
 assert_no_role_defaults_in_script ansible-pull.sh
-pass "public installer follows tagged quickstart and strict SSOT rules"
+assert_no_role_defaults_in_script scripts/installer-common.sh
+assert_role_defaults_cover_bootstrap_values
+pass "installer entrypoints follow tagged quickstart and strict SSOT rules"
 
 ansible-inventory -i inventory/localhost.yml --graph vps >/dev/null \
     || fail "inventory/localhost.yml must define the vps group"

@@ -13,6 +13,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT
 readonly MARKER_FILE="${REPO_ROOT}/.bootstrapped"
 
+# shellcheck source=scripts/installer-common.sh
+source "${REPO_ROOT}/scripts/installer-common.sh"
+
 FORCE_MODE=false
 SSH_PORT=""
 WG_PORT=""
@@ -23,6 +26,7 @@ INTERNAL_DOMAINS=""
 WG_INTERNAL_DOMAIN=""
 ADGUARD_INTERNAL_DOMAIN=""
 SSH_PUBKEY=""
+EXTRA_VARS=()
 
 usage() {
     cat <<EOF
@@ -34,16 +38,9 @@ Options:
   --force    Overwrite existing deployment (skip .bootstrapped check)
 
 Examples:
-  ./bootstrap.sh              # Normal run
-  ./bootstrap.sh --force      # Re-run even if already bootstrapped
+  ./bootstrap.sh
+  ./bootstrap.sh --force
 EOF
-}
-
-info() { echo "[INFO]  $*"; }
-warn() { echo "[WARN]  $*" >&2; }
-error() {
-    echo "[ERROR] $*" >&2
-    exit 1
 }
 
 cleanup_on_failure() {
@@ -54,147 +51,6 @@ cleanup_on_failure() {
     fi
 }
 trap cleanup_on_failure EXIT
-
-open_tty() {
-    if [[ ! -r /dev/tty ]]; then
-        error "Interactive bootstrap requires a TTY. Run this script from a terminal."
-    fi
-    exec 3<>/dev/tty || error "Failed to open /dev/tty for interactive prompts."
-}
-
-prompt_optional() {
-    local __var_name="$1"
-    local prompt_text="$2"
-    local value
-
-    printf "%s (Enter for role default): " "${prompt_text}" >&3
-    IFS= read -r value <&3
-    printf -v "${__var_name}" '%s' "${value}"
-}
-
-prompt_required_secret() {
-    local __var_name="$1"
-    local prompt_text="$2"
-    local value
-    local confirmation
-
-    while true; do
-        printf "%s: " "${prompt_text}" >&3
-        IFS= read -r -s value <&3
-        printf "\n" >&3
-        if [[ "${#value}" -lt 8 ]]; then
-            warn "Value must be at least 8 characters."
-            continue
-        fi
-        printf "Confirm %s: " "${prompt_text}" >&3
-        IFS= read -r -s confirmation <&3
-        printf "\n" >&3
-        if [[ "${value}" != "${confirmation}" ]]; then
-            warn "Values did not match. Try again."
-            continue
-        fi
-        printf -v "${__var_name}" '%s' "${value}"
-        break
-    done
-}
-
-prompt_required_line() {
-    local __var_name="$1"
-    local prompt_text="$2"
-    local value
-
-    while true; do
-        printf "%s: " "${prompt_text}" >&3
-        IFS= read -r value <&3
-        value="${value#"${value%%[![:space:]]*}"}"
-        value="${value%"${value##*[![:space:]]}"}"
-        if [[ -z "${value}" ]]; then
-            warn "Value is required."
-            continue
-        fi
-        printf -v "${__var_name}" '%s' "${value}"
-        break
-    done
-}
-
-validate_port() {
-    local label="$1"
-    local value="$2"
-
-    if [[ -z "${value}" ]]; then
-        return 0
-    fi
-    if ! [[ "${value}" =~ ^[0-9]+$ ]] || [[ "${value}" -lt 1 ]] || [[ "${value}" -gt 65535 ]]; then
-        error "${label} must be a number between 1 and 65535. Got: ${value}"
-    fi
-}
-
-validate_optional_admin_user() {
-    local value="$1"
-
-    if [[ -z "${value}" ]]; then
-        return 0
-    fi
-    if ! [[ "${value}" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-        error "Admin username must be a valid Linux user name. Got: ${value}"
-    fi
-}
-
-validate_hostname() {
-    local value="$1"
-    local label
-    local -a labels
-
-    if [[ "${#value}" -gt 253 || "${value}" == .* || "${value}" == *. ]]; then
-        return 1
-    fi
-    IFS=. read -r -a labels <<<"${value}"
-    for label in "${labels[@]}"; do
-        if [[ -z "${label}" || "${#label}" -gt 63 || ! "${label}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
-            return 1
-        fi
-    done
-}
-
-validate_internal_domains() {
-    local value="$1"
-    local -a internal_domains
-
-    WG_INTERNAL_DOMAIN=""
-    ADGUARD_INTERNAL_DOMAIN=""
-
-    if [[ -z "${value}" ]]; then
-        return 0
-    fi
-
-    read -r -a internal_domains <<<"${value}"
-    if [[ "${#internal_domains[@]}" -ne 2 ]]; then
-        error "Internal domains must be exactly two hostnames, for example: wg.internal adguard.internal"
-    fi
-    validate_hostname "${internal_domains[0]}" || error "Invalid internal hostname: ${internal_domains[0]}"
-    validate_hostname "${internal_domains[1]}" || error "Invalid internal hostname: ${internal_domains[1]}"
-
-    WG_INTERNAL_DOMAIN="${internal_domains[0]}"
-    ADGUARD_INTERNAL_DOMAIN="${internal_domains[1]}"
-}
-
-validate_ssh_pubkey() {
-    local value="$1"
-    local key_type
-    local key_body
-
-    read -r key_type key_body _ <<<"${value}"
-    case "${key_type}" in
-        ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)
-            ;;
-        *)
-            error "Unsupported SSH public key type '${key_type}'. Use an OpenSSH public key, including FIDO/U2F sk-* keys."
-            ;;
-    esac
-    if [[ "${#key_body}" -lt 32 || ! "${key_body}" =~ ^[A-Za-z0-9+/]+={0,3}$ ]]; then
-        error "SSH public key body does not look like valid base64."
-    fi
-}
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -234,23 +90,6 @@ install_dependencies() {
     ansible-galaxy collection install -r "${REPO_ROOT}/requirements.yml"
 }
 
-collect_configuration() {
-    info "Starting interactive configuration..."
-    prompt_optional SSH_PORT "SSH port"
-    prompt_optional WG_PORT "WireGuard port"
-    prompt_optional ADMIN_USER "Admin username"
-    prompt_required_secret ADMIN_PASSWORD "Admin password (min 8 chars)"
-    prompt_required_secret ADGUARD_PASSWORD "AdGuard admin password (min 8 chars)"
-    prompt_optional INTERNAL_DOMAINS "Internal domains, separated by space"
-    prompt_required_line SSH_PUBKEY "SSH public key"
-
-    validate_port "SSH port" "${SSH_PORT}"
-    validate_port "WireGuard port" "${WG_PORT}"
-    validate_optional_admin_user "${ADMIN_USER}"
-    validate_internal_domains "${INTERNAL_DOMAINS}"
-    validate_ssh_pubkey "${SSH_PUBKEY}"
-}
-
 build_extra_vars() {
     EXTRA_VARS=(
         -e "ansible_connection=local"
@@ -258,22 +97,7 @@ build_extra_vars() {
         -e "adguard_password=${ADGUARD_PASSWORD}"
         -e "vault_admin_ssh_pubkey=${SSH_PUBKEY}"
     )
-
-    if [[ -n "${SSH_PORT}" ]]; then
-        EXTRA_VARS+=(-e "ssh_port=${SSH_PORT}")
-    fi
-    if [[ -n "${WG_PORT}" ]]; then
-        EXTRA_VARS+=(-e "wg_port=${WG_PORT}" -e "wg_container_port=${WG_PORT}")
-    fi
-    if [[ -n "${ADMIN_USER}" ]]; then
-        EXTRA_VARS+=(-e "admin_user=${ADMIN_USER}")
-    fi
-    if [[ -n "${WG_INTERNAL_DOMAIN}" ]]; then
-        EXTRA_VARS+=(-e "wg_internal_domain=${WG_INTERNAL_DOMAIN}")
-    fi
-    if [[ -n "${ADGUARD_INTERNAL_DOMAIN}" ]]; then
-        EXTRA_VARS+=(-e "adguard_internal_domain=${ADGUARD_INTERNAL_DOMAIN}")
-    fi
+    append_user_extra_vars
 }
 
 run_playbook() {
@@ -286,9 +110,14 @@ run_playbook() {
 }
 
 print_summary() {
-    local summary_ssh_port="${SSH_PORT:-<role default ssh_port>}"
-    local summary_wg_domain="${WG_INTERNAL_DOMAIN:-<role default wg_internal_domain>}"
-    local summary_adguard_domain="${ADGUARD_INTERNAL_DOMAIN:-<role default adguard_internal_domain>}"
+    local summary_ssh_port="${SSH_PORT:-$(read_yaml_scalar_default "${REPO_ROOT}/roles/vps_hardening/defaults/main.yml" ssh_port)}"
+    local summary_wg_domain="${WG_INTERNAL_DOMAIN:-$(read_yaml_scalar_default "${REPO_ROOT}/roles/vps_orchestration/defaults/main.yml" wg_internal_domain)}"
+    local summary_adguard_domain="${ADGUARD_INTERNAL_DOMAIN:-$(read_yaml_scalar_default "${REPO_ROOT}/roles/vps_orchestration/defaults/main.yml" adguard_internal_domain)}"
+    local summary_wg_ui_port
+    local summary_adguard_ui_port
+
+    summary_wg_ui_port="$(read_yaml_scalar_default "${REPO_ROOT}/roles/vps_hardening/defaults/main.yml" wg_easy_bootstrap_ui_port)"
+    summary_adguard_ui_port="$(read_yaml_scalar_default "${REPO_ROOT}/roles/vps_hardening/defaults/main.yml" adguard_bootstrap_ui_port)"
 
     cat <<EOF
 
@@ -299,10 +128,10 @@ print_summary() {
 Access your services via SSH tunnels:
 
   # wg-easy (WireGuard UI) - complete setup wizard here first
-  ssh -p ${summary_ssh_port} -L <wg-easy-local-port>:127.0.0.1:<wg-easy-ui-port> localhost
+  ssh -p ${summary_ssh_port} -L ${summary_wg_ui_port}:127.0.0.1:${summary_wg_ui_port} localhost
 
   # AdGuard Home admin UI
-  ssh -p ${summary_ssh_port} -L <adguard-local-port>:127.0.0.1:<adguard-ui-port> localhost
+  ssh -p ${summary_ssh_port} -L ${summary_adguard_ui_port}:127.0.0.1:${summary_adguard_ui_port} localhost
 
   # After connecting via WireGuard, access internal domains:
   #   https://${summary_wg_domain}
@@ -319,8 +148,8 @@ main() {
     parse_args "$@"
     open_tty
     preflight
-    install_dependencies
     collect_configuration
+    install_dependencies
     build_extra_vars
     run_playbook
 

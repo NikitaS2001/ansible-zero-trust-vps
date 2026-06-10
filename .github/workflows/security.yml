@@ -46,7 +46,7 @@ jobs:
         run: yamllint .
 
       - name: Run shellcheck
-        run: shellcheck install.sh bootstrap.sh ansible-pull.sh scripts/verify-ssot.sh
+        run: shellcheck install.sh bootstrap.sh ansible-pull.sh scripts/installer-common.sh scripts/verify-ssot.sh
 
       - name: Run SSOT verification
         run: scripts/verify-ssot.sh

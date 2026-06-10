@@ -233,6 +233,21 @@ validate_ssh_pubkey() {
     fi
 }
 
+read_yaml_scalar_default() {
+    local defaults_file="$1"
+    local key="$2"
+
+    awk -F: -v key="${key}" '
+        $1 == key {
+            value = $0
+            sub(/^[^:]+:[[:space:]]*/, "", value)
+            gsub(/^["'\''"]|["'\''"]$/, "", value)
+            print value
+            exit
+        }
+    ' "${defaults_file}"
+}
+
 validate_release_source() {
     if [[ -z "${REPO_URL}" || "${REPO_URL}" =~ [[:space:]] || "${REPO_URL}" == -* ]]; then
         error "ZERO_TRUST_REPO_URL must be a non-empty git URL without whitespace."
@@ -350,10 +365,15 @@ run_ansible_pull() {
 }
 
 print_summary() {
-    local summary_ssh_port="${SSH_PORT:-<role default ssh_port>}"
-    local summary_admin_user="${ADMIN_USER:-<role default admin_user>}"
-    local summary_wg_domain="${WG_INTERNAL_DOMAIN:-<role default wg_internal_domain>}"
-    local summary_adguard_domain="${ADGUARD_INTERNAL_DOMAIN:-<role default adguard_internal_domain>}"
+    local summary_ssh_port="${SSH_PORT:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" ssh_port)}"
+    local summary_admin_user="${ADMIN_USER:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" admin_user)}"
+    local summary_wg_domain="${WG_INTERNAL_DOMAIN:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" wg_internal_domain)}"
+    local summary_adguard_domain="${ADGUARD_INTERNAL_DOMAIN:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" adguard_internal_domain)}"
+    local summary_wg_ui_port
+    local summary_adguard_ui_port
+
+    summary_wg_ui_port="$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" wg_easy_bootstrap_ui_port)"
+    summary_adguard_ui_port="$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" adguard_bootstrap_ui_port)"
 
     cat <<EOF
 
@@ -363,8 +383,8 @@ print_summary() {
 
 Open SSH tunnels from your workstation to complete first-client setup:
 
-  ssh -p ${summary_ssh_port} -L <wg-easy-local-port>:127.0.0.1:<wg-easy-ui-port> ${summary_admin_user}@<vps-ip>
-  ssh -p ${summary_ssh_port} -L <adguard-local-port>:127.0.0.1:<adguard-ui-port> ${summary_admin_user}@<vps-ip>
+  ssh -p ${summary_ssh_port} -L ${summary_wg_ui_port}:127.0.0.1:${summary_wg_ui_port} ${summary_admin_user}@<vps-ip>
+  ssh -p ${summary_ssh_port} -L ${summary_adguard_ui_port}:127.0.0.1:${summary_adguard_ui_port} ${summary_admin_user}@<vps-ip>
 
 Then create the first WireGuard client in wg-easy and connect to the VPN.
 After connecting, use the internal domains:
