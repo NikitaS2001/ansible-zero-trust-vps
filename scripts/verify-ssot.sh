@@ -142,6 +142,7 @@ ansible-playbook -i "${REMOTE_INVENTORY}" site.yml --syntax-check >/dev/null
 pass "syntax-check passes for local and remote inventories"
 
 if ! env GIT_ALLOW_PROTOCOL=file ansible-pull -U "file://${ROOT_DIR}" \
+    -C HEAD \
     -d "${PULL_CHECKOUT}" \
     -i inventory/localhost.yml \
     tests/ansible-pull-smoke.yml >"${PULL_LOG}" 2>&1; then
