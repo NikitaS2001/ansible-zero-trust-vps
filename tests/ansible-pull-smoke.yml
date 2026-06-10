@@ -7,5 +7,7 @@
       ansible.builtin.assert:
         that:
           - "'vps' in group_names"
+          # The public installer uses inventory/localhost.yml, so ansible-pull
+          # should resolve the vps group to localhost in this smoke test.
           - "inventory_hostname == 'localhost'"
         fail_msg: "ansible-pull did not resolve localhost through the vps inventory group"

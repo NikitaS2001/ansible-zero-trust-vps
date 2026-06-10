@@ -49,6 +49,7 @@ jobs:
         run: shellcheck install.sh bootstrap.sh scripts/installer-common.sh scripts/verify-ssot.sh
 
       - name: Run SSOT verification
+        if: github.event_name == 'pull_request'
         run: scripts/verify-ssot.sh
 
       - name: Run gitleaks

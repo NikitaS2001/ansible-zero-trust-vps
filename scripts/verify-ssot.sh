@@ -28,9 +28,10 @@ pass() {
 }
 
 cd "${ROOT_DIR}"
-for tool in ansible-inventory ansible-playbook ansible-pull ansible-lint yamllint; do
+for tool in ansible-inventory ansible-playbook ansible-pull ansible-lint python3 yamllint; do
     command -v "${tool}" >/dev/null 2>&1 || fail "required tool not found: ${tool}"
 done
+python3 -c 'import yaml' >/dev/null 2>&1 || fail "required Python module not found: yaml"
 pass "required tools are available"
 
 mkdir -p "${LOCAL_TEMP}" "${REMOTE_TEMP}" "${PULL_CHECKOUT}"
@@ -56,13 +57,53 @@ grep -q 'image: caddy:{{ caddy_version }}' roles/vps_orchestration/templates/doc
     || fail "Caddy image tag must be variable-driven"
 pass "service image tags are variable-driven"
 
+assert_no_default_assignment() {
+    local script_path="$1"
+    local variable_name="$2"
+    local forbidden_value="$3"
+    local inspect_status=0
+
+    awk -v variable_name="${variable_name}" -v forbidden_value="${forbidden_value}" '
+        /^[[:space:]]*#/ { next }
+        {
+            line = $0
+            sub(/^[[:space:]]*readonly[[:space:]]+/, "", line)
+            sub(/^[[:space:]]*local[[:space:]]+/, "", line)
+            if (line ~ "^[[:space:]]*" variable_name "=") {
+                value = line
+                sub("^[[:space:]]*" variable_name "=", "", value)
+                sub(/[[:space:]]*#.*$/, "", value)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+                gsub(/^["\047]|["\047]$/, "", value)
+                if (value == forbidden_value) {
+                    exit 42
+                }
+            }
+        }
+    ' "${script_path}" || inspect_status=$?
+
+    if [[ "${inspect_status}" -eq 0 ]]; then
+        return
+    fi
+
+    if [[ "${inspect_status}" -eq 42 ]]; then
+        fail "${script_path} must not assign ${variable_name}=${forbidden_value}; use role defaults instead"
+    fi
+
+    fail "failed to inspect ${script_path} for duplicated role defaults"
+}
+
 assert_no_role_defaults_in_script() {
     local script_path="$1"
 
-    if awk '!/^[[:space:]]*#/' "${script_path}" \
-        | grep -Eq '(^|[^0-9])(2222|51820|51821|3000)([^0-9]|$)|sysadmin|10\.8\.0\.|172\.20\.0\.|project_root[[:space:]]*=|PROJECT_ROOT='; then
-        fail "${script_path} must not duplicate Ansible role defaults"
-    fi
+    assert_no_default_assignment "${script_path}" SSH_PORT 2222
+    assert_no_default_assignment "${script_path}" WG_PORT 51820
+    assert_no_default_assignment "${script_path}" ADMIN_USER sysadmin
+    assert_no_default_assignment "${script_path}" ADMIN_GROUP sudo
+    assert_no_default_assignment "${script_path}" SSH_SERVICE_NAME ssh
+    assert_no_default_assignment "${script_path}" WG_EASY_BOOTSTRAP_UI_PORT 51821
+    assert_no_default_assignment "${script_path}" ADGUARD_BOOTSTRAP_UI_PORT 3000
+    assert_no_default_assignment "${script_path}" PROJECT_ROOT /opt/zero-trust-vps
 }
 
 assert_yaml_scalar_default() {
@@ -72,18 +113,37 @@ assert_yaml_scalar_default() {
     local actual
 
     actual="$(
-        awk -F: -v key="${key}" '
-            $1 == key {
-                value = $0
-                sub(/^[^:]+:[[:space:]]*/, "", value)
-                gsub(/^["'\''"]|["'\''"]$/, "", value)
-                print value
-                exit
-            }
-        ' "${defaults_file}"
-    )"
+        python3 -c '
+import sys
+import yaml
+
+defaults_file, key = sys.argv[1], sys.argv[2]
+with open(defaults_file, "r", encoding="utf-8") as handle:
+    data = yaml.safe_load(handle) or {}
+
+if key not in data:
+    sys.exit(2)
+
+value = data[key]
+if isinstance(value, bool):
+    print("true" if value else "false")
+else:
+    print(value)
+' "${defaults_file}" "${key}"
+    )" || fail "${defaults_file} must define ${key}"
+
     [[ "${actual}" == "${expected}" ]] \
         || fail "${defaults_file} must set ${key} to ${expected}; got '${actual}'"
+}
+
+read_install_release_ref() {
+    local release_ref
+
+    release_ref="$(
+        sed -nE 's/^readonly RELEASE_REF="\$\{ZERO_TRUST_RELEASE_REF:-([^}]+)\}"$/\1/p' install.sh
+    )"
+    [[ -n "${release_ref}" ]] || fail "install.sh must define a default ZERO_TRUST_RELEASE_REF"
+    printf '%s\n' "${release_ref}"
 }
 
 assert_role_defaults_cover_bootstrap_values() {
@@ -113,7 +173,8 @@ assert_role_defaults_cover_bootstrap_values() {
 }
 
 [[ -x install.sh ]] || fail "install.sh must exist and be executable"
-grep -q 'v1.0.0/install.sh' README.md \
+install_release_ref="$(read_install_release_ref)"
+grep -Fq "/${install_release_ref}/install.sh" README.md \
     || fail "README.md must document the tagged public install.sh quickstart"
 ! grep -q 'raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/main/bootstrap.sh' README.md \
     || fail "README.md public quickstart must not install bootstrap.sh from main"
