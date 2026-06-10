@@ -50,7 +50,7 @@ flowchart LR
 
 | Service | Image |
 | --- | --- |
-| wg-easy | `ghcr.io/wg-easy/wg-easy:15` |
+| wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` |
 | AdGuard Home | `adguard/adguardhome:v0.107.76` |
 | Caddy | `caddy:2.11.3` |
 

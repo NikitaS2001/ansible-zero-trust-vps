@@ -135,7 +135,7 @@ When running in bootstrap mode (via `bootstrap.sh`), secrets are passed
 directly to `ansible-playbook` via `-e` flags, not written to disk:
 
 ```bash
-ansible-playbook -i localhost, site.yml \
+ansible-playbook -i inventory/localhost.yml site.yml \
   -e "admin_password=${ADMIN_PASSWORD}" \
   -e "adguard_password=${ADGUARD_PASSWORD}" \
   -e "vault_admin_ssh_pubkey=${SSH_PUBKEY}" ...
