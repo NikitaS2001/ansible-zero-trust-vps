@@ -146,7 +146,7 @@ read_install_release_ref() {
     printf '%s\n' "${release_ref}"
 }
 
-assert_role_defaults_cover_bootstrap_values() {
+assert_role_defaults_cover_installer_values() {
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml ssh_port 2222
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml wg_port 51820
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml admin_user sysadmin
@@ -176,18 +176,14 @@ assert_role_defaults_cover_bootstrap_values() {
 install_release_ref="$(read_install_release_ref)"
 grep -Fq "/${install_release_ref}/install.sh" README.md \
     || fail "README.md must document the tagged public install.sh quickstart"
-! grep -q 'raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/main/bootstrap.sh' README.md \
-    || fail "README.md public quickstart must not install bootstrap.sh from main"
 grep -q 'ansible-pull' install.sh \
     || fail "install.sh must call ansible-pull"
 grep -q 'ansible-galaxy.*collection install -r' install.sh \
     || fail "install.sh must install collections from requirements.yml"
-! grep -Eiq 'community[._-]?docker|community[[:space:]]*:[[:space:]]*docker' install.sh bootstrap.sh \
-    || fail "installer scripts must not install Ansible collections through pip"
+! grep -Eiq 'community[._-]?docker|community[[:space:]]*:[[:space:]]*docker' install.sh \
+    || fail "install.sh must not install Ansible collections through pip"
 assert_no_role_defaults_in_script install.sh
-assert_no_role_defaults_in_script bootstrap.sh
-assert_no_role_defaults_in_script scripts/installer-common.sh
-assert_role_defaults_cover_bootstrap_values
+assert_role_defaults_cover_installer_values
 pass "installer entrypoints follow tagged quickstart and strict SSOT rules"
 
 ansible-inventory -i inventory/localhost.yml --graph vps >/dev/null \

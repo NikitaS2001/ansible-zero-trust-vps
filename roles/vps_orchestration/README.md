@@ -132,13 +132,13 @@ post-deployment file permission hardening is applied via:
     - path: "{{ project_root }}/volumes/wg-easy/etc/wireguard/config.json"
 ```
 
-### Secrets Handling in Bootstrap Mode
+### Secrets Handling in Installer Mode
 
-When running in bootstrap mode (via `bootstrap.sh`), secrets are passed
-directly to `ansible-playbook` via `-e` flags, not written to disk:
+When running through the public installer, secrets are passed directly to
+Ansible via `-e` flags, not written to disk:
 
 ```bash
-ansible-playbook -i inventory/localhost.yml site.yml \
+ansible-pull -U "${REPO_URL}" -C "${RELEASE_REF}" \
   -e "admin_password=${ADMIN_PASSWORD}" \
   -e "adguard_password=${ADGUARD_PASSWORD}" \
   -e "vault_admin_ssh_pubkey=${SSH_PUBKEY}" ...

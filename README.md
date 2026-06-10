@@ -12,7 +12,6 @@ wg-easy web UI, AdGuard Home DNS, Caddy reverse proxy, UFW, and fail2ban.
 - [Stack Overview](#stack-overview)
 - [Deployment Modes](#deployment-modes)
 - [Public Install Mode](#public-install-mode)
-- [Local Clone Bootstrap Mode](#local-clone-bootstrap-mode)
 - [Remote Deployment Mode](#remote-deployment-mode)
 - [Deployment Modes Comparison](#deployment-modes-comparison)
 - [Configuration](#configuration)
@@ -69,12 +68,11 @@ flowchart LR
 
 ## Deployment Modes
 
-This project supports three deployment modes:
+This project supports two deployment modes:
 
 | Mode | Purpose |
 |------|---------|
 | [Public Install Mode](#public-install-mode) | Tagged one-command setup on a fresh VPS |
-| [Local Clone Bootstrap Mode](#local-clone-bootstrap-mode) | Local repository bootstrap for development/testing |
 | [Remote Deployment Mode](#remote-deployment-mode) | Manage one or more VPS from your laptop |
 
 Choose the mode that matches your use case.
@@ -103,20 +101,15 @@ tagged public repository.
 Use release tags for public installs. Do not install from `main` unless you are
 testing unreleased changes.
 
-## Local Clone Bootstrap Mode
-
-Clone the repository on a VPS and run:
+To test an unreleased branch on a disposable VPS, use the same installer path
+with explicit repository and ref overrides:
 
 ```bash
-./bootstrap.sh
+TEST_REF=feat/public-installer-v1
+curl -fsSL "https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/${TEST_REF}/install.sh" \
+  | sudo env ZERO_TRUST_REPO_URL=https://github.com/NikitaS2001/ansible-zero-trust-vps.git \
+      ZERO_TRUST_RELEASE_REF="${TEST_REF}" bash
 ```
-
-This mode is for local development and testing from a checked-out repository.
-It asks the same operational questions as the public installer, installs
-Ansible, and runs the local playbook.
-
-> **UFW note**: Bootstrap mode skips UFW enable to prevent lockout. After
-> bootstrap, you can manually enable UFW with `ufw enable` if desired.
 
 ## Remote Deployment Mode
 
@@ -145,7 +138,6 @@ ansible-playbook --vault-password-file .vault_password site.yml -u root
 |------|----------|---------|----------|
 | Public install | Fresh single VPS | `curl -fsSL .../v1.0.0/install.sh \| sudo bash` | SSH access to VPS |
 | Remote | Manage multiple VPS from laptop | `ansible-playbook -i inventory/hosts.yml site.yml` | Ansible on local machine |
-| Local clone bootstrap | Develop/test from a clone | `./bootstrap.sh` on VPS | Repository clone on VPS |
 
 ## Configuration
 
@@ -248,27 +240,3 @@ command again.
 
 The public installer supports Debian/Ubuntu systems with `apt-get`. Use remote
 Ansible mode for other targets after adapting the roles.
-
-### Local clone bootstrap mode
-
-**"Already bootstrapped" error**
-
-The script detects a previous deployment via `.bootstrapped`. To overwrite:
-```bash
-./bootstrap.sh --force
-```
-
-**"Ansible not found"**
-
-The bootstrap script installs Ansible automatically on Debian/Ubuntu. If installation fails, install manually:
-```bash
-apt-get update && apt-get install -y python3 python3-pip
-pip3 install ansible "community.docker>=4.0.0,<5.0.0"
-```
-
-**"UFW not enabled"**
-
-This is by design in local bootstrap mode. UFW rules are installed but the firewall is not enabled to prevent lockout. To enable UFW manually after bootstrap:
-```bash
-ufw enable
-```
