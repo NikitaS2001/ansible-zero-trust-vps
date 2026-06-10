@@ -11,6 +11,9 @@ readonly INSTALL_ROOT="/opt/zero-trust-vps-installer"
 readonly REPO_DIR="${INSTALL_ROOT}/repo"
 readonly VENV_DIR="${INSTALL_ROOT}/venv"
 
+CREATED_INSTALL_ROOT=false
+CREATED_REPO_DIR=false
+CREATED_VENV_DIR=false
 SSH_PORT=""
 WG_PORT=""
 ADMIN_USER=""
@@ -20,6 +23,28 @@ INTERNAL_DOMAINS=""
 WG_INTERNAL_DOMAIN=""
 ADGUARD_INTERNAL_DOMAIN=""
 SSH_PUBKEY=""
+
+cleanup_on_failure() {
+    local exit_code=$?
+
+    if [[ "${exit_code}" -eq 0 ]]; then
+        return
+    fi
+
+    if [[ "${CREATED_REPO_DIR}" == "true" ]]; then
+        warn "Installation failed. Removing partial repository checkout at ${REPO_DIR}."
+        rm -rf "${REPO_DIR}"
+    fi
+    if [[ "${CREATED_VENV_DIR}" == "true" ]]; then
+        warn "Installation failed. Removing partial Ansible virtualenv at ${VENV_DIR}."
+        rm -rf "${VENV_DIR}"
+    fi
+    if [[ "${CREATED_INSTALL_ROOT}" == "true" ]]; then
+        warn "Installation failed. Removing partial installer state at ${INSTALL_ROOT}."
+        rm -rf "${INSTALL_ROOT}"
+    fi
+}
+trap cleanup_on_failure EXIT
 
 usage() {
     cat <<EOF
@@ -88,6 +113,7 @@ prompt_required_secret() {
     local __var_name="$1"
     local prompt_text="$2"
     local value
+    local confirmation
 
     while true; do
         printf "%s: " "${prompt_text}" >&3
@@ -95,6 +121,13 @@ prompt_required_secret() {
         printf "\n" >&3
         if [[ "${#value}" -lt 8 ]]; then
             warn "Value must be at least 8 characters."
+            continue
+        fi
+        printf "Confirm %s: " "${prompt_text}" >&3
+        IFS= read -r -s confirmation <&3
+        printf "\n" >&3
+        if [[ "${value}" != "${confirmation}" ]]; then
+            warn "Values did not match. Try again."
             continue
         fi
         printf -v "${__var_name}" '%s' "${value}"
@@ -128,8 +161,8 @@ validate_port() {
     if [[ -z "${value}" ]]; then
         return 0
     fi
-    if ! [[ "${value}" =~ ^[0-9]+$ ]] || [[ "${value}" -lt 1024 ]] || [[ "${value}" -gt 65535 ]]; then
-        error "${label} must be a number between 1024 and 65535. Got: ${value}"
+    if ! [[ "${value}" =~ ^[0-9]+$ ]] || [[ "${value}" -lt 1 ]] || [[ "${value}" -gt 65535 ]]; then
+        error "${label} must be a number between 1 and 65535. Got: ${value}"
     fi
 }
 
@@ -139,8 +172,8 @@ validate_optional_admin_user() {
     if [[ -z "${value}" ]]; then
         return 0
     fi
-    if ! [[ "${value}" =~ ^[a-z0-9]+$ ]]; then
-        error "Admin username must be lowercase alphanumeric. Got: ${value}"
+    if ! [[ "${value}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
+        error "Admin username must be a valid Linux user name. Got: ${value}"
     fi
 }
 
@@ -166,22 +199,54 @@ validate_internal_domains() {
 
 validate_ssh_pubkey() {
     local value="$1"
+    local key_type
 
-    if ! [[ "${value}" =~ ^(ssh-|ecdsa-) ]]; then
-        error "SSH public key must start with 'ssh-' or 'ecdsa-'. Got: ${value:0:20}..."
+    key_type="${value%%[[:space:]]*}"
+    case "${key_type}" in
+        ssh-rsa|ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh.com|sk-ecdsa-sha2-nistp256@openssh.com)
+            ;;
+        *)
+            error "Unsupported SSH public key type '${key_type}'. Use an OpenSSH public key, including FIDO/U2F sk-* keys."
+            ;;
+    esac
+}
+
+validate_release_source() {
+    if [[ -z "${REPO_URL}" || "${REPO_URL}" =~ [[:space:]] || "${REPO_URL}" == -* ]]; then
+        error "ZERO_TRUST_REPO_URL must be a non-empty git URL without whitespace."
+    fi
+    if [[ -z "${RELEASE_REF}" || "${RELEASE_REF}" == -* || ! "${RELEASE_REF}" =~ ^[A-Za-z0-9._/@+-]+$ ]]; then
+        error "ZERO_TRUST_RELEASE_REF must be a non-empty git ref using only letters, numbers, '.', '_', '/', '@', '+', or '-'."
+    fi
+    if [[ "${RELEASE_REF}" == *..* || "${RELEASE_REF}" == *@\{* || "${RELEASE_REF}" == *.lock || "${RELEASE_REF}" == */ || "${RELEASE_REF}" == /* ]]; then
+        error "ZERO_TRUST_RELEASE_REF is not a safe git ref: ${RELEASE_REF}"
+    fi
+}
+
+ensure_install_root() {
+    if [[ ! -e "${INSTALL_ROOT}" ]]; then
+        mkdir -p "${INSTALL_ROOT}"
+        CREATED_INSTALL_ROOT=true
+        return
+    fi
+    if [[ ! -d "${INSTALL_ROOT}" ]]; then
+        error "${INSTALL_ROOT} exists but is not a directory."
     fi
 }
 
 install_prerequisites() {
     info "Installing system prerequisites..."
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y -qq ca-certificates git python3 python3-venv >/dev/null
+    apt-get update
+    apt-get install -y ca-certificates git python3 python3-venv
 }
 
 install_ansible_toolchain() {
     info "Installing Ansible in ${VENV_DIR}..."
-    mkdir -p "${INSTALL_ROOT}"
+    ensure_install_root
+    if [[ ! -e "${VENV_DIR}" ]]; then
+        CREATED_VENV_DIR=true
+    fi
     python3 -m venv "${VENV_DIR}"
     "${VENV_DIR}/bin/python" -m pip install --quiet --upgrade pip
     "${VENV_DIR}/bin/pip" install --quiet ansible
@@ -189,11 +254,18 @@ install_ansible_toolchain() {
 
 checkout_release() {
     info "Checking out ${REPO_URL} at ${RELEASE_REF}..."
-    mkdir -p "${INSTALL_ROOT}"
+    ensure_install_root
     if [[ -d "${REPO_DIR}/.git" ]]; then
         git -C "${REPO_DIR}" fetch --quiet --tags origin
+    elif [[ -e "${REPO_DIR}" ]]; then
+        error "${REPO_DIR} exists but is not a git checkout. Remove it or set ZERO_TRUST_REPO_URL/ZERO_TRUST_RELEASE_REF for a clean install."
     else
+        CREATED_REPO_DIR=true
         git clone --quiet "${REPO_URL}" "${REPO_DIR}"
+    fi
+
+    if ! git -C "${REPO_DIR}" rev-parse --verify --quiet "${RELEASE_REF}^{commit}" >/dev/null; then
+        error "Git ref '${RELEASE_REF}' was not found in ${REPO_URL}."
     fi
     git -C "${REPO_DIR}" checkout --quiet "${RELEASE_REF}"
 }
@@ -256,6 +328,11 @@ run_ansible_pull() {
 }
 
 print_summary() {
+    local summary_ssh_port="${SSH_PORT:-<role default ssh_port>}"
+    local summary_admin_user="${ADMIN_USER:-<role default admin_user>}"
+    local summary_wg_domain="${WG_INTERNAL_DOMAIN:-<role default wg_internal_domain>}"
+    local summary_adguard_domain="${ADGUARD_INTERNAL_DOMAIN:-<role default adguard_internal_domain>}"
+
     cat <<EOF
 
 ================================================================================
@@ -264,9 +341,14 @@ print_summary() {
 
 Open SSH tunnels from your workstation to complete first-client setup:
 
-  ssh -p <ssh_port> -L <local-port>:127.0.0.1:<remote-ui-port> <admin-user>@<vps-ip>
+  ssh -p ${summary_ssh_port} -L <wg-easy-local-port>:127.0.0.1:<wg-easy-ui-port> ${summary_admin_user}@<vps-ip>
+  ssh -p ${summary_ssh_port} -L <adguard-local-port>:127.0.0.1:<adguard-ui-port> ${summary_admin_user}@<vps-ip>
 
 Then create the first WireGuard client in wg-easy and connect to the VPN.
+After connecting, use the internal domains:
+
+  https://${summary_wg_domain}
+  https://${summary_adguard_domain}
 
 ================================================================================
 
@@ -282,6 +364,7 @@ main() {
         error "Unknown option: $1. Use --help for usage."
     fi
 
+    validate_release_source
     require_root
     require_supported_os
     open_tty
