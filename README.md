@@ -10,13 +10,14 @@ wg-easy web UI, AdGuard Home DNS, Caddy reverse proxy, UFW, and fail2ban.
 
 - [Architecture](#architecture)
 - [Stack Overview](#stack-overview)
+- [Stack Licenses](#stack-licenses)
 - [Deployment Modes](#deployment-modes)
 - [Public Install Mode](#public-install-mode)
 - [Remote Deployment Mode](#remote-deployment-mode)
 - [Deployment Modes Comparison](#deployment-modes-comparison)
 - [Configuration](#configuration)
 - [Security Model](#security-model)
-- [First Client Bootstrap](#first-client-bootstrap)
+- [First Client Setup](#first-client-setup)
 - [Troubleshooting](#troubleshooting)
 - [Development Setup](#development-setup)
 
@@ -52,11 +53,12 @@ flowchart LR
 |-----------|---------|
 | This playbook | [MIT](LICENSE) |
 | wg-easy | AGPL-3.0-only |
-| AdGuard Home | Proprietary |
+| AdGuard Home | GPL-3.0-only |
 | Caddy | Apache-2.0 |
 
-> ⚠️ **wg-easy** is licensed under AGPL-3.0-only. If you modify or redistribute
-> the deployed stack, ensure compliance with the AGPL terms.
+> **Note:** verify upstream license terms before modifying or redistributing
+> the deployed stack. wg-easy is AGPL-3.0-only, which has network-service
+> source-sharing obligations for modified versions.
 
 ## Deployment Modes
 
@@ -166,7 +168,7 @@ ansible_port: <ssh_port>
   unencrypted copies.
 - Keep `.vault_password` out of git and readable only by your local user.
 - wg-easy and AdGuard admin UIs are bound to `127.0.0.1` on the VPS. Access
-  during bootstrap is through SSH local forwarding only.
+  during initial setup is through SSH local forwarding only.
 - Caddy is not published on the public interface. It serves `.internal`
   hostnames to VPN clients via the Docker network at `172.20.0.3`.
 - Only SSH and WireGuard UDP are exposed publicly. No web service ports on
@@ -176,7 +178,7 @@ ansible_port: <ssh_port>
 - Do not add the WireGuard client subnet to `fail2ban_ignore_ips`; doing so
   lets compromised VPN clients bypass SSH brute-force protection.
 
-## First Client Bootstrap
+## First Client Setup
 
 After the playbook finishes, open an SSH tunnel for the wg-easy setup wizard:
 
@@ -212,7 +214,7 @@ ssh -p <ssh_port> -L 51821:127.0.0.1:51821 <admin_user>@<ansible_host>
 6. Import `fetched_certs/<inventory-host>/root.crt` into your client OS or
    browser to trust the `.internal` HTTPS endpoints.
 
-AdGuard is also reachable during bootstrap at `http://127.0.0.1:3000` via:
+AdGuard is also reachable during initial setup at `http://127.0.0.1:3000` via:
 
 ```sh
 ssh -p <ssh_port> -L 3000:127.0.0.1:3000 <admin_user>@<ansible_host>
@@ -234,6 +236,8 @@ The public installer supports Debian/Ubuntu systems with `apt-get`. Use remote
 Ansible mode for other targets after adapting the roles.
 
 ## Development Setup
+
+For local contributor checks, install the pre-commit hooks:
 
 ```bash
 pip install pre-commit

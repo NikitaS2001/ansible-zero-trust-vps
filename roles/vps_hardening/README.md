@@ -10,8 +10,8 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
 
 - Installs and enables UFW with default-deny incoming policy
 - Creates a non-root sudo user with SSH public-key authentication
-- Hardens the SSH daemon (non-standard port, key auth only, no TCP forwarding
-  by default)
+- Hardens the SSH daemon (non-standard port, key auth only, forwarding limited
+  to the configured localhost UI ports)
 - Applies kernel network sysctl settings (IP forwarding, rpfilter, etc.)
 - Installs and configures fail2ban to block brute-force SSH attackers
 
@@ -65,15 +65,14 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
         admin_user: sysadmin
         admin_group: sudo
         vault_admin_ssh_pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
-        ssh_allow_tcp_forwarding: "no"
+        ssh_allow_tcp_forwarding: "yes"
         fail2ban_ignore_ips:
           - "127.0.0.1/8"
-          - "10.8.0.0/24"  # VPN subnet
         vps_hardening_apply_package_upgrade: true
         vps_hardening_package_upgrade_mode: safe
 ```
 
-## First Bootstrap Access
+## First Setup Access
 
 After this role runs, access the wg-easy setup wizard through an SSH tunnel:
 

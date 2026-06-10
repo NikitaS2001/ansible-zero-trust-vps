@@ -13,7 +13,7 @@ vault_admin_ssh_pubkey: ""
 ssh_service_name: ssh
 ssh_allow_tcp_forwarding: "yes"
 
-# Bootstrap admin UI access through SSH local forwarding
+# Initial setup admin UI access through SSH local forwarding
 wg_easy_bootstrap_ui_port: 51821
 adguard_bootstrap_ui_port: 3000
 

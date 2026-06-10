@@ -25,7 +25,7 @@ caddy_version: "2.11.3"
 wg_internal_domain: "wg.internal"
 adguard_internal_domain: "adguard.internal"
 
-# Bootstrap admin UI access through SSH local forwarding
+# Initial setup admin UI access through SSH local forwarding
 wg_easy_bootstrap_ui_port: 51821
 adguard_bootstrap_ui_port: 3000
 
