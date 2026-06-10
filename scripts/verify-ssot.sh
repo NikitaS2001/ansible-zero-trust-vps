@@ -7,6 +7,7 @@ WORK_DIR="$(mktemp -d "${TMP_BASE%/}/ssot-verify.XXXXXX")"
 LOCAL_TEMP="${WORK_DIR}/ansible-local"
 REMOTE_TEMP="${WORK_DIR}/ansible-remote"
 REMOTE_INVENTORY="${WORK_DIR}/hosts.yml"
+PULL_SOURCE="${WORK_DIR}/ansible-pull-source"
 PULL_CHECKOUT="${WORK_DIR}/ansible-pull-checkout"
 PULL_LOG="${WORK_DIR}/ansible-pull-smoke.log"
 
@@ -141,8 +142,11 @@ ansible-playbook -i inventory/localhost.yml site.yml --syntax-check >/dev/null
 ansible-playbook -i "${REMOTE_INVENTORY}" site.yml --syntax-check >/dev/null
 pass "syntax-check passes for local and remote inventories"
 
-if ! env GIT_ALLOW_PROTOCOL=file ansible-pull -U "file://${ROOT_DIR}" \
-    -C HEAD \
+git clone --quiet "${ROOT_DIR}" "${PULL_SOURCE}"
+git -C "${PULL_SOURCE}" checkout --quiet -B ssot-smoke HEAD
+
+if ! env GIT_ALLOW_PROTOCOL=file ansible-pull -U "file://${PULL_SOURCE}" \
+    -C ssot-smoke \
     -d "${PULL_CHECKOUT}" \
     -i inventory/localhost.yml \
     tests/ansible-pull-smoke.yml >"${PULL_LOG}" 2>&1; then
