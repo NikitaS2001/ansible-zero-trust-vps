@@ -31,7 +31,6 @@
       - docker-ce-cli
       - containerd.io
       - docker-compose-plugin
-      - apache2-utils  # provides htpasswd for AdGuard bcrypt hash generation
     state: present
   tags: [docker]
 

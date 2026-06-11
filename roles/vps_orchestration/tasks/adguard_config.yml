@@ -1,16 +1,18 @@
 ---
 - name: "AdGuard | Config | Generate password hash"
-  shell: "set -o pipefail && htpasswd -nbB admin '{{ adguard_password }}' | cut -d: -f2"
-  register: adguard_password_hash
+  set_fact:
+    vault_adguard_password_hash: >-
+      {{
+        adguard_password | password_hash(
+          'bcrypt',
+          ((adguard_internal_domain ~ inventory_hostname) | hash('sha256'))[:22],
+          ident='2y'
+        )
+      }}
   no_log: true
   changed_when: false
   when: adguard_password is defined
-
-- name: "AdGuard | Config | Set vault_adguard_password_hash from generated hash"
-  set_fact:
-    vault_adguard_password_hash: "{{ adguard_password_hash.stdout }}"
-  no_log: true
-  when: adguard_password is defined
+  tags: [adguard]
 
 - name: "AdGuard | Config | Deploy AdGuardHome.yaml before containers start"
   template:

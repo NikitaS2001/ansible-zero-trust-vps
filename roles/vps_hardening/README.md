@@ -37,6 +37,7 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
 
 | Tag | Purpose |
 |---|---|
+| `preflight` | Validate supported target environment |
 | `packages` | Install and upgrade system packages |
 | `user` | Create admin user and configure sudo |
 | `ssh` | Harden SSH daemon configuration |

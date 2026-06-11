@@ -118,7 +118,8 @@ cp group_vars/all/vault_ssh.yml.example group_vars/all/vault_ssh.yml
 # 3. Encrypt vault files
 ansible-vault encrypt group_vars/all/vault_services.yml group_vars/all/vault_ssh.yml
 
-# 4. Install collections
+# 4. Install controller dependencies and collections
+python3 -m pip install --user ansible-core "passlib[bcrypt]"
 ansible-galaxy collection install -r requirements.yml
 
 # 5. Syntax-check and deploy

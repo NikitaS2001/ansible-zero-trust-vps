@@ -14,6 +14,7 @@ readonly VENV_DIR="${INSTALL_ROOT}/venv"
 CREATED_INSTALL_ROOT=false
 CREATED_REPO_DIR=false
 CREATED_VENV_DIR=false
+EXTRA_VARS_FILE=""
 SSH_PORT=""
 WG_PORT=""
 ADMIN_USER=""
@@ -26,6 +27,8 @@ SSH_PUBKEY=""
 
 cleanup_on_failure() {
     local exit_code=$?
+
+    cleanup_extra_vars_file
 
     if [[ "${exit_code}" -eq 0 ]]; then
         return
@@ -45,6 +48,12 @@ cleanup_on_failure() {
     fi
 }
 trap cleanup_on_failure EXIT
+
+cleanup_extra_vars_file() {
+    if [[ -n "${EXTRA_VARS_FILE}" && -e "${EXTRA_VARS_FILE}" ]]; then
+        rm -f "${EXTRA_VARS_FILE}"
+    fi
+}
 
 usage() {
     cat <<EOF
@@ -286,7 +295,7 @@ install_ansible_toolchain() {
     fi
     python3 -m venv "${VENV_DIR}"
     "${VENV_DIR}/bin/python" -m pip install --quiet --upgrade pip
-    "${VENV_DIR}/bin/pip" install --quiet ansible
+    "${VENV_DIR}/bin/pip" install --quiet ansible "passlib[bcrypt]"
 }
 
 checkout_release() {
@@ -329,30 +338,53 @@ collect_configuration() {
     validate_ssh_pubkey "${SSH_PUBKEY}"
 }
 
-run_ansible_pull() {
-    local -a extra_vars
-    extra_vars=(
-        -e "ansible_connection=local"
-        -e "admin_password=${ADMIN_PASSWORD}"
-        -e "adguard_password=${ADGUARD_PASSWORD}"
-        -e "vault_admin_ssh_pubkey=${SSH_PUBKEY}"
-    )
+json_quote() {
+    local value="$1"
+
+    printf '%s' "${value}" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read()))'
+}
+
+write_extra_var() {
+    local key="$1"
+    local value="$2"
+
+    {
+        printf '%s: ' "${key}"
+        json_quote "${value}"
+        printf '\n'
+    } >>"${EXTRA_VARS_FILE}"
+}
+
+prepare_extra_vars_file() {
+    ensure_install_root
+    EXTRA_VARS_FILE="$(mktemp "${INSTALL_ROOT}/extra-vars.XXXXXX.yml")"
+    chmod 0600 "${EXTRA_VARS_FILE}"
+
+    write_extra_var ansible_connection local
+    write_extra_var admin_password "${ADMIN_PASSWORD}"
+    write_extra_var adguard_password "${ADGUARD_PASSWORD}"
+    write_extra_var vault_admin_ssh_pubkey "${SSH_PUBKEY}"
 
     if [[ -n "${SSH_PORT}" ]]; then
-        extra_vars+=(-e "ssh_port=${SSH_PORT}")
+        write_extra_var ssh_port "${SSH_PORT}"
     fi
     if [[ -n "${WG_PORT}" ]]; then
-        extra_vars+=(-e "wg_port=${WG_PORT}" -e "wg_container_port=${WG_PORT}")
+        write_extra_var wg_port "${WG_PORT}"
+        write_extra_var wg_container_port "${WG_PORT}"
     fi
     if [[ -n "${ADMIN_USER}" ]]; then
-        extra_vars+=(-e "admin_user=${ADMIN_USER}")
+        write_extra_var admin_user "${ADMIN_USER}"
     fi
     if [[ -n "${WG_INTERNAL_DOMAIN}" ]]; then
-        extra_vars+=(-e "wg_internal_domain=${WG_INTERNAL_DOMAIN}")
+        write_extra_var wg_internal_domain "${WG_INTERNAL_DOMAIN}"
     fi
     if [[ -n "${ADGUARD_INTERNAL_DOMAIN}" ]]; then
-        extra_vars+=(-e "adguard_internal_domain=${ADGUARD_INTERNAL_DOMAIN}")
+        write_extra_var adguard_internal_domain "${ADGUARD_INTERNAL_DOMAIN}"
     fi
+}
+
+run_ansible_pull() {
+    prepare_extra_vars_file
 
     info "Running ansible-pull from ${REPO_URL} at ${RELEASE_REF}..."
     "${VENV_DIR}/bin/ansible-pull" \
@@ -360,8 +392,9 @@ run_ansible_pull() {
         -C "${RELEASE_REF}" \
         -d "${REPO_DIR}" \
         -i inventory/localhost.yml \
-        "${extra_vars[@]}" \
+        --extra-vars "@${EXTRA_VARS_FILE}" \
         site.yml
+    cleanup_extra_vars_file
 }
 
 print_summary() {

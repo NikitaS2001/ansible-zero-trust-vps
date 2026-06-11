@@ -6,11 +6,18 @@
   tags: [user]
 
 - name: "VPS Hardening | User | Generate admin password hash"
-  command: openssl passwd -6 "{{ admin_password }}"
-  register: vps_hardening_generated_admin_password_hash
+  set_fact:
+    vps_hardening_admin_password_hash: >-
+      {{
+        admin_password | password_hash(
+          'sha512',
+          ((admin_user ~ inventory_hostname) | hash('sha256'))[:16]
+        )
+      }}
   no_log: true
   changed_when: false
   when: admin_password is defined
+  tags: [user]
 
 - name: "VPS Hardening | User | Create admin user"
   user:
@@ -21,7 +28,7 @@
     password: >-
       {{
         (
-          vps_hardening_generated_admin_password_hash.stdout
+          vps_hardening_admin_password_hash
           if admin_password is defined
           else admin_password_hash
         ) | default(omit, true)
