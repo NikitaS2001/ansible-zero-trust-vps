@@ -47,19 +47,61 @@
       }
     backup: yes
     mode: '0644'
-  notify: restart docker
+  register: vps_orchestration_docker_daemon_config
   tags: [docker]
 
-- name: "Docker | Flush | Apply daemon config before Compose"
-  meta: flush_handlers
-  tags: [docker]
-
-- name: "Docker | Service | Ensure Docker is enabled and running"
+- name: "Docker | Service | Ensure containerd is enabled and running"
   service:
-    name: docker
+    name: containerd
     state: started
     enabled: yes
   tags: [docker]
+
+- name: "Docker | Service | Start Docker with diagnostics"
+  tags: [docker]
+  block:
+    - name: "Docker | Service | Restart Docker after daemon config change"
+      service:
+        name: docker
+        state: restarted
+        enabled: yes
+      when: vps_orchestration_docker_daemon_config.changed
+      tags: [docker]
+
+    - name: "Docker | Service | Ensure Docker is enabled and running"
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      tags: [docker]
+  rescue:
+    - name: "Docker | Diagnose | Read Docker service status"  # noqa: command-instead-of-module
+      command: systemctl status docker --no-pager
+      register: vps_orchestration_docker_status
+      changed_when: false
+      failed_when: false
+      tags: [docker]
+
+    - name: "Docker | Diagnose | Read Docker service journal"  # noqa: command-instead-of-module
+      command: journalctl -xeu docker.service --no-pager -n 80
+      register: vps_orchestration_docker_journal
+      changed_when: false
+      failed_when: false
+      tags: [docker]
+
+    - name: "Docker | Diagnose | Fail with Docker startup details"
+      fail:
+        msg: |
+          Docker daemon failed to start.
+
+          systemctl status docker:
+          {{ vps_orchestration_docker_status.stdout | default("") }}
+          {{ vps_orchestration_docker_status.stderr | default("") }}
+
+          journalctl -xeu docker.service -n 80:
+          {{ vps_orchestration_docker_journal.stdout | default("") }}
+          {{ vps_orchestration_docker_journal.stderr | default("") }}
+      tags: [docker]
 
 - name: "Docker | User | Ensure admin is in docker group"
   user:
