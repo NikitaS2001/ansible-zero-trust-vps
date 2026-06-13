@@ -9,8 +9,11 @@
   tags: [ufw_docker]
 
 - name: "UFW-Docker | State | Enable UFW before UFW-Docker install"
-  ufw:
-    state: enabled
+  command: ufw --force enable  # noqa: command-instead-of-module
+  register: vps_orchestration_ufw_enable
+  changed_when: >
+    (vps_orchestration_ufw_enable.stdout ~ vps_orchestration_ufw_enable.stderr)
+    is regex('(?m)(Firewall is active and enabled|Firewall reloaded)', ignorecase=True)
   when:
     - vps_orchestration_enable_ufw_before_ufw_docker | bool
     - ansible_facts["virtualization_type"] | default("") not in ["lxc", "openvz"]
