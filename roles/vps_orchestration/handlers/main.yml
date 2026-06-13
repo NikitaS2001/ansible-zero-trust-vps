@@ -5,8 +5,7 @@
     state: restarted
   listen: restart docker
 
-- name: Restart ufw
-  service:
-    name: ufw
+- name: Reload ufw
+  ufw:
     state: reloaded
   listen: reload ufw
