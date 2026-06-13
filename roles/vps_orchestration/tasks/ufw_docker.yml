@@ -8,6 +8,14 @@
     mode: '0755'
   tags: [ufw_docker]
 
+- name: "UFW-Docker | State | Enable UFW before UFW-Docker install"
+  ufw:
+    state: enabled
+  when:
+    - vps_orchestration_enable_ufw_before_ufw_docker | bool
+    - ansible_facts["virtualization_type"] | default("") not in ["lxc", "openvz"]
+  tags: [ufw_docker]
+
 - name: "UFW-Docker | Install | Run ufw-docker install"
   command: ufw-docker install
   register: vps_orchestration_ufw_docker_install
@@ -32,12 +40,4 @@
 
 - name: "UFW-Docker | Allow | Apply container allow rules immediately"
   meta: flush_handlers
-  tags: [ufw_docker]
-
-- name: "UFW-Docker | State | Enable UFW after Docker integration"
-  ufw:
-    state: enabled
-  when:
-    - vps_orchestration_enable_ufw_after_ufw_docker | bool
-    - ansible_facts["virtualization_type"] | default("") not in ["lxc", "openvz"]
   tags: [ufw_docker]

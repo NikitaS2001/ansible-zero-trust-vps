@@ -366,7 +366,7 @@ prepare_extra_vars_file() {
     chmod 0600 "${EXTRA_VARS_FILE}"
 
     write_extra_var ansible_connection local
-    write_extra_var vps_orchestration_enable_ufw_after_ufw_docker true
+    write_extra_var vps_orchestration_enable_ufw_before_ufw_docker true
     write_extra_var admin_password "${ADMIN_PASSWORD}"
     write_extra_var adguard_password "${ADGUARD_PASSWORD}"
     write_extra_var vault_admin_ssh_pubkey "${SSH_PUBKEY}"
