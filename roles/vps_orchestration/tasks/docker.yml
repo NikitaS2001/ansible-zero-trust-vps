@@ -57,6 +57,27 @@
     enabled: yes
   tags: [docker]
 
+- name: "Docker | Service | Reset Docker failed state"  # noqa: command-instead-of-module
+  command: systemctl reset-failed docker.service docker.socket
+  changed_when: false
+  failed_when: false
+  tags: [docker]
+
+- name: "Docker | Service | Check Docker socket unit"  # noqa: command-instead-of-module
+  command: systemctl list-unit-files docker.socket --no-legend
+  register: vps_orchestration_docker_socket_unit
+  changed_when: false
+  failed_when: false
+  tags: [docker]
+
+- name: "Docker | Service | Ensure Docker socket is enabled and running"
+  service:
+    name: docker.socket
+    state: started
+    enabled: yes
+  when: vps_orchestration_docker_socket_unit.rc == 0
+  tags: [docker]
+
 - name: "Docker | Service | Start Docker with diagnostics"
   tags: [docker]
   block:
