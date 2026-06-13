@@ -44,6 +44,7 @@ zero-trust VPN gateway:
 | `docker_apt_gpg_checksum` | *(derived)* | SHA256 checksum of Docker GPG key file |
 | `ufw_docker_commit` | `020a8699f95592561f254d8d4ad1bb40d401dfc7` | Git commit of `ufw-docker` hook to install |
 | `ufw_docker_checksum` | *(derived)* | SHA256 checksum of `ufw-docker` script |
+| `vps_orchestration_enable_ufw_after_ufw_docker` | `false` | Enable UFW after Docker and UFW-Docker are configured, used by the public installer |
 | `root_ca_path_on_host` | *(derived)* | Path to Caddy-generated root CA certificate |
 | `fetched_certs_dir` | `fetched_certs` | Local directory where role copies certs for retrieval |
 | `vault_adguard_password_hash` | `""` | bcrypt hash for AdGuard admin UI (required for AdGuard setup) |
@@ -136,5 +137,5 @@ This role supports Ansible check mode (`--check`). Tasks are idempotent and safe
 
 ## Dependencies
 
-- `vps_hardening` (UFW must be configured before this role runs)
+- `vps_hardening` (UFW host rules must be configured before this role runs)
 - Docker requires a Linux kernel with iptables support

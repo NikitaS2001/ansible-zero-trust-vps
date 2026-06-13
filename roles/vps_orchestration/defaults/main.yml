@@ -45,6 +45,7 @@ docker_apt_gpg_checksum: "sha256:1500c1f56fa9e26b9b8f42452a553675796ade0807cdce1
 # UFW Docker script
 ufw_docker_commit: "020a8699f95592561f254d8d4ad1bb40d401dfc7"
 ufw_docker_checksum: "sha256:643e56b080567c567b4aa28650196849b2a2da5dd0473fd3e5216b0886035ab0"
+vps_orchestration_enable_ufw_after_ufw_docker: false
 
 # Certificate fetch settings
 root_ca_path_on_host: "{{ project_root }}/volumes/caddy/data/caddy/pki/authorities/local/root.crt"
