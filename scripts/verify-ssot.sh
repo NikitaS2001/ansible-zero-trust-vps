@@ -157,6 +157,7 @@ assert_role_defaults_cover_installer_values() {
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml adguard_bootstrap_ui_port 3000
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_apply_package_upgrade false
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_package_upgrade_mode safe
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_enable_ufw_on_local_connection false
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml project_root /opt/zero-trust-vps
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml docker_network_subnet 172.20.0.0/24
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_container_ip 172.20.0.2

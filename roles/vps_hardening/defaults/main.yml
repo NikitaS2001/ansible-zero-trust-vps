@@ -24,3 +24,7 @@ fail2ban_ignore_ips:
 # Package upgrade policy
 vps_hardening_apply_package_upgrade: false
 vps_hardening_package_upgrade_mode: "safe"
+
+# Local Ansible connections are common for ansible-pull. Keep direct local
+# playbook runs conservative unless an installer explicitly enables UFW.
+vps_hardening_enable_ufw_on_local_connection: false

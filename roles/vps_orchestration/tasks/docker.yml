@@ -50,6 +50,17 @@
   notify: restart docker
   tags: [docker]
 
+- name: "Docker | Flush | Apply daemon config before Compose"
+  meta: flush_handlers
+  tags: [docker]
+
+- name: "Docker | Service | Ensure Docker is enabled and running"
+  service:
+    name: docker
+    state: started
+    enabled: yes
+  tags: [docker]
+
 - name: "Docker | User | Ensure admin is in docker group"
   user:
     name: "{{ admin_user }}"
