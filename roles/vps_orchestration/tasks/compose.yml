@@ -19,5 +19,5 @@
   community.docker.docker_compose_v2:
     project_src: "{{ project_root }}"
     state: present
-    recreate: auto
+    recreate: "{{ 'always' if vps_orchestration_adguard_config.changed | default(false) else 'auto' }}"
   tags: [compose]

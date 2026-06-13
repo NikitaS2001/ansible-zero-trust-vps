@@ -277,6 +277,10 @@ AdGuard is also reachable during initial setup at `http://127.0.0.1:3000` via:
 ssh -p <ssh_port> -L 3000:127.0.0.1:3000 <admin_user>@<ansible_host>
 ```
 
+AdGuard is preconfigured by Ansible. It should show the login screen, not the
+first-run setup wizard. Log in as `admin` with the AdGuard admin password
+entered during installation.
+
 ## Troubleshooting
 
 ### Public install mode

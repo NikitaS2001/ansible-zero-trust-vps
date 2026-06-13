@@ -20,5 +20,6 @@
     dest: "{{ project_root }}/volumes/adguard/conf/AdGuardHome.yaml"
     backup: yes
     mode: '0600'
+  register: vps_orchestration_adguard_config
   no_log: true
   tags: [adguard]
