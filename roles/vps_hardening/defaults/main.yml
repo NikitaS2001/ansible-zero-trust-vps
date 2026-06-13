@@ -11,7 +11,9 @@ vault_admin_ssh_pubkey: ""
 
 # SSH
 ssh_service_name: ssh
+ssh_socket_name: ssh.socket
 ssh_allow_tcp_forwarding: "yes"
+vps_hardening_manage_ssh_socket: true
 
 # Initial setup admin UI access through SSH local forwarding
 wg_easy_bootstrap_ui_port: 51821

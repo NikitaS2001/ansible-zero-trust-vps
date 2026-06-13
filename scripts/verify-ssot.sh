@@ -152,7 +152,9 @@ assert_role_defaults_cover_installer_values() {
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml admin_user sysadmin
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml admin_group sudo
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml ssh_service_name ssh
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml ssh_socket_name ssh.socket
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml ssh_allow_tcp_forwarding yes
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_manage_ssh_socket true
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml wg_easy_bootstrap_ui_port 51821
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml adguard_bootstrap_ui_port 3000
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_apply_package_upgrade false

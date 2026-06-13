@@ -26,7 +26,9 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
 | `admin_password_hash` | `""` | Precomputed admin password hash (optional; key auth is primary) |
 | `vault_admin_ssh_pubkey` | `""` | SSH public key content for `admin_user` (required for key auth) |
 | `ssh_service_name` | `ssh` | Name of the SSH service to restart |
+| `ssh_socket_name` | `ssh.socket` | Name of the systemd SSH socket unit when socket activation is present |
 | `ssh_allow_tcp_forwarding` | `"yes"` | Allow SSH TCP forwarding (`"yes"` or `"no"`) |
+| `vps_hardening_manage_ssh_socket` | `true` | Align `ssh.socket` listener with `ssh_port` on systems using socket activation |
 | `wg_easy_bootstrap_ui_port` | `51821` | wg-easy UI port bound to localhost (for SSH tunnel access) |
 | `adguard_bootstrap_ui_port` | `3000` | AdGuard UI port bound to localhost (for SSH tunnel access) |
 | `fail2ban_ignore_ips` | `["127.0.0.1/8"]` | IPs ignored by fail2ban |

@@ -12,8 +12,49 @@
       notify: restart sshd
       tags: [ssh]
 
+    - name: "SSH | Socket | Check systemd socket unit"  # noqa: command-instead-of-module
+      command: "systemctl list-unit-files {{ ssh_socket_name }} --no-legend"
+      register: vps_hardening_ssh_socket_unit
+      changed_when: false
+      failed_when: false
+      when: vps_hardening_manage_ssh_socket | bool
+      tags: [ssh]
+
+    - name: "SSH | Socket | Ensure socket drop-in directory exists"
+      file:
+        path: "/etc/systemd/system/{{ ssh_socket_name }}.d"
+        state: directory
+        mode: '0755'
+      when:
+        - vps_hardening_manage_ssh_socket | bool
+        - vps_hardening_ssh_socket_unit.rc | default(1) == 0
+      tags: [ssh]
+
+    - name: "SSH | Socket | Align socket listener with hardened port"
+      copy:
+        dest: "/etc/systemd/system/{{ ssh_socket_name }}.d/listen.conf"
+        content: |
+          [Socket]
+          ListenStream=
+          ListenStream={{ ssh_port }}
+        backup: yes
+        mode: '0644'
+      when:
+        - vps_hardening_manage_ssh_socket | bool
+        - vps_hardening_ssh_socket_unit.rc | default(1) == 0
+      notify: restart sshd
+      tags: [ssh]
+
     - name: "SSH | Flush | Force handler execution now"
       meta: flush_handlers
+      tags: [ssh]
+
+    - name: "SSH | Verify | Wait for local sshd on new port"
+      wait_for:
+        port: "{{ ssh_port }}"
+        host: 127.0.0.1
+        timeout: 30
+      when: ansible_connection == "local"
       tags: [ssh]
 
     - name: "SSH | Verify | Wait for sshd on new port"
@@ -32,6 +73,16 @@
         remote_src: true
         mode: '0644'
       when: vps_hardening_sshd_config.backup_file is defined
+      notify: restart sshd
+      tags: [ssh]
+
+    - name: "SSH | Rescue | Remove managed socket override"
+      file:
+        path: "/etc/systemd/system/{{ ssh_socket_name }}.d/listen.conf"
+        state: absent
+      when:
+        - vps_hardening_manage_ssh_socket | bool
+        - vps_hardening_ssh_socket_unit.rc | default(1) == 0
       notify: restart sshd
       tags: [ssh]
 

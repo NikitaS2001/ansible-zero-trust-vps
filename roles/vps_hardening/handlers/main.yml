@@ -1,4 +1,18 @@
 ---
+- name: Reload systemd for ssh socket
+  systemd:
+    daemon_reload: true
+  when: vps_hardening_ssh_socket_unit.rc | default(1) == 0
+  listen: restart sshd
+
+- name: Restart ssh socket
+  service:
+    name: "{{ ssh_socket_name }}"
+    state: restarted
+    enabled: yes
+  when: vps_hardening_ssh_socket_unit.rc | default(1) == 0
+  listen: restart sshd
+
 - name: Restart ssh
   service:
     name: "{{ ssh_service_name }}"
