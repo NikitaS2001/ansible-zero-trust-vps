@@ -165,11 +165,21 @@ assert_role_defaults_cover_installer_values() {
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_vpn_subnet 10.8.0.0/24
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_server_ip 10.8.0.1
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_client_dns 172.20.0.2
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_port 51820
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_container_port 51820
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_internal_domain wg.internal
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_internal_domain adguard.internal
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_easy_bootstrap_ui_port 51821
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_bootstrap_ui_port 3000
+}
+
+assert_optional_installer_prompts_have_role_defaults() {
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml ssh_port 2222
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml wg_port 51820
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_port 51820
+    assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml admin_user sysadmin
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_internal_domain wg.internal
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_internal_domain adguard.internal
 }
 
 [[ -x install.sh ]] || fail "install.sh must exist and be executable"
@@ -184,6 +194,7 @@ grep -q 'ansible-galaxy.*collection install -r' install.sh \
     || fail "install.sh must not install Ansible collections through pip"
 assert_no_role_defaults_in_script install.sh
 assert_role_defaults_cover_installer_values
+assert_optional_installer_prompts_have_role_defaults
 pass "installer entrypoints follow tagged quickstart and strict SSOT rules"
 
 ansible-inventory -i inventory/localhost.yml --graph vps >/dev/null \

@@ -30,7 +30,8 @@ zero-trust VPN gateway:
 | `wg_vpn_subnet` | `10.8.0.0/24` | WireGuard client subnet |
 | `wg_server_ip` | `10.8.0.1` | WireGuard server VPN IP |
 | `wg_client_dns` | `172.20.0.2` | DNS server IP for WireGuard clients |
-| `wg_container_port` | `51820` | WireGuard UDP port published on the host |
+| `wg_port` | `51820` | Public WireGuard UDP port published on the host |
+| `wg_container_port` | `51820` | WireGuard UDP port inside the wg-easy container |
 | `wg_internal_domain` | `wg.internal` | Internal hostname for wg-easy web UI |
 | `adguard_internal_domain` | `adguard.internal` | Internal hostname for AdGuard admin UI |
 | `wg_easy_bootstrap_ui_port` | `51821` | wg-easy UI port bound to localhost |
@@ -90,6 +91,7 @@ via the Docker network or through SSH tunnels during initial setup.
         caddy_container_ip: "172.20.0.3"
         wg_easy_container_ip: "172.20.0.4"
         wg_easy_version: "15.3.0"
+        wg_port: 51820
         wg_container_port: 51820
         wg_internal_domain: wg.internal
         adguard_internal_domain: adguard.internal
