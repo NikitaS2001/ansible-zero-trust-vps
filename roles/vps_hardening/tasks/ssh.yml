@@ -20,25 +20,11 @@
       when: vps_hardening_manage_ssh_socket | bool
       tags: [ssh]
 
-    - name: "SSH | Socket | Ensure socket drop-in directory exists"
-      file:
-        path: "/etc/systemd/system/{{ ssh_socket_name }}.d"
-        state: directory
-        mode: '0755'
-      when:
-        - vps_hardening_manage_ssh_socket | bool
-        - vps_hardening_ssh_socket_unit.rc | default(1) == 0
-      tags: [ssh]
-
-    - name: "SSH | Socket | Align socket listener with hardened port"
-      copy:
-        dest: "/etc/systemd/system/{{ ssh_socket_name }}.d/listen.conf"
-        content: |
-          [Socket]
-          ListenStream=
-          ListenStream={{ ssh_port }}
-        backup: yes
-        mode: '0644'
+    - name: "SSH | Socket | Disable socket activation for hardened sshd_config"
+      service:
+        name: "{{ ssh_socket_name }}"
+        state: stopped
+        enabled: no
       when:
         - vps_hardening_manage_ssh_socket | bool
         - vps_hardening_ssh_socket_unit.rc | default(1) == 0
@@ -73,16 +59,6 @@
         remote_src: true
         mode: '0644'
       when: vps_hardening_sshd_config.backup_file is defined
-      notify: restart sshd
-      tags: [ssh]
-
-    - name: "SSH | Rescue | Remove managed socket override"
-      file:
-        path: "/etc/systemd/system/{{ ssh_socket_name }}.d/listen.conf"
-        state: absent
-      when:
-        - vps_hardening_manage_ssh_socket | bool
-        - vps_hardening_ssh_socket_unit.rc | default(1) == 0
       notify: restart sshd
       tags: [ssh]
 
