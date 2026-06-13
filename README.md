@@ -148,7 +148,8 @@ Use release tags for public installs. Do not install from `main` unless you are
 testing unreleased changes on a disposable VPS.
 
 To test an unreleased branch on a disposable VPS, use the same installer path
-with explicit repository and ref overrides:
+with explicit repository and ref overrides. Branch names are resolved against
+`origin/` automatically.
 
 ```bash
 TEST_REF=feat/public-installer-v1

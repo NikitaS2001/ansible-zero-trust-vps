@@ -11,6 +11,7 @@ readonly INSTALL_ROOT="/opt/zero-trust-vps-installer"
 readonly REPO_DIR="${INSTALL_ROOT}/repo"
 readonly VENV_DIR="${INSTALL_ROOT}/venv"
 
+RESOLVED_RELEASE_REF=""
 CREATED_INSTALL_ROOT=false
 CREATED_REPO_DIR=false
 CREATED_VENV_DIR=false
@@ -310,10 +311,14 @@ checkout_release() {
         git clone --quiet "${REPO_URL}" "${REPO_DIR}"
     fi
 
-    if ! git -C "${REPO_DIR}" rev-parse --verify --quiet "${RELEASE_REF}^{commit}" >/dev/null; then
-        error "Git ref '${RELEASE_REF}' was not found in ${REPO_URL}."
+    if git -C "${REPO_DIR}" rev-parse --verify --quiet "${RELEASE_REF}^{commit}" >/dev/null; then
+        RESOLVED_RELEASE_REF="${RELEASE_REF}"
+    elif git -C "${REPO_DIR}" rev-parse --verify --quiet "origin/${RELEASE_REF}^{commit}" >/dev/null; then
+        RESOLVED_RELEASE_REF="origin/${RELEASE_REF}"
+    else
+        error "Git ref '${RELEASE_REF}' or 'origin/${RELEASE_REF}' was not found in ${REPO_URL}."
     fi
-    git -C "${REPO_DIR}" checkout --quiet "${RELEASE_REF}"
+    git -C "${REPO_DIR}" checkout --quiet "${RESOLVED_RELEASE_REF}"
 }
 
 install_collections() {
@@ -386,10 +391,14 @@ prepare_extra_vars_file() {
 run_ansible_pull() {
     prepare_extra_vars_file
 
-    info "Running ansible-pull from ${REPO_URL} at ${RELEASE_REF}..."
+    if [[ "${RESOLVED_RELEASE_REF}" != "${RELEASE_REF}" ]]; then
+        info "Running ansible-pull from ${REPO_URL} at ${RELEASE_REF} (resolved to ${RESOLVED_RELEASE_REF})..."
+    else
+        info "Running ansible-pull from ${REPO_URL} at ${RELEASE_REF}..."
+    fi
     "${VENV_DIR}/bin/ansible-pull" \
         -U "${REPO_URL}" \
-        -C "${RELEASE_REF}" \
+        -C "${RESOLVED_RELEASE_REF}" \
         -d "${REPO_DIR}" \
         -i inventory/localhost.yml \
         --extra-vars "@${EXTRA_VARS_FILE}" \
