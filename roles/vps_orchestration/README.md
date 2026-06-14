@@ -22,14 +22,14 @@ zero-trust VPN gateway:
 | Variable | Default | Description |
 |---|---|---|
 | `project_root` | `/opt/zero-trust-vps` | Base directory for all service data and configs |
-| `docker_network_subnet` | `172.20.0.0/24` | Subnet for the Docker bridge network |
-| `adguard_container_ip` | `172.20.0.2` | Fixed IP for the AdGuard container |
-| `caddy_container_ip` | `172.20.0.3` | Fixed IP for the Caddy container |
-| `wg_easy_container_ip` | `172.20.0.4` | Fixed IP for the wg-easy container |
+| `docker_network_subnet` | `10.66.0.0/24` | Subnet for the Docker bridge network |
+| `adguard_container_ip` | `10.66.0.2` | Fixed IP for the AdGuard container |
+| `caddy_container_ip` | `10.66.0.3` | Fixed IP for the Caddy container |
+| `wg_easy_container_ip` | `10.66.0.4` | Fixed IP for the wg-easy container |
 | `wg_easy_version` | `15.3.0` | wg-easy Docker image tag |
 | `wg_vpn_subnet` | `10.8.0.0/24` | WireGuard client subnet |
 | `wg_server_ip` | `10.8.0.1` | WireGuard server VPN IP |
-| `wg_client_dns` | `172.20.0.2` | DNS server IP for WireGuard clients |
+| `wg_client_dns` | `10.66.0.2` | DNS server IP for WireGuard clients |
 | `wg_port` | `51820` | Public WireGuard UDP port published on the host |
 | `wg_container_port` | `51820` | WireGuard UDP port inside the wg-easy container |
 | `wg_internal_domain` | `wg.internal` | Internal hostname for wg-easy web UI |
@@ -87,10 +87,10 @@ via the Docker network or through SSH tunnels during initial setup.
     - role: vps_orchestration
       vars:
         project_root: /opt/zero-trust-vps
-        docker_network_subnet: "172.20.0.0/24"
-        adguard_container_ip: "172.20.0.2"
-        caddy_container_ip: "172.20.0.3"
-        wg_easy_container_ip: "172.20.0.4"
+        docker_network_subnet: "10.66.0.0/24"
+        adguard_container_ip: "10.66.0.2"
+        caddy_container_ip: "10.66.0.3"
+        wg_easy_container_ip: "10.66.0.4"
         wg_easy_version: "15.3.0"
         wg_port: 51820
         wg_container_port: 51820

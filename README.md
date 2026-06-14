@@ -30,10 +30,10 @@ flowchart LR
     Internet(("#127760; Internet"))
     Client["#128268; VPN Client\n10.8.0.0/24"]
     VPS["#128421; VPS Public IP\n#40;SSH + WireGuard UDP#41;"]
-    subgraph Docker_Network["Docker Network 172.20.0.0/24"]
-        WG["wg-easy :51821\n10.8.0.1 → 172.20.0.4"]
-        AD["AdGuard Home :3000\n172.20.0.2"]
-        CAD["Caddy :443\n172.20.0.3"]
+    subgraph Docker_Network["Docker Network 10.66.0.0/24"]
+        WG["wg-easy :51821\n10.8.0.1 -> 10.66.0.4"]
+        AD["AdGuard Home :3000\n10.66.0.2"]
+        CAD["Caddy :443\n10.66.0.3"]
     end
 
     Internet --> VPS
@@ -201,7 +201,7 @@ Key variables to set before first run:
 | `wg_port` | `vars.yml` | Public WireGuard UDP port |
 | `wg_vpn_subnet` | `vars.yml` | VPN client subnet, e.g. `10.8.0.0/24` |
 | `wg_server_ip` | `vars.yml` | WireGuard server VPN IP, e.g. `10.8.0.1` |
-| `docker_network_subnet` | `vars.yml` | Docker subnet, e.g. `172.20.0.0/24` |
+| `docker_network_subnet` | `vars.yml` | Docker subnet, e.g. `10.66.0.0/24` |
 | `adguard_container_ip` | `vars.yml` | AdGuard fixed Docker IP |
 | `caddy_container_ip` | `vars.yml` | Caddy fixed Docker IP |
 | `wg_easy_container_ip` | `vars.yml` | wg-easy fixed Docker IP |
@@ -227,7 +227,7 @@ ansible_port: <ssh_port>
 - wg-easy and AdGuard admin UIs are bound to `127.0.0.1` on the VPS. Access
   during initial setup is through SSH local forwarding only.
 - Caddy is not published on the public interface. It serves `.internal`
-  hostnames to VPN clients via the Docker network at `172.20.0.3`.
+  hostnames to VPN clients via the Docker network at `10.66.0.3`.
 - Only SSH and WireGuard UDP are exposed publicly. No web service ports on
   the host.
 - IPv6 is disabled for wg-easy containers to avoid startup issues on
@@ -250,14 +250,19 @@ ssh -p <ssh_port> -L 51821:127.0.0.1:51821 <admin_user>@<ansible_host>
    | --- | --- |
    | Host | Your `ansible_host` |
    | Port | Your `wg_port` |
-   | DNS | Your `wg_client_dns` (AdGuard IP `172.20.0.2`) |
+   | DNS | Your `wg_client_dns` (AdGuard IP `10.66.0.2`) |
 
-3. In wg-easy client Allowed IPs, include both subnets so all traffic and
-   the Docker network route through the VPN:
+3. In wg-easy client Allowed IPs, include the VPN subnet and the internal
+   service IPs so DNS and `.internal` HTTPS route through the VPN:
 
    ```
-   10.8.0.0/24, 172.20.0.0/24
+   10.8.0.0/24, 10.66.0.2/32, 10.66.0.3/32
    ```
+
+   For a full-tunnel client, include `0.0.0.0/0` as well. Avoid using a
+   Docker subnet that overlaps any network on the client machine; local route
+   conflicts can make AdGuard and Caddy unreachable even when WireGuard
+   handshakes succeed.
 
 4. Create a client config in wg-easy and connect to WireGuard.
 5. AdGuard rewrites `*.internal` to Caddy's Docker IP. Access services over
@@ -295,6 +300,33 @@ command again.
 
 The public installer supports Debian/Ubuntu systems with `apt-get`. Use remote
 Ansible mode for other targets after adapting the roles.
+
+### WireGuard connects but internal services do not respond
+
+If WireGuard handshakes succeed but `wg.internal`, `adguard.internal`, or
+`wg_client_dns` do not respond from the client, check for overlapping routes on
+the client machine:
+
+```sh
+ip route
+sudo wg show
+```
+
+The Docker subnet configured by `docker_network_subnet` must not overlap any
+local client network. Common Docker bridge ranges such as `172.17.0.0/16` and
+`172.20.0.0/24` are especially easy to collide with on developer machines.
+
+After changing `docker_network_subnet` on an existing VPS, recreate the Compose
+network before rerunning the installer or playbook:
+
+```sh
+cd /opt/zero-trust-vps
+sudo docker compose down
+sudo docker network rm zero-trust-vps_vpn_net || true
+```
+
+Then rerun the deployment and recreate or update wg-easy clients so their DNS
+and Allowed IPs point at the new internal service IPs.
 
 ## Development Setup
 
