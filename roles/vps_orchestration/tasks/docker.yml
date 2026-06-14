@@ -88,11 +88,21 @@
 - name: "Docker | Service | Start Docker with diagnostics"
   tags: [docker]
   block:
-    - name: "Docker | Service | Ensure Docker is enabled and running"
+    - name: "Docker | Service | Ensure Docker is enabled and running without socket activation"
       service:
         name: docker
         state: started
         enabled: yes
+      when: vps_orchestration_docker_socket_unit.rc != 0
+      tags: [docker]
+
+    - name: "Docker | Service | Verify Docker daemon is reachable"  # noqa: command-instead-of-module
+      command: docker info
+      register: vps_orchestration_docker_info
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: vps_orchestration_docker_info.rc == 0
       tags: [docker]
   rescue:
     - name: "Docker | Diagnose | Read Docker service status"  # noqa: command-instead-of-module
