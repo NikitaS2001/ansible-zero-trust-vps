@@ -57,6 +57,30 @@
     state: present
   tags: [docker]
 
+- name: "Docker | Service | Ensure systemd override directory exists"
+  file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    mode: '0755'
+  tags: [docker]
+
+- name: "Docker | Service | Disable socket activation in service command"
+  copy:
+    dest: /etc/systemd/system/docker.service.d/10-no-socket-activation.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/dockerd -H unix:///var/run/docker.sock --containerd=/run/containerd/containerd.sock
+    mode: '0644'
+  register: vps_orchestration_docker_service_override
+  tags: [docker]
+
+- name: "Docker | Service | Reload systemd units"
+  systemd:
+    daemon_reload: yes
+  when: vps_orchestration_docker_service_override.changed
+  tags: [docker]
+
 - name: "Docker | Service | Ensure containerd is enabled and running"
   service:
     name: containerd
@@ -77,23 +101,22 @@
   failed_when: false
   tags: [docker]
 
-- name: "Docker | Service | Ensure Docker socket is enabled and running"
+- name: "Docker | Service | Disable Docker socket activation"
   service:
     name: docker.socket
-    state: started
-    enabled: yes
-  when: vps_orchestration_docker_socket_unit.rc == 0
+    state: stopped
+    enabled: no
+  when: vps_orchestration_docker_socket_unit.stdout | trim | length > 0
   tags: [docker]
 
 - name: "Docker | Service | Start Docker with diagnostics"
   tags: [docker]
   block:
-    - name: "Docker | Service | Ensure Docker is enabled and running without socket activation"
+    - name: "Docker | Service | Ensure Docker is enabled and running"
       service:
         name: docker
         state: started
         enabled: yes
-      when: vps_orchestration_docker_socket_unit.rc != 0
       tags: [docker]
 
     - name: "Docker | Service | Verify Docker daemon is reachable"  # noqa: command-instead-of-module
