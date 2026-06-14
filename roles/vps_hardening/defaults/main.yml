@@ -6,6 +6,7 @@ wg_port: 51820
 # Admin user
 admin_user: sysadmin
 admin_group: sudo
+admin_shell: /bin/bash
 admin_password_hash: ""
 vault_admin_ssh_pubkey: ""
 

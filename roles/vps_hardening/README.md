@@ -22,7 +22,8 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
 | `ssh_port` | `2222` | Hardened SSH listening port |
 | `wg_port` | `51820` | WireGuard UDP port (opened in UFW) |
 | `admin_user` | `sysadmin` | Name of the non-root admin account |
-| `admin_group` | `sudo` | Primary group for `admin_user` |
+| `admin_group` | `sudo` | Sudo-capable group for `admin_user` |
+| `admin_shell` | `/bin/bash` | Login shell for `admin_user` |
 | `admin_password_hash` | `""` | Precomputed admin password hash (optional; key auth is primary) |
 | `vault_admin_ssh_pubkey` | `""` | SSH public key content for `admin_user` (required for key auth) |
 | `ssh_service_name` | `ssh` | Name of the SSH service to restart |
@@ -68,6 +69,7 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
         wg_port: 51820
         admin_user: sysadmin
         admin_group: sudo
+        admin_shell: /bin/bash
         vault_admin_ssh_pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
         ssh_allow_tcp_forwarding: "yes"
         fail2ban_ignore_ips:

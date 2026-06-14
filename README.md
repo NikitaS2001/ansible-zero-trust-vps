@@ -206,6 +206,7 @@ Key variables to set before first run:
 | `caddy_container_ip` | `vars.yml` | Caddy fixed Docker IP |
 | `wg_easy_container_ip` | `vars.yml` | wg-easy fixed Docker IP |
 | `admin_user` | `vars.yml` | Non-root SSH admin user |
+| `admin_shell` | `vars.yml` | Login shell for `admin_user`, default `/bin/bash` |
 | `wg_internal_domain` | `vars.yml` | wg-easy internal hostname |
 | `adguard_internal_domain` | `vars.yml` | AdGuard internal hostname |
 | `vault_adguard_password_hash` | `vault_services.yml` | AdGuard bcrypt hash |

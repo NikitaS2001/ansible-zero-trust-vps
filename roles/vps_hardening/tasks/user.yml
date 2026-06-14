@@ -25,6 +25,7 @@
     groups: "{{ admin_group }},docker"
     append: yes
     state: present
+    shell: "{{ admin_shell }}"
     password: >-
       {{
         (
@@ -33,6 +34,13 @@
           else admin_password_hash
         ) | default(omit, true)
       }}
+    password_lock: >-
+      {{
+        false
+        if (admin_password is defined or (admin_password_hash | length > 0))
+        else omit
+      }}
+    update_password: always
   no_log: true
   tags: [user]
 
