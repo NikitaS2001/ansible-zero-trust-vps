@@ -24,14 +24,11 @@
     filename: docker
   tags: [docker]
 
-- name: "Docker | Install | Install Docker CE"
-  apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-compose-plugin
-    state: present
+- name: "Docker | Config | Ensure Docker config directory exists"
+  file:
+    path: /etc/docker
+    state: directory
+    mode: '0755'
   tags: [docker]
 
 - name: "Docker | Config | Deploy daemon.json"
@@ -48,6 +45,16 @@
     backup: yes
     mode: '0644'
   register: vps_orchestration_docker_daemon_config
+  tags: [docker]
+
+- name: "Docker | Install | Install Docker CE"
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
   tags: [docker]
 
 - name: "Docker | Service | Ensure containerd is enabled and running"
@@ -81,14 +88,6 @@
 - name: "Docker | Service | Start Docker with diagnostics"
   tags: [docker]
   block:
-    - name: "Docker | Service | Restart Docker after daemon config change"
-      service:
-        name: docker
-        state: restarted
-        enabled: yes
-      when: vps_orchestration_docker_daemon_config.changed
-      tags: [docker]
-
     - name: "Docker | Service | Ensure Docker is enabled and running"
       service:
         name: docker
