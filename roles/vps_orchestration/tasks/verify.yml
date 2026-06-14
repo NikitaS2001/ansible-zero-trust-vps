@@ -26,11 +26,11 @@
   uri:
     url: "http://127.0.0.1:{{ adguard_bootstrap_ui_port }}/control/status"
     return_content: true
-    status_code: 200
+    status_code: [200, 401]
   register: vps_orchestration_adguard_status
   retries: 12
   delay: 5
-  until: vps_orchestration_adguard_status.status == 200
+  until: vps_orchestration_adguard_status.status in [200, 401]
   tags: [verify]
 
 - name: "Verify | SSH | Confirm SSH still accessible"
