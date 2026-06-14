@@ -12,6 +12,27 @@
     flat: yes
   tags: [verify]
 
+- name: "Verify | UI | Wait for wg-easy bootstrap UI"
+  uri:
+    url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/"
+    status_code: 200
+  register: vps_orchestration_wg_easy_ui
+  retries: 12
+  delay: 5
+  until: vps_orchestration_wg_easy_ui.status == 200
+  tags: [verify]
+
+- name: "Verify | UI | Wait for AdGuard bootstrap UI"
+  uri:
+    url: "http://127.0.0.1:{{ adguard_bootstrap_ui_port }}/control/status"
+    return_content: true
+    status_code: 200
+  register: vps_orchestration_adguard_status
+  retries: 12
+  delay: 5
+  until: vps_orchestration_adguard_status.status == 200
+  tags: [verify]
+
 - name: "Verify | SSH | Confirm SSH still accessible"
   wait_for:
     host: "{{ ansible_host }}"
