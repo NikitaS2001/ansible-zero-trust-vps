@@ -6,8 +6,25 @@ installer. Two targets are supported:
 | Script | Target | Purpose |
 |---|---|---|
 | `vagrant-install.sh` | Disposable Vagrant VM (libvirt/VirtualBox) | Fast iteration during development |
+| `qemu-install.sh` | Plain qemu/KVM VM (no vagrant) | Fast iteration when only qemu + KVM are available |
 | `run-public-install.sh` | Real VPS | Final verification of a release tag |
 | `client-test.sh` | Any of the above + this machine | Real WireGuard client handshake over the VPN |
+
+## Fast iteration without Vagrant (qemu/KVM)
+
+Needs `qemu-system-x86_64`, `qemu-img`, `genisoimage`, `curl` and KVM
+support (`/dev/kvm`). No libvirt daemon or vagrant required.
+
+```bash
+tests/e2e/qemu-install.sh --reboot-test
+# Ubuntu 24.04 is the default image; use a Debian image with:
+QEMU_IMAGE=https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2 QEMU_USER=debian tests/e2e/qemu-install.sh
+```
+
+The VM is booted headless with a cloud-init NoCloud seed, the repository is
+copied in, and the installer runs non-interactively exactly like on a real
+host. `--client-test` is skipped automatically when wireguard-tools are
+missing or the host already routes `10.8.0.0/24`.
 
 ## Prerequisites
 
