@@ -31,6 +31,17 @@
       notify: restart sshd
       tags: [ssh]
 
+    - name: "SSH | Service | Enable sshd service for boot"
+      service:
+        name: "{{ ssh_service_name }}"
+        state: started
+        enabled: yes
+      when:
+        - vps_hardening_manage_ssh_socket | bool
+        - vps_hardening_ssh_socket_unit.rc | default(1) == 0
+      notify: restart sshd
+      tags: [ssh]
+
     - name: "SSH | Flush | Force handler execution now"
       meta: flush_handlers
       tags: [ssh]
