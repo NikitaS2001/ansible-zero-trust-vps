@@ -20,6 +20,18 @@ services:
     environment:
       - INSECURE=true
       - DISABLE_IPV6=true
+{% if (not wg_easy_initialized | default(false) | bool) and (wg_easy_admin_password | length > 0) %}
+      # First-start only: wg-easy consumes the INIT_* variables during its
+      # initial setup and ignores them afterwards. They are rendered only until
+      # the WireGuard config exists so the panel password is not persisted here.
+      - INIT_ENABLED=true
+      - INIT_USERNAME={{ wg_easy_admin_user }}
+      - INIT_PASSWORD={{ wg_easy_admin_password }}
+      - INIT_HOST={{ wg_public_host }}
+      - INIT_PORT={{ wg_port }}
+      - INIT_DNS={{ wg_client_dns }}
+      - INIT_ALLOWED_IPS={{ wg_allowed_ips | join(',') }}
+{% endif %}
     volumes:
       - "{{ project_root }}/volumes/wg-easy:/etc/wireguard"
       - "/lib/modules:/lib/modules:ro"

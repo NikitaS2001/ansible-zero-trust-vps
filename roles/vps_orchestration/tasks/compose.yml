@@ -1,10 +1,18 @@
 ---
+- name: "Compose | Detect | Check whether wg-easy was already initialized"
+  stat:
+    path: "{{ project_root }}/volumes/wg-easy/wg0.conf"
+  register: vps_orchestration_wg_easy_conf
+  tags: [compose]
+
 - name: "Compose | Deploy | Write docker-compose.yml"
   template:
     src: docker-compose.yml.j2
     dest: "{{ project_root }}/docker-compose.yml"
     backup: yes
     mode: '0644'
+  vars:
+    wg_easy_initialized: "{{ vps_orchestration_wg_easy_conf.stat.exists | bool }}"
   tags: [compose]
 
 - name: "Compose | Deploy | Write Caddyfile"

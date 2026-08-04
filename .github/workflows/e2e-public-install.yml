@@ -1,0 +1,45 @@
+---
+name: e2e-public-install
+
+# Manual E2E of the public installer against a disposable VPS.
+# Configure repository secrets: E2E_VPS_IP, E2E_VPS_SSH_PORT, E2E_VPS_SSH_KEY
+# (base64-encoded PEM private key for root access).
+'on':
+  workflow_dispatch:
+    inputs:
+      install_ref:
+        description: Git tag or branch to install
+        required: true
+        default: v1.0.0
+      reboot_test:
+        description: Reboot the VPS and re-verify the stack
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  public-install:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install test tooling
+        run: |
+          sudo apt-get update && sudo apt-get install -y openssh-client openssl jq
+
+      - name: Run public installer E2E against the VPS
+        env:
+          VPS_IP: ${{ secrets.E2E_VPS_IP }}
+          VPS_SSH_PORT: ${{ secrets.E2E_VPS_SSH_PORT }}
+          VPS_SSH_KEY_PATH: ${{ runner.temp }}/e2e_key
+          INSTALL_REF: ${{ inputs.install_ref }}
+        run: |
+          echo "${{ secrets.E2E_VPS_SSH_KEY }}" | base64 -d > "$VPS_SSH_KEY_PATH"
+          chmod 0600 "$VPS_SSH_KEY_PATH"
+          VPS_SSH_KEY="$VPS_SSH_KEY_PATH" \
+            tests/e2e/run-public-install.sh ${{ inputs.reboot_test && '--reboot-test' || '' }}

@@ -12,3 +12,5 @@ inventory/hosts.yml
 *.retry
 __pycache__/
 *.pyc
+.vagrant/
+AUDIT_IMPLEMENTATION_REPORT.md

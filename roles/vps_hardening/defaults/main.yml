@@ -23,6 +23,9 @@ adguard_bootstrap_ui_port: 3000
 # Fail2Ban
 fail2ban_ignore_ips:
   - "127.0.0.1/8"
+fail2ban_bantime: 3600
+fail2ban_findtime: 600
+fail2ban_maxretry: 5
 
 # Package upgrade policy
 vps_hardening_apply_package_upgrade: false

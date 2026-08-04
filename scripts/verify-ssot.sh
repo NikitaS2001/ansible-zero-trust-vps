@@ -176,6 +176,9 @@ assert_role_defaults_cover_installer_values() {
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_easy_bootstrap_ui_port 51821
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_bootstrap_ui_port 3000
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml vps_orchestration_enable_ufw_before_ufw_docker false
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_easy_admin_user admin
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_easy_admin_password ""
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_public_host ""
 }
 
 assert_optional_installer_prompts_have_role_defaults() {
@@ -185,6 +188,26 @@ assert_optional_installer_prompts_have_role_defaults() {
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml admin_user sysadmin
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_internal_domain wg.internal
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_internal_domain adguard.internal
+}
+
+assert_wg_allowed_ips_default() {
+    python3 -c '
+import sys
+import yaml
+
+with open("roles/vps_orchestration/defaults/main.yml", encoding="utf-8") as handle:
+    defaults = yaml.safe_load(handle) or {}
+
+expected = ["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32"]
+if defaults.get("wg_allowed_ips") != expected:
+    sys.exit(1)
+' || fail "roles/vps_orchestration/defaults/main.yml must set wg_allowed_ips to the documented internal IPs"
+}
+
+assert_installer_provides_wg_easy_init() {
+    grep -q 'write_extra_var wg_easy_admin_password' install.sh         || fail "install.sh must pass wg_easy_admin_password through extra-vars"
+    grep -q 'write_extra_var wg_public_host' install.sh         || fail "install.sh must pass wg_public_host through extra-vars"
+    grep -q 'ZERO_TRUST_NONINTERACTIVE' install.sh         || fail "install.sh must support non-interactive mode for automated testing"
 }
 
 [[ -x install.sh ]] || fail "install.sh must exist and be executable"
@@ -200,6 +223,8 @@ grep -q 'ansible-galaxy.*collection install -r' install.sh \
 assert_no_role_defaults_in_script install.sh
 assert_role_defaults_cover_installer_values
 assert_optional_installer_prompts_have_role_defaults
+assert_wg_allowed_ips_default
+assert_installer_provides_wg_easy_init
 pass "installer entrypoints follow tagged quickstart and strict SSOT rules"
 
 ansible-inventory -i inventory/localhost.yml --graph vps >/dev/null \

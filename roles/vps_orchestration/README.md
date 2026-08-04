@@ -32,6 +32,10 @@ zero-trust VPN gateway:
 | `wg_client_dns` | `10.66.0.2` | DNS server IP for WireGuard clients |
 | `wg_port` | `51820` | Public WireGuard UDP port published on the host |
 | `wg_container_port` | `51820` | WireGuard UDP port inside the wg-easy container |
+| `wg_easy_admin_user` | `admin` | wg-easy panel username used by the automated first-start setup |
+| `wg_easy_admin_password` | `""` | wg-easy panel password; enables the `INIT_*` automated first-start setup |
+| `wg_public_host` | `""` | Public IP/domain WireGuard clients connect to (required when `INIT_*` is used) |
+| `wg_allowed_ips` | `["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32"]` | Default Allowed IPs for new wg-easy clients |
 | `wg_internal_domain` | `wg.internal` | Internal hostname for wg-easy web UI |
 | `adguard_internal_domain` | `adguard.internal` | Internal hostname for AdGuard admin UI |
 | `wg_easy_bootstrap_ui_port` | `51821` | wg-easy UI port bound to localhost |
@@ -71,7 +75,7 @@ zero-trust VPN gateway:
 
 | Service | Image | Internal Port | External Port | Purpose |
 |---|---|---|---|---|
-| wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` | 51821 (UI), 51820 (WireGuard UDP) | 51820/udp | WireGuard VPN with web UI |
+| wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` | 51821 (UI), 51820 (WireGuard UDP) | 51820/udp | WireGuard VPN with password-protected web UI |
 | AdGuard Home | `adguard/adguardhome:v0.107.76` | 3000 (UI), 53 (DNS) | none | DNS sinkhole and `.internal` resolver |
 | Caddy | `caddy:2.11.3` | 80, 443 | none | TLS reverse proxy for internal hostnames |
 
@@ -118,6 +122,16 @@ The role writes `AdGuardHome.yaml` from an Ansible template with mode `0600`,
 because it contains the AdGuard admin password hash. wg-easy persists its own
 WireGuard state under `{{ project_root }}/volumes/wg-easy`; review that
 directory after first setup if you need stricter host-level permissions.
+
+### Automated wg-easy Initial Setup
+
+When `wg_easy_admin_password` and `wg_public_host` are set, the role renders
+wg-easy's `INIT_*` environment variables (username, password, host, port, DNS,
+default Allowed IPs) into the Compose file. wg-easy consumes them during the
+first container start and ignores them afterwards, so the panel is
+password-protected without the interactive setup wizard. The `INIT_*` block is
+removed once `{{ project_root }}/volumes/wg-easy/wg0.conf` exists, so the panel
+password is not persisted in the Compose file.
 
 ### Secrets Handling in Installer Mode
 

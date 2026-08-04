@@ -7,6 +7,19 @@ wg_vpn_subnet: "10.8.0.0/24"
 wg_server_ip: "10.8.0.1"
 wg_client_dns: "10.66.0.2"
 
+# wg-easy initial setup (Unattended Setup via INIT_* env vars, first start only)
+# wg_public_host is required for remote deployment mode; the public installer
+# auto-detects the public IP instead. Set wg_easy_admin_password to enable the
+# automated initial setup (otherwise the wg-easy setup wizard appears on first
+# login and must be completed manually).
+wg_easy_admin_user: "admin"
+wg_easy_admin_password: ""
+wg_public_host: ""
+wg_allowed_ips:
+  - "10.8.0.0/24"
+  - "10.66.0.2/32"
+  - "10.66.0.3/32"
+
 # Docker network
 docker_network_subnet: "10.66.0.0/24"
 adguard_container_ip: "10.66.0.2"
@@ -45,6 +58,9 @@ vps_hardening_package_upgrade_mode: "safe"
 # Fail2Ban should not ignore the VPN subnet by default.
 fail2ban_ignore_ips:
   - "127.0.0.1/8"
+fail2ban_bantime: 3600
+fail2ban_findtime: 600
+fail2ban_maxretry: 5
 
 # Admin user created by Ansible
 admin_user: "sysadmin"

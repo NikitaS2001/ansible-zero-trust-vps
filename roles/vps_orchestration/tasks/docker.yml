@@ -45,6 +45,7 @@
     backup: yes
     mode: '0644'
   register: vps_orchestration_docker_daemon_config
+  notify: restart docker
   tags: [docker]
 
 - name: "Docker | Install | Install Docker CE"
@@ -73,6 +74,7 @@
       ExecStart=/usr/bin/dockerd -H unix:///var/run/docker.sock --containerd=/run/containerd/containerd.sock
     mode: '0644'
   register: vps_orchestration_docker_service_override
+  notify: restart docker
   tags: [docker]
 
 - name: "Docker | Service | Reload systemd units"

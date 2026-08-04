@@ -33,6 +33,9 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
 | `wg_easy_bootstrap_ui_port` | `51821` | wg-easy UI port bound to localhost (for SSH tunnel access) |
 | `adguard_bootstrap_ui_port` | `3000` | AdGuard UI port bound to localhost (for SSH tunnel access) |
 | `fail2ban_ignore_ips` | `["127.0.0.1/8"]` | IPs ignored by fail2ban |
+| `fail2ban_bantime` | `3600` | fail2ban ban duration in seconds |
+| `fail2ban_findtime` | `600` | fail2ban find-time window in seconds |
+| `fail2ban_maxretry` | `5` | fail2ban retries before a ban |
 | `vps_hardening_apply_package_upgrade` | `false` | Whether to upgrade system packages |
 | `vps_hardening_package_upgrade_mode` | `"safe"` | Upgrade mode: `"safe"` (dist-upgrade --no-install-recommends) or `"full"` |
 | `vps_hardening_enable_ufw_on_local_connection` | `false` | Allow UFW enablement when Ansible connects locally, used by the public installer on the VPS |

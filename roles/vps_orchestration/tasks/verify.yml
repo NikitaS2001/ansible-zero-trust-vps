@@ -15,11 +15,30 @@
 - name: "Verify | UI | Wait for wg-easy bootstrap UI"
   uri:
     url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/"
-    status_code: 200
+    status_code: [200, 302]
   register: vps_orchestration_wg_easy_ui
   retries: 12
   delay: 5
-  until: vps_orchestration_wg_easy_ui.status == 200
+  until: vps_orchestration_wg_easy_ui.status in [200, 302]
+  tags: [verify]
+
+- name: "Verify | WG | Wait for the WireGuard interface in wg-easy"
+  command: docker exec wg-easy wg show
+  register: vps_orchestration_wg_show
+  changed_when: false
+  retries: 18
+  delay: 5
+  until: vps_orchestration_wg_show.rc == 0
+  tags: [verify]
+
+- name: "Verify | WG | Confirm wg-easy admin API enforces authentication"
+  uri:
+    url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/api/session"
+    status_code: 401
+  register: vps_orchestration_wg_easy_session
+  retries: 12
+  delay: 5
+  until: vps_orchestration_wg_easy_session.status == 401
   tags: [verify]
 
 - name: "Verify | UI | Wait for AdGuard bootstrap UI"
@@ -57,7 +76,8 @@
     msg:
       - "✅ Zero-Trust VPN deployment complete!"
       - "📄 Root CA: {{ fetched_certs_dir }}/{{ inventory_hostname }}/root.crt"
-      - "🔗 WireGuard panel: https://{{ wg_internal_domain }}"
+      - "🔗 WireGuard panel: https://{{ wg_internal_domain }} (or http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }} over an SSH tunnel)"
       - "🔗 AdGuard panel: https://{{ adguard_internal_domain }}"
+      - "🔑 Log in to the WireGuard panel with the password entered during installation"
       - "📖 Import the Root CA into your browser/OS to trust .internal certificates"
   tags: [verify]

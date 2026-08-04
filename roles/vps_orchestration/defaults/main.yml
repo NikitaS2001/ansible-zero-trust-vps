@@ -16,6 +16,15 @@ wg_client_dns: "10.66.0.2"
 wg_port: 51820
 wg_container_port: 51820
 
+# wg-easy initial setup (Unattended Setup via INIT_* env vars, first start only)
+wg_easy_admin_user: admin
+wg_easy_admin_password: ""
+wg_public_host: ""
+wg_allowed_ips:
+  - "10.8.0.0/24"
+  - "10.66.0.2/32"
+  - "10.66.0.3/32"
+
 # AdGuard Home
 adguard_version: "v0.107.76"
 

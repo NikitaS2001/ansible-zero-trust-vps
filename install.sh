@@ -25,6 +25,9 @@ INTERNAL_DOMAINS=""
 WG_INTERNAL_DOMAIN=""
 ADGUARD_INTERNAL_DOMAIN=""
 SSH_PUBKEY=""
+WG_PASSWORD=""
+WG_HOST=""
+NONINTERACTIVE=""
 
 cleanup_on_failure() {
     local exit_code=$?
@@ -65,6 +68,20 @@ Interactive public installer for ansible-zero-trust-vps.
 Environment overrides for release testing:
   ZERO_TRUST_REPO_URL      Repository URL to pull from
   ZERO_TRUST_RELEASE_REF  Git tag or ref to install
+
+Non-interactive mode for automated testing:
+  ZERO_TRUST_NONINTERACTIVE=1  Run without prompts; all inputs must be
+                               provided via the ZERO_TRUST_* variables below.
+  ZERO_TRUST_SSH_PORT          Hardened SSH port (optional, default from role)
+  ZERO_TRUST_WG_PORT           WireGuard UDP port (optional, default from role)
+  ZERO_TRUST_ADMIN_USER        Admin username (optional, default from role)
+  ZERO_TRUST_ADMIN_PASSWORD    Admin password (required, min 8 chars)
+  ZERO_TRUST_ADGUARD_PASSWORD  AdGuard admin password (required, min 8 chars)
+  ZERO_TRUST_WG_PASSWORD       WireGuard panel password (required, min 8 chars)
+  ZERO_TRUST_INTERNAL_DOMAINS  Two internal hostnames, space separated
+  ZERO_TRUST_SSH_PUBKEY        SSH public key for the admin user (required)
+  ZERO_TRUST_WG_HOST           Public hostname/IP for clients (optional,
+                               auto-detected when omitted)
 
 The public quickstart should use the tagged script URL, not main.
 EOF
@@ -327,13 +344,20 @@ install_collections() {
 }
 
 collect_configuration() {
+    if [[ "${NONINTERACTIVE}" == "1" ]]; then
+        collect_configuration_noninteractive
+        return
+    fi
+
     info "Starting interactive configuration..."
     prompt_optional SSH_PORT "SSH port"
     prompt_optional WG_PORT "WireGuard port"
     prompt_optional ADMIN_USER "Admin username"
     prompt_required_secret ADMIN_PASSWORD "Admin password (min 8 chars)"
     prompt_required_secret ADGUARD_PASSWORD "AdGuard admin password (min 8 chars)"
+    prompt_required_secret WG_PASSWORD "WireGuard panel password (min 8 chars)"
     prompt_optional INTERNAL_DOMAINS "Internal domains, separated by space"
+    prompt_optional WG_HOST "WireGuard public hostname or IP (Enter to auto-detect)"
     prompt_required_line SSH_PUBKEY "SSH public key"
 
     validate_port "SSH port" "${SSH_PORT}"
@@ -341,6 +365,82 @@ collect_configuration() {
     validate_optional_admin_user "${ADMIN_USER}"
     validate_internal_domains "${INTERNAL_DOMAINS}"
     validate_ssh_pubkey "${SSH_PUBKEY}"
+    if [[ -n "${WG_HOST}" ]] && ! validate_hostname "${WG_HOST}"; then
+        error "Invalid public hostname or IP for WireGuard clients: ${WG_HOST}"
+    fi
+}
+
+require_min_length() {
+    local value="$1"
+    local label="$2"
+
+    if [[ "${#value}" -lt 8 ]]; then
+        error "${label} must be at least 8 characters."
+    fi
+}
+
+detect_public_ip() {
+    local ip=""
+
+    ip="$(curl -fsS --max-time 10 -4 https://api.ipify.org 2>/dev/null)" || ip=""
+    if [[ -z "${ip}" ]]; then
+        ip="$(curl -fsS --max-time 10 -4 https://ifconfig.me 2>/dev/null)" || ip=""
+    fi
+    if [[ -z "${ip}" ]]; then
+        ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')"
+    fi
+    printf '%s' "${ip}"
+}
+
+collect_configuration_noninteractive() {
+    SSH_PORT="${ZERO_TRUST_SSH_PORT:-}"
+    WG_PORT="${ZERO_TRUST_WG_PORT:-}"
+    ADMIN_USER="${ZERO_TRUST_ADMIN_USER:-}"
+    ADMIN_PASSWORD="${ZERO_TRUST_ADMIN_PASSWORD:-}"
+    ADGUARD_PASSWORD="${ZERO_TRUST_ADGUARD_PASSWORD:-}"
+    WG_PASSWORD="${ZERO_TRUST_WG_PASSWORD:-}"
+    INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-}"
+    SSH_PUBKEY="${ZERO_TRUST_SSH_PUBKEY:-}"
+    WG_HOST="${ZERO_TRUST_WG_HOST:-}"
+
+    local missing=""
+    local var
+    for var in ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY; do
+        if [[ -z "${!var}" ]]; then
+            missing="${missing} ZERO_TRUST_${var}"
+        fi
+    done
+    if [[ -n "${missing}" ]]; then
+        error "Non-interactive mode requires the following environment variables:${missing}"
+    fi
+
+    require_min_length "${ADMIN_PASSWORD}" "Admin password"
+    require_min_length "${ADGUARD_PASSWORD}" "AdGuard admin password"
+    require_min_length "${WG_PASSWORD}" "WireGuard panel password"
+
+    validate_port "SSH port" "${SSH_PORT}"
+    validate_port "WireGuard port" "${WG_PORT}"
+    validate_optional_admin_user "${ADMIN_USER}"
+    validate_internal_domains "${INTERNAL_DOMAINS}"
+    validate_ssh_pubkey "${SSH_PUBKEY}"
+    if [[ -n "${WG_HOST}" ]] && ! validate_hostname "${WG_HOST}"; then
+        error "Invalid public hostname or IP for WireGuard clients: ${WG_HOST}"
+    fi
+}
+
+resolve_wg_host() {
+    if [[ -n "${WG_HOST}" ]]; then
+        return
+    fi
+    info "Detecting the public IP for WireGuard clients..."
+    WG_HOST="$(detect_public_ip)"
+    if [[ -z "${WG_HOST}" ]]; then
+        if [[ "${NONINTERACTIVE}" == "1" ]]; then
+            error "Could not auto-detect the public IP. Set ZERO_TRUST_WG_HOST."
+        fi
+        prompt_required_line WG_HOST "WireGuard public hostname or IP"
+    fi
+    info "Using ${WG_HOST} as the WireGuard endpoint host."
 }
 
 json_quote() {
@@ -369,6 +469,8 @@ prepare_extra_vars_file() {
     write_extra_var vps_orchestration_enable_ufw_before_ufw_docker true
     write_extra_var admin_password "${ADMIN_PASSWORD}"
     write_extra_var adguard_password "${ADGUARD_PASSWORD}"
+    write_extra_var wg_easy_admin_password "${WG_PASSWORD}"
+    write_extra_var wg_public_host "${WG_HOST}"
     write_extra_var vault_admin_ssh_pubkey "${SSH_PUBKEY}"
 
     if [[ -n "${SSH_PORT}" ]]; then
@@ -414,6 +516,8 @@ print_summary() {
     local summary_adguard_domain="${ADGUARD_INTERNAL_DOMAIN:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" adguard_internal_domain)}"
     local summary_wg_ui_port
     local summary_adguard_ui_port
+    local summary_wg_port="${WG_PORT:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" wg_port)}"
+    local summary_wg_host="${WG_HOST:-<vps-ip>}"
 
     summary_wg_ui_port="$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" wg_easy_bootstrap_ui_port)"
     summary_adguard_ui_port="$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" adguard_bootstrap_ui_port)"
@@ -424,13 +528,20 @@ print_summary() {
                          DEPLOYMENT COMPLETE
 ================================================================================
 
-Open SSH tunnels from your workstation to complete first-client setup:
+Open an SSH tunnel to reach the wg-easy panel and finish first-client setup:
 
   ssh -p ${summary_ssh_port} -L ${summary_wg_ui_port}:127.0.0.1:${summary_wg_ui_port} ${summary_admin_user}@<vps-ip>
+
+Then log in to http://127.0.0.1:${summary_wg_ui_port} with the WireGuard panel
+password you entered during installation, create a client, and connect.
+
+  VPN endpoint for clients: ${summary_wg_host}:${summary_wg_port} (UDP)
+
+For AdGuard, use the second tunnel when needed:
+
   ssh -p ${summary_ssh_port} -L ${summary_adguard_ui_port}:127.0.0.1:${summary_adguard_ui_port} ${summary_admin_user}@<vps-ip>
 
-Then create the first WireGuard client in wg-easy and connect to the VPN.
-After connecting, use the internal domains:
+After connecting to the VPN, use the internal domains:
 
   https://${summary_wg_domain}
   https://${summary_adguard_domain}
@@ -449,11 +560,15 @@ main() {
         error "Unknown option: $1. Use --help for usage."
     fi
 
+    NONINTERACTIVE="${ZERO_TRUST_NONINTERACTIVE:-0}"
     validate_release_source
     require_root
     require_supported_os
-    open_tty
+    if [[ "${NONINTERACTIVE}" != "1" ]]; then
+        open_tty
+    fi
     collect_configuration
+    resolve_wg_host
     install_prerequisites
     install_ansible_toolchain
     checkout_release

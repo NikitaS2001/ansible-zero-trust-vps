@@ -93,8 +93,9 @@ Ansible:
 
 1. Checks root privileges, Debian/Ubuntu support, `apt-get`, and interactive
    `/dev/tty` access.
-2. Prompts for SSH, WireGuard, admin, AdGuard, internal-domain, and SSH-key
-   settings.
+2. Prompts for SSH, WireGuard, admin, AdGuard, wg-easy panel, internal-domain,
+   public-host, and SSH-key settings (or reads them from `ZERO_TRUST_*`
+   environment variables in non-interactive mode).
 3. Installs minimal prerequisites, creates an Ansible virtualenv, checks out
    the selected repository ref, and installs Ansible collections.
 4. Writes secrets to a temporary `0600` extra-vars file, runs `ansible-pull`,
@@ -138,8 +139,13 @@ The installer is interactive and asks for:
 - **Admin username** (press Enter to use the role default)
 - **Admin password** (for console access)
 - **AdGuard admin password**
+- **WireGuard panel password** (for the wg-easy admin panel)
 - **Internal domains** (press Enter to use the role defaults)
+- **WireGuard public hostname or IP** (press Enter to auto-detect the public IP)
 - **SSH public key** (paste your `id_ed25519.pub`)
+
+For automated testing, set `ZERO_TRUST_NONINTERACTIVE=1` and provide every
+input as a `ZERO_TRUST_*` environment variable (see `install.sh --help`).
 
 Then it installs a local Ansible toolchain and runs `ansible-pull` against the
 tagged public repository.
@@ -201,6 +207,10 @@ Key variables to set before first run:
 | `wg_port` | `vars.yml` | Public WireGuard UDP port |
 | `wg_vpn_subnet` | `vars.yml` | VPN client subnet, e.g. `10.8.0.0/24` |
 | `wg_server_ip` | `vars.yml` | WireGuard server VPN IP, e.g. `10.8.0.1` |
+| `wg_easy_admin_user` | `vars.yml` | wg-easy panel username, default `admin` |
+| `wg_easy_admin_password` | `vars.yml` | wg-easy panel password; enables the automated first-start `INIT_*` setup |
+| `wg_public_host` | `vars.yml` | Public IP/domain WireGuard clients connect to (required in remote mode; auto-detected by the installer) |
+| `wg_allowed_ips` | `vars.yml` | Default Allowed IPs applied to new wg-easy clients |
 | `docker_network_subnet` | `vars.yml` | Docker subnet, e.g. `10.66.0.0/24` |
 | `adguard_container_ip` | `vars.yml` | AdGuard fixed Docker IP |
 | `caddy_container_ip` | `vars.yml` | Caddy fixed Docker IP |
@@ -225,8 +235,13 @@ ansible_port: <ssh_port>
   encrypted with `ansible-vault` before running the playbook. Never commit
   unencrypted copies.
 - Keep `.vault_password` out of git and readable only by your local user.
-- wg-easy and AdGuard admin UIs are bound to `127.0.0.1` on the VPS. Access
-  during initial setup is through SSH local forwarding only.
+- wg-easy and AdGuard admin UIs are bound to `127.0.0.1` on the VPS. Access is
+  through SSH local forwarding or the internal HTTPS endpoints over the VPN.
+- The wg-easy panel is password-protected. Ansible runs wg-easy's first-start
+  setup through the `INIT_*` variables (host, port, DNS, default Allowed IPs)
+  and the panel credentials from installation; no interactive wizard is needed.
+  The panel password is only rendered into the Compose file until the initial
+  setup completes and is removed on subsequent runs.
 - Caddy is not published on the public interface. It serves `.internal`
   hostnames to VPN clients via the Docker network at `10.66.0.3`.
 - Only SSH and WireGuard UDP are exposed publicly. No web service ports on
@@ -238,35 +253,32 @@ ansible_port: <ssh_port>
 
 ## First Client Setup
 
-After the playbook finishes, open an SSH tunnel for the wg-easy setup wizard:
+The playbook runs wg-easy's first-start setup automatically (host, port, DNS
+and default Allowed IPs are applied through the `INIT_*` variables), so there
+is no interactive setup wizard to complete.
+
+Open an SSH tunnel to reach the wg-easy admin panel:
 
 ```sh
 ssh -p <ssh_port> -L 51821:127.0.0.1:51821 <admin_user>@<ansible_host>
 ```
 
 1. Open `http://127.0.0.1:51821` in a browser on your local machine.
-2. Complete the wg-easy setup wizard:
+2. Log in with the **WireGuard panel username and password** you entered
+   during installation (default username `admin`).
+3. Create a client config in wg-easy and connect to WireGuard.
 
-   | Field | Value |
-   | --- | --- |
-   | Host | Your `ansible_host` |
-   | Port | Your `wg_port` |
-   | DNS | Your `wg_client_dns` (AdGuard IP `10.66.0.2`) |
+New clients get these defaults from the initial setup:
 
-3. In wg-easy client Allowed IPs, include the VPN subnet and the internal
-   service IPs so DNS and `.internal` HTTPS route through the VPN:
+- **DNS**: `10.66.0.2` (AdGuard)
+- **Allowed IPs**: `10.8.0.0/24, 10.66.0.2/32, 10.66.0.3/32`
 
-   ```
-   10.8.0.0/24, 10.66.0.2/32, 10.66.0.3/32
-   ```
+For a full-tunnel client, add `0.0.0.0/0` to Allowed IPs. Avoid using a
+Docker subnet that overlaps any network on the client machine; local route
+conflicts can make AdGuard and Caddy unreachable even when WireGuard
+handshakes succeed.
 
-   For a full-tunnel client, include `0.0.0.0/0` as well. Avoid using a
-   Docker subnet that overlaps any network on the client machine; local route
-   conflicts can make AdGuard and Caddy unreachable even when WireGuard
-   handshakes succeed.
-
-4. Create a client config in wg-easy and connect to WireGuard.
-5. AdGuard rewrites `*.internal` to Caddy's Docker IP. Access services over
+4. AdGuard rewrites `*.internal` to Caddy's Docker IP. Access services over
    the VPN at:
 
    ```
@@ -274,7 +286,7 @@ ssh -p <ssh_port> -L 51821:127.0.0.1:51821 <admin_user>@<ansible_host>
    https://adguard.internal
    ```
 
-6. Import `fetched_certs/<inventory-host>/root.crt` into your client OS or
+5. Import `fetched_certs/<inventory-host>/root.crt` into your client OS or
    browser to trust the `.internal` HTTPS endpoints.
 
 AdGuard is also reachable during initial setup at `http://127.0.0.1:3000` via:
@@ -301,6 +313,22 @@ command again.
 
 The public installer supports Debian/Ubuntu systems with `apt-get`. Use remote
 Ansible mode for other targets after adapting the roles.
+
+**"wg-easy still shows the setup wizard after deployment"**
+
+The automated first-start setup (`INIT_*`) did not complete. This can happen
+when `wg_easy_admin_password`/`wg_public_host` were missing or the wg-easy
+volume already contained an unfinished config. Log in via the SSH tunnel and
+complete the wizard manually (Host = your public IP/domain, Port = `wg_port`,
+DNS = `10.66.0.2`, and add `10.8.0.0/24, 10.66.0.2/32, 10.66.0.3/32` to
+Allowed IPs), or reset the wg-easy volume and re-deploy:
+
+```sh
+sudo docker compose -f /opt/zero-trust-vps/docker-compose.yml down
+sudo rm -rf /opt/zero-trust-vps/volumes/wg-easy
+```
+
+Then rerun the installer.
 
 ### WireGuard connects but internal services do not respond
 
