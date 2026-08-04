@@ -313,7 +313,9 @@ install_ansible_toolchain() {
     fi
     python3 -m venv "${VENV_DIR}"
     "${VENV_DIR}/bin/python" -m pip install --quiet --upgrade pip
-    "${VENV_DIR}/bin/pip" install --quiet ansible "passlib[bcrypt]"
+    # passlib 1.7.4 is incompatible with bcrypt >= 4.1 (removed __about__),
+    # which makes the AdGuard bcrypt hash fail with a bogus 72-byte error.
+    "${VENV_DIR}/bin/pip" install --quiet ansible "passlib[bcrypt]" "bcrypt<4.1"
 }
 
 checkout_release() {
@@ -360,6 +362,8 @@ collect_configuration() {
     prompt_optional WG_HOST "WireGuard public hostname or IP (Enter to auto-detect)"
     prompt_required_line SSH_PUBKEY "SSH public key"
 
+    require_max_length "${ADGUARD_PASSWORD}" "AdGuard admin password" 72
+
     validate_port "SSH port" "${SSH_PORT}"
     validate_port "WireGuard port" "${WG_PORT}"
     validate_optional_admin_user "${ADMIN_USER}"
@@ -376,6 +380,16 @@ require_min_length() {
 
     if [[ "${#value}" -lt 8 ]]; then
         error "${label} must be at least 8 characters."
+    fi
+}
+
+require_max_length() {
+    local value="$1"
+    local label="$2"
+    local max="$3"
+
+    if [[ "${#value}" -gt "${max}" ]]; then
+        error "${label} must be at most ${max} characters (bcrypt limit)."
     fi
 }
 
@@ -416,6 +430,7 @@ collect_configuration_noninteractive() {
 
     require_min_length "${ADMIN_PASSWORD}" "Admin password"
     require_min_length "${ADGUARD_PASSWORD}" "AdGuard admin password"
+    require_max_length "${ADGUARD_PASSWORD}" "AdGuard admin password" 72
     require_min_length "${WG_PASSWORD}" "WireGuard panel password"
 
     validate_port "SSH port" "${SSH_PORT}"
