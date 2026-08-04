@@ -108,7 +108,7 @@ hostfwd=tcp:127.0.0.1:"${QEMU_SSH_PORT}"-:22,\
 hostfwd=tcp:127.0.0.1:"${QEMU_ADMIN_PORT}"-:"${E2E_SSH_PORT}",\
 hostfwd=udp:127.0.0.1:"${QEMU_WG_PORT}"-:"${E2E_WG_PORT}" \
     -device virtio-net-pci,netdev=n0 \
-    -display none -serial file:"${TMP_DIR}/serial.log" -no-reboot \
+    -display none -serial file:"${TMP_DIR}/serial.log" \
     -daemonize -pidfile "${TMP_DIR}/qemu.pid"
 sleep 2
 if [[ ! -s "${TMP_DIR}/qemu.pid" ]]; then
@@ -155,6 +155,7 @@ if [[ "${DO_REBOOT}" == "true" ]]; then
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         'sudo systemctl reboot' || true
     require_ssh_down "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
+    require_ssh_ready "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
     sleep 20
     verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
     echo "[E2E] Reboot survival verified"
