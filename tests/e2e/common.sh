@@ -31,6 +31,21 @@ run_remote_stdin() {
         "${target}" "$@"
 }
 
+require_ssh_down() {
+    local target="$1"; local port="$2"; local key="$3"; local retries="${4:-30}"
+    local i=0
+    while ssh -p "${port}" -i "${key}" \
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=3 -o BatchMode=yes \
+        "${target}" 'true' >/dev/null 2>&1; do
+        i=$((i + 1))
+        if [[ "${i}" -ge "${retries}" ]]; then
+            fail "SSH on ${target}:${port} did not go down (expected after reboot)"
+        fi
+        sleep 3
+    done
+}
+
 require_ssh_ready() {
     local target="$1"; local port="$2"; local key="$3"; local retries="${4:-30}"
     local i=0

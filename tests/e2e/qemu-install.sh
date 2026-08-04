@@ -154,7 +154,7 @@ if [[ "${DO_REBOOT}" == "true" ]]; then
     echo "[E2E] Rebooting the VM and re-verifying..."
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         'sudo systemctl reboot' || true
-    require_ssh_ready "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
+    require_ssh_down "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
     sleep 20
     verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
     echo "[E2E] Reboot survival verified"

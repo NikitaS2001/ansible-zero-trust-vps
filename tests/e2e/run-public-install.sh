@@ -89,6 +89,7 @@ verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25
 if [[ "${DO_REBOOT}" == "true" ]]; then
     echo "[E2E] Rebooting ${VPS_IP} and re-verifying..."
     run_remote "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" 'sudo systemctl reboot' || true
+    require_ssh_down "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" 30
     require_ssh_ready "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" 60
     sleep 20
     verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519"
