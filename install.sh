@@ -561,6 +561,14 @@ main() {
     fi
 
     NONINTERACTIVE="${ZERO_TRUST_NONINTERACTIVE:-0}"
+
+    # A fresh Debian/Ubuntu VPS usually only has C.UTF-8 generated, while the
+    # SSH session forwards the caller's locale (e.g. ru_RU.UTF-8). Ansible
+    # aborts with "unsupported locale setting" in that case, so pin a safe
+    # locale for the toolchain and ansible-pull steps.
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+
     validate_release_source
     require_root
     require_supported_os
