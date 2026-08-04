@@ -105,8 +105,8 @@ qemu-system-x86_64 -enable-kvm -m 2048 -smp 2 \
     -drive file="${SEED_ISO}",if=virtio,format=raw \
     -netdev user,id=n0,\
 hostfwd=tcp:127.0.0.1:"${QEMU_SSH_PORT}"-:22,\
-hostfwd=tcp:127.0.0.1:"${QEMU_ADMIN_PORT}"-"${E2E_SSH_PORT}",\
-hostfwd=udp:127.0.0.1:"${QEMU_WG_PORT}"-"${E2E_WG_PORT}" \
+hostfwd=tcp:127.0.0.1:"${QEMU_ADMIN_PORT}"-:"${E2E_SSH_PORT}",\
+hostfwd=udp:127.0.0.1:"${QEMU_WG_PORT}"-:"${E2E_WG_PORT}" \
     -device virtio-net-pci,netdev=n0 \
     -display none -serial file:"${TMP_DIR}/serial.log" -no-reboot \
     -daemonize -pidfile "${TMP_DIR}/qemu.pid"
