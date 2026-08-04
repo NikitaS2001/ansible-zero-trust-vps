@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end test of the public installer inside a plain qemu/KVM VM.
-# A lightweight alternative to the Vagrant harness that needs only qemu,
-# KVM support and genisoimage (no libvirt daemon, no vagrant).
+# Needs only qemu, KVM support and genisoimage (no libvirt daemon).
 #
 # Usage:
 #   tests/e2e/qemu-install.sh [--reboot-test] [--client-test]
@@ -124,7 +123,7 @@ require_ssh_ready "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" 60
 
 # --- copy the repo into the guest -------------------------------------------
 echo "[E2E] Copying the repository into the guest..."
-tar czf - -C "${ROOT_DIR}" --exclude=.vagrant . | \
+tar czf - -C "${ROOT_DIR}" . | \
     run_remote_stdin "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
     'mkdir -p /tmp/ztrepo && tar xzf - -C /tmp/ztrepo'
 

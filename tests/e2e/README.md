@@ -1,19 +1,18 @@
 # E2E Testing of the Public Installer
 
 This directory contains end-to-end tests for the public `curl | sudo bash`
-installer. Two targets are supported:
+installer. Three targets are supported:
 
 | Script | Target | Purpose |
 |---|---|---|
-| `vagrant-install.sh` | Disposable Vagrant VM (libvirt/VirtualBox) | Fast iteration during development |
-| `qemu-install.sh` | Plain qemu/KVM VM (no vagrant) | Fast iteration when only qemu + KVM are available |
+| `qemu-install.sh` | Plain qemu/KVM VM | Fast iteration when only qemu + KVM are available |
 | `run-public-install.sh` | Real VPS | Final verification of a release tag |
 | `client-test.sh` | Any of the above + this machine | Real WireGuard client handshake over the VPN |
 
-## Fast iteration without Vagrant (qemu/KVM)
+## Fast iteration: qemu/KVM
 
 Needs `qemu-system-x86_64`, `qemu-img`, `genisoimage`, `curl` and KVM
-support (`/dev/kvm`). No libvirt daemon or vagrant required.
+support (`/dev/kvm`). No libvirt daemon required.
 
 ```bash
 tests/e2e/qemu-install.sh --reboot-test
@@ -28,19 +27,6 @@ missing or the host already routes `10.8.0.0/24`.
 
 ## Prerequisites
 
-### Vagrant (libvirt)
-
-```bash
-sudo apt-get install -y qemu-kvm libvirt-daemon-system libvirt-clients rsync vagrant
-sudo systemctl enable --now libvirtd
-sudo usermod -aG libvirt,kvm "$USER"
-# re-login, then install the provider
-vagrant plugin install vagrant-libvirt
-```
-
-`vagrant-libvirt` needs `rsync` on both the host and the guest. The base
-box (`ubuntu/noble64` or `debian/bookworm64`) is downloaded on the first run.
-
 ### Real VPS
 
 - A **fresh, disposable** Debian/Ubuntu VPS with root SSH access.
@@ -52,22 +38,6 @@ box (`ubuntu/noble64` or `debian/bookworm64`) is downloaded on the first run.
 
 - `curl`, `jq`, `wireguard-tools` (`wg`/`wg-quick`), `/dev/net/tun` on the
   machine running the test, and root for `wg-quick up`.
-
-## Fast iteration: Vagrant VM
-
-```bash
-# Ubuntu 24.04
-VAGRANT_BOX=ubuntu/noble64 tests/e2e/vagrant-install.sh
-
-# Debian 12, with a reboot survival test and a WireGuard client test
-VAGRANT_BOX=debian/bookworm64 tests/e2e/vagrant-install.sh --reboot-test --client-test
-```
-
-The installer runs non-interactively with `ZERO_TRUST_NONINTERACTIVE=1` and
-clones the repository from `/vagrant` at the current branch (override with
-`INSTALL_REF`). After the install, the script verifies SSH on the hardened
-port, UFW state, containers, the WireGuard interface, wg-easy auth and the
-AdGuard UI, then optionally reboots the VM and re-verifies.
 
 ## Final check: real VPS (release candidate)
 
@@ -90,7 +60,7 @@ verification suite over the hardened SSH port.
 
 ## Client handshake test
 
-After either install, run from a machine with TUN and wireguard-tools:
+After an install, run from a machine with TUN and wireguard-tools:
 
 ```bash
 TARGET=sysadmin@203.0.113.10 \
