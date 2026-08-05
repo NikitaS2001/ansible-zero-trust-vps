@@ -40,13 +40,13 @@ wg_easy_bootstrap_ui_port: 51821
 adguard_bootstrap_ui_port: 3000
 
 # Docker APT repository settings
-docker_apt_distribution: "{{ ansible_distribution | lower }}"
-docker_apt_release: "{{ ansible_distribution_release }}"
+docker_apt_distribution: "{{ ansible_facts['distribution'] | lower }}"
+docker_apt_release: "{{ ansible_facts['distribution_release'] }}"
 docker_apt_arch_map:
   x86_64: amd64
   aarch64: arm64
   armv7l: armhf
-docker_apt_arch: "{{ docker_apt_arch_map[ansible_architecture] | default(ansible_architecture) }}"
+docker_apt_arch: "{{ docker_apt_arch_map[ansible_facts['architecture']] | default(ansible_facts['architecture']) }}"
 docker_apt_gpg_url: "https://download.docker.com/linux/{{ docker_apt_distribution }}/gpg"
 docker_apt_repo_url: "https://download.docker.com/linux/{{ docker_apt_distribution }}"
 docker_apt_gpg_checksum: "sha256:1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"

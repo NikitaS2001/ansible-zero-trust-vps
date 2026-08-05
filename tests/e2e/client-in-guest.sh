@@ -48,6 +48,7 @@ CLIENT_ID="$(jq -r '.clientId' /tmp/zt-create.json 2>/dev/null || true)"
 curl -fsS -u "${WG_USER}:${WG_PASSWORD}" \
     "http://127.0.0.1:${UI_PORT}/api/client/${CLIENT_ID}/configuration" >/tmp/zt-e2e.conf
 grep -q '^\[Interface\]' /tmp/zt-e2e.conf || { echo "[FAIL] downloaded configuration is not a WireGuard config" >&2; exit 1; }
+chmod 0600 /tmp/zt-e2e.conf
 sed -i -E "s|^Endpoint = .*|Endpoint = ${WG_ENDPOINT}|" /tmp/zt-e2e.conf
 
 # 3. bring the tunnel up

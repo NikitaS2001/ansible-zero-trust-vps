@@ -205,6 +205,10 @@ Key variables to set before first run:
 | `ansible_host` | `inventory/hosts.yml` | Public VPS IP or DNS |
 | `ssh_port` | `vars.yml` | Hardened SSH port |
 | `wg_port` | `vars.yml` | Public WireGuard UDP port |
+
+> Some providers, corporate firewalls and mobile networks block or throttle
+> UDP. If WireGuard handshakes fail only from certain networks, set `wg_port`
+> to `443/udp` or `53/udp` and open that port in the provider firewall.
 | `wg_vpn_subnet` | `vars.yml` | VPN client subnet, e.g. `10.8.0.0/24` |
 | `wg_server_ip` | `vars.yml` | WireGuard server VPN IP, e.g. `10.8.0.1` |
 | `wg_easy_admin_user` | `vars.yml` | wg-easy panel username, default `admin` |
@@ -303,6 +307,29 @@ ssh -p <ssh_port> -L 3000:127.0.0.1:3000 <admin_user>@<ansible_host>
 AdGuard is preconfigured by Ansible. It should show the login screen, not the
 first-run setup wizard. Log in as `admin` with the AdGuard admin password
 entered during installation.
+
+## If You Are Locked Out (SSH recovery)
+
+The playbook moves SSH to port `ssh_port` (default `2222`) and restricts it to
+`admin_user` with key authentication. The most common cause of losing access
+is a provider firewall that does not allow the new SSH port.
+
+- **Before running**: open `2222/tcp` (and the current SSH port) in the
+  provider panel/security group, and keep the original SSH session open until
+  you have verified a new login.
+- **If you cannot connect**: use the provider's VNC/serial console. From there,
+  inspect the state:
+
+  ```sh
+  sudo ufw status verbose      # is the firewall active, which ports are allowed?
+  sudo ss -ltnp | grep ssh     # which port is sshd listening on?
+  sudo systemctl status ssh
+  ```
+
+  The hardened `sshd_config` is only applied if the new port was reachable;
+  otherwise the rescue block restores the previous config. UFW also keeps the
+  port you connected from allowed during the change, so a rolled-back sshd
+  can be reached again.
 
 ## Backups
 
