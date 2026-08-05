@@ -34,7 +34,7 @@ for _ in $(seq 1 12); do
     if curl -fsS -u "${WG_USER}:${WG_PASSWORD}" -X POST \
         "http://127.0.0.1:${UI_PORT}/api/client" \
         -H 'Content-Type: application/json' \
-        -d "{\"name\":\"${CLIENT_NAME}\"}" >/tmp/zt-create.json 2>/dev/null; then
+        -d "{\"name\":\"${CLIENT_NAME}\",\"expiresAt\":null}" >/tmp/zt-create.json 2>/dev/null; then
         create_ok=true
         break
     fi
