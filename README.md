@@ -181,7 +181,7 @@ cp group_vars/all/vault_ssh.yml.example group_vars/all/vault_ssh.yml
 ansible-vault encrypt group_vars/all/vault_services.yml group_vars/all/vault_ssh.yml
 
 # 4. Install controller dependencies and collections
-python3 -m pip install --user ansible-core "passlib[bcrypt]" "bcrypt<4.1"
+python3 -m pip install --user "ansible-core==2.20.1" "passlib[bcrypt]" "bcrypt<4.1"
 ansible-galaxy collection install -r requirements.yml
 
 # 5. Syntax-check and deploy
@@ -240,8 +240,13 @@ ansible_port: <ssh_port>
 - The wg-easy panel is password-protected. Ansible runs wg-easy's first-start
   setup through the `INIT_*` variables (host, port, DNS, default Allowed IPs)
   and the panel credentials from installation; no interactive wizard is needed.
-  The panel password is only rendered into the Compose file until the initial
-  setup completes and is removed on subsequent runs.
+  The `INIT_*` block is stripped from the Compose file in the same run that
+  creates the server, so the panel password is not left on disk.
+- **Threat model: the admin account is root-equivalent.** `admin_user` gets
+  passwordless sudo and membership in the `docker` group, which is a
+  root-equivalent interface. This is a deliberate single-admin design: protect
+  the admin SSH key accordingly, because a stolen key gives full control of
+  the host, the VPN and all panels.
 - Caddy is not published on the public interface. It serves `.internal`
   hostnames to VPN clients via the Docker network at `10.66.0.3`.
 - Only SSH and WireGuard UDP are exposed publicly. No web service ports on

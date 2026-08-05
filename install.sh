@@ -313,9 +313,11 @@ install_ansible_toolchain() {
     fi
     python3 -m venv "${VENV_DIR}"
     "${VENV_DIR}/bin/python" -m pip install --quiet --upgrade pip
+    # Pin the Ansible release that the playbook was validated against, so a
+    # future Ansible cannot silently break the deployment. Also pin bcrypt:
     # passlib 1.7.4 is incompatible with bcrypt >= 4.1 (removed __about__),
     # which makes the AdGuard bcrypt hash fail with a bogus 72-byte error.
-    "${VENV_DIR}/bin/pip" install --quiet ansible "passlib[bcrypt]" "bcrypt<4.1"
+    "${VENV_DIR}/bin/pip" install --quiet "ansible==14.2.0" "passlib[bcrypt]" "bcrypt<4.1"
 }
 
 checkout_release() {

@@ -112,4 +112,10 @@ verify_deployment() {
         fail "a container publishes a TCP port on 0.0.0.0: ${out}"
     fi
     pass "no public TCP exposure"
+
+    echo "[check] the deployed Compose file contains no panel password"
+    out="$(run_remote "${target}" "${port}" "${key}" \
+        'sudo grep -q INIT_PASSWORD /opt/zero-trust-vps/docker-compose.yml 2>/dev/null && echo PRESENT || echo CLEAN')"
+    [[ "${out}" == "CLEAN" ]] || fail "docker-compose.yml still contains INIT_PASSWORD"
+    pass "compose file is free of the panel password"
 }

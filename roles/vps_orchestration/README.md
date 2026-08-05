@@ -123,6 +123,21 @@ because it contains the AdGuard admin password hash. wg-easy persists its own
 WireGuard state under `{{ project_root }}/volumes/wg-easy`; review that
 directory after first setup if you need stricter host-level permissions.
 
+### Configuration Lifecycle
+
+There are two different contracts, know which one applies:
+
+- **AdGuard is always managed by Ansible.** The role rewrites
+  `volumes/adguard/conf/AdGuardHome.yaml` from a template on every run, so
+  UI-side changes are overwritten on the next deployment and can recreate the
+  container. Edit the template or `group_vars` instead.
+- **wg-easy is bootstrap-only.** The `INIT_*` variables configure the server
+  on the first container start and are ignored afterwards; changes are made
+  in the wg-easy admin panel and persist in the volume. Re-running the
+  playbook does not re-apply wg-easy settings. The `INIT_*` block is stripped
+  from the Compose file in the same run that creates the server, so the panel
+  password is not left on disk.
+
 ### Automated wg-easy Initial Setup
 
 When `wg_easy_admin_password` and `wg_public_host` are set, the role renders

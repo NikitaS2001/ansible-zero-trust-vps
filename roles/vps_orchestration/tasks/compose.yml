@@ -29,3 +29,17 @@
     state: present
     recreate: "{{ 'always' if vps_orchestration_adguard_config.changed | default(false) else 'auto' }}"
   tags: [compose]
+
+# On the first deploy the Compose file above contained the wg-easy panel
+# password in the INIT_* block. wg-easy consumed it during its first start,
+# so re-render the file without the block in the same run instead of leaving
+# the plaintext on disk until the next playbook invocation.
+- name: "Compose | Re-secure | Remove the INIT_* block from the Compose file"
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ project_root }}/docker-compose.yml"
+    mode: '0644'
+  vars:
+    wg_easy_initialized: true
+  when: not vps_orchestration_wg_easy_conf.stat.exists
+  tags: [compose]
