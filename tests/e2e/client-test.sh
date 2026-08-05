@@ -30,7 +30,9 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-client.XXXXXX")"
 TUNNEL_PID=""
 cleanup() {
     sudo wg-quick down "${TMP_DIR}/e2e.conf" >/dev/null 2>&1 || true
-    [[ -n "${TUNNEL_PID}" ]] && kill "${TUNNEL_PID}" >/dev/null 2>&1 || true
+    if [[ -n "${TUNNEL_PID}" ]]; then
+        kill "${TUNNEL_PID}" >/dev/null 2>&1 || true
+    fi
     rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT

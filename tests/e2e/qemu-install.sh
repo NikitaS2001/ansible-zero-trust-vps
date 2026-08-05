@@ -167,9 +167,9 @@ if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
-    cat "${E2E_DIR}/client-in-guest.sh" | \
-        run_remote_stdin "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${E2E_WG_PORT}' bash -s"
+    run_remote_stdin "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${E2E_WG_PORT}' bash -s" \
+        < "${E2E_DIR}/client-in-guest.sh"
 fi
 
 if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
