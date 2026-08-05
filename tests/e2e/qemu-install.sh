@@ -173,6 +173,10 @@ if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
 fi
 
 if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
+    echo "[E2E] Re-copying the repository into the guest (the reboot clears /tmp)..."
+    tar czf - -C "${ROOT_DIR}" . | \
+        run_remote_stdin "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
+        'mkdir -p /tmp/ztrepo && tar xzf - -C /tmp/ztrepo'
     echo "[E2E] Re-running the installer to verify idempotency..."
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         "cd /tmp/ztrepo && sudo env \
