@@ -51,6 +51,8 @@ jobs:
             install.sh \
             scripts/verify-ssot.sh \
             tests/e2e/common.sh \
+            tests/e2e/qemu-install.sh \
+            tests/e2e/qemu-remote-install.sh \
             tests/e2e/run-public-install.sh \
             tests/e2e/client-test.sh
 

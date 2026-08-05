@@ -6,6 +6,7 @@ installer. Three targets are supported:
 | Script | Target | Purpose |
 |---|---|---|
 | `qemu-install.sh` | Plain qemu/KVM VM | Fast iteration when only qemu + KVM are available |
+| `qemu-remote-install.sh` | Plain qemu/KVM VM | Remote deployment mode (controller -> VM via SSH + vault) |
 | `run-public-install.sh` | Real VPS | Final verification of a release tag |
 | `client-test.sh` | Any of the above + this machine | Real WireGuard client handshake over the VPN |
 
@@ -24,6 +25,15 @@ The VM is booted headless with a cloud-init NoCloud seed, the repository is
 copied in, and the installer runs non-interactively exactly like on a real
 host. `--client-test` is skipped automatically when wireguard-tools are
 missing or the host already routes `10.8.0.0/24`.
+
+## Remote deployment mode (controller -> VM)
+
+`qemu-remote-install.sh` boots a VM as a stand-in VPS and deploys with the
+remote mode documented in the README: inventory + `group_vars` + encrypted
+vault files and `ansible-playbook` over SSH from this host (the controller).
+It covers the code paths the public installer does not: SSH-based connection,
+UFW enablement during hardening, vault decryption and the remote-only verify
+tasks (SSH reachable on the new port, external 443 closed).
 
 ## Prerequisites
 
