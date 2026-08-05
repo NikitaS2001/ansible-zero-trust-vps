@@ -174,7 +174,7 @@ fi
 
 if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
     echo "[E2E] Re-running the installer to verify idempotency..."
-    run_remote "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
+    run_remote "${ADMIN_TARGET}" "${ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         "cd /tmp/ztrepo && sudo env \
         ZERO_TRUST_NONINTERACTIVE=1 \
         ZERO_TRUST_REPO_URL=/tmp/ztrepo \
