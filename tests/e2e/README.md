@@ -23,8 +23,14 @@ QEMU_IMAGE=https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-gener
 
 The VM is booted headless with a cloud-init NoCloud seed, the repository is
 copied in, and the installer runs non-interactively exactly like on a real
-host. `--client-test` is skipped automatically when wireguard-tools are
-missing or the host already routes `10.8.0.0/24`.
+host.
+
+- `--client-test` installs `wireguard-tools` inside the guest and runs a real
+  WireGuard client handshake there (create client via the wg-easy API, bring
+  up `wg-quick`, verify AdGuard DNS and the `.internal` HTTPS endpoints with
+  the trusted root CA). This avoids touching the host network.
+- `--idempotency-test` re-runs the installer on the same VM and re-verifies
+  the stack, checking that a second run completes cleanly.
 
 ## Remote deployment mode (controller -> VM)
 

@@ -36,10 +36,12 @@ QEMU_WG_PORT="${QEMU_WG_PORT:-51822}"
 
 DO_REBOOT=false
 DO_CLIENT_TEST=false
+DO_IDEMPOTENCY=false
 for arg in "$@"; do
     case "${arg}" in
         --reboot-test) DO_REBOOT=true ;;
         --client-test) DO_CLIENT_TEST=true ;;
+        --idempotency-test) DO_IDEMPOTENCY=true ;;
         *) fail "Unknown argument: ${arg}" ;;
     esac
 done
@@ -161,19 +163,35 @@ if [[ "${DO_REBOOT}" == "true" ]]; then
 fi
 
 if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
-    if ! command -v wg >/dev/null || ! command -v wg-quick >/dev/null; then
-        echo "[WARN] --client-test skipped: wireguard-tools are not installed on this host"
-    elif ip route | grep -q '10.8.0.0/24'; then
-        echo "[WARN] --client-test skipped: the host already routes 10.8.0.0/24"
-    elif [[ ! -e /dev/net/tun ]]; then
-        echo "[WARN] --client-test skipped: /dev/net/tun is not available on this host"
-    else
-        echo "[E2E] Running the WireGuard client test..."
-        TARGET="sysadmin@127.0.0.1" ADMIN_SSH_PORT="${QEMU_ADMIN_PORT}" \
-            SSH_KEY="${TMP_DIR}/id_ed25519" WG_PASSWORD="${WG_PASS}" \
-            WG_ENDPOINT="127.0.0.1:${QEMU_WG_PORT}" \
-            "${E2E_DIR}/client-test.sh"
-    fi
+    echo "[E2E] Installing wireguard-tools and jq in the guest..."
+    run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
+        'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq >/dev/null'
+    echo "[E2E] Running the in-guest WireGuard client handshake test..."
+    cat "${E2E_DIR}/client-in-guest.sh" | \
+        run_remote_stdin "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${E2E_WG_PORT}' bash -s"
+fi
+
+if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
+    echo "[E2E] Re-running the installer to verify idempotency..."
+    run_remote "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
+        "cd /tmp/ztrepo && sudo env \
+        ZERO_TRUST_NONINTERACTIVE=1 \
+        ZERO_TRUST_REPO_URL=/tmp/ztrepo \
+        ZERO_TRUST_RELEASE_REF='${INSTALL_REF}' \
+        ZERO_TRUST_SSH_PORT='${E2E_SSH_PORT}' \
+        ZERO_TRUST_WG_PORT='${E2E_WG_PORT}' \
+        ZERO_TRUST_ADMIN_USER=sysadmin \
+        ZERO_TRUST_ADMIN_PASSWORD='${ADMIN_PASS}' \
+        ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}' \
+        ZERO_TRUST_WG_PASSWORD='${WG_PASS}' \
+        ZERO_TRUST_INTERNAL_DOMAINS='wg.internal adguard.internal' \
+        ZERO_TRUST_SSH_PUBKEY='${PUBKEY}' \
+        ZERO_TRUST_WG_HOST=127.0.0.1 \
+        bash ./install.sh"
+    echo "[E2E] Verifying the stack after the second installer run..."
+    verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
+    echo "[E2E] Idempotency verified"
 fi
 
 echo "[E2E] PASS: public installer E2E succeeded in qemu/KVM"
