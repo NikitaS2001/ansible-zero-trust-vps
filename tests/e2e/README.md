@@ -8,6 +8,7 @@ installer. Three targets are supported:
 | `qemu-install.sh` | Plain qemu/KVM VM | Fast iteration when only qemu + KVM are available |
 | `qemu-remote-install.sh` | Plain qemu/KVM VM | Remote deployment mode (controller -> VM via SSH + vault) |
 | `run-public-install.sh` | Real VPS | Final verification of a release tag |
+| `vps-preflight.sh` | Real VPS | Readiness checks before the final run |
 | `client-test.sh` | Any of the above + this machine | Real WireGuard client handshake over the VPN |
 
 ## Fast iteration: qemu/KVM
@@ -40,6 +41,15 @@ vault files and `ansible-playbook` over SSH from this host (the controller).
 It covers the code paths the public installer does not: SSH-based connection,
 UFW enablement during hardening, vault decryption and the remote-only verify
 tasks (SSH reachable on the new port, external 443 closed).
+
+## VPS preflight
+
+Before the final run, check the provider-side requirements that qemu cannot
+model (TUN, WireGuard kernel support, free ports, outbound access):
+
+```bash
+VPS_IP=203.0.113.10 VPS_SSH_KEY=~/.ssh/id_ed25519 tests/e2e/vps-preflight.sh
+```
 
 ## Prerequisites
 
