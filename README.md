@@ -46,7 +46,7 @@ flowchart LR
 | Service | Image |
 | --- | --- |
 | wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` |
-| AdGuard Home | `adguard/adguardhome:v0.107.76` |
+| AdGuard Home | `adguard/adguardhome:v0.107.78` |
 | Caddy | `caddy:2.11.3` |
 
 ## Stack Licenses

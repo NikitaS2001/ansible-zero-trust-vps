@@ -76,7 +76,7 @@ zero-trust VPN gateway:
 | Service | Image | Internal Port | External Port | Purpose |
 |---|---|---|---|---|
 | wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` | 51821 (UI), 51820 (WireGuard UDP) | 51820/udp | WireGuard VPN with password-protected web UI |
-| AdGuard Home | `adguard/adguardhome:v0.107.76` | 3000 (UI), 53 (DNS) | none | DNS sinkhole and `.internal` resolver |
+| AdGuard Home | `adguard/adguardhome:v0.107.78` | 3000 (UI), 53 (DNS) | none | DNS sinkhole and `.internal` resolver |
 | Caddy | `caddy:2.11.3` | 80, 443 | none | TLS reverse proxy for internal hostnames |
 
 Caddy and AdGuard are not published on the public interface. They are accessed
