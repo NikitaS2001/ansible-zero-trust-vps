@@ -304,6 +304,19 @@ AdGuard is preconfigured by Ansible. It should show the login screen, not the
 first-run setup wizard. Log in as `admin` with the AdGuard admin password
 entered during installation.
 
+## Backups
+
+All persistent state lives under `/opt/zero-trust-vps/volumes`:
+
+- `wg-easy/` — WireGuard server and client private keys;
+- `adguard/` — AdGuard configuration and filter state;
+- `caddy/data/` — the Caddy internal CA (`root.crt`/`root.key`).
+
+Losing `caddy/data` issues a new root CA and invalidates every imported
+`root.crt`; losing `wg-easy` requires re-issuing all clients. Archive the
+whole directory periodically (e.g. `tar -czf`) and test a restore before you
+need it. Backup/rotation automation is planned post-v1.0.0.
+
 ## Troubleshooting
 
 ### Public install mode

@@ -25,7 +25,7 @@
   notify: reload ufw
   changed_when: >
     ((vps_orchestration_ufw_docker_install.stdout ~ vps_orchestration_ufw_docker_install.stderr)
-    is regex('(?m)(Rules updated|Rules installed|Reloading|Skipping adding existing rule)', ignorecase=True))
+    is regex('(?m)(Rules updated|Rules installed|Reloading)', ignorecase=True))
   tags: [ufw_docker]
 
 - name: "UFW-Docker | Install | Apply UFW-Docker rules immediately"

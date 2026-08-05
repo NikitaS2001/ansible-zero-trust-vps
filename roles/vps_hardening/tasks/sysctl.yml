@@ -13,5 +13,5 @@
   command: sysctl -p /etc/sysctl.d/99-zero-trust.conf
   register: vps_hardening_sysctl_apply
   when: ansible_virtualization_type not in ['lxc', 'openvz']
-  changed_when: vps_hardening_sysctl_apply.stdout_lines | length > 0
+  changed_when: false
   tags: [sysctl]

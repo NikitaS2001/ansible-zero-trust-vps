@@ -14,6 +14,19 @@
   when: adguard_password is defined
   tags: [adguard]
 
+- name: "AdGuard | Config | Fail when no admin password is configured"
+  fail:
+    msg: >-
+      No AdGuard admin password is configured. In public install mode the
+      installer collects adguard_password; in remote mode set
+      vault_adguard_password_hash in group_vars/all/vault_services.yml.
+      An empty hash would render an invalid AdGuardHome.yaml and lock the
+      admin out.
+  when:
+    - adguard_password is not defined
+    - vault_adguard_password_hash | default("") | length == 0
+  tags: [adguard]
+
 - name: "AdGuard | Config | Deploy AdGuardHome.yaml before containers start"
   template:
     src: AdGuardHome.yaml.j2

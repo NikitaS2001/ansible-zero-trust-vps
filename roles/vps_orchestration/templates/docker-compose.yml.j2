@@ -18,6 +18,9 @@ services:
       - net.ipv4.conf.all.src_valid_mark=1
       - net.ipv6.conf.all.disable_ipv6=1
     environment:
+      # INSECURE=true serves the wg-easy UI over HTTP on 127.0.0.1. It is
+      # reachable only via an SSH tunnel or through Caddy TLS over the VPN,
+      # and the panel itself is password-protected by the INIT_* setup.
       - INSECURE=true
       - DISABLE_IPV6=true
 {% if (not wg_easy_initialized | default(false) | bool) and (wg_easy_admin_password | length > 0) %}

@@ -47,7 +47,7 @@
     shell: "{{ admin_shell }}"
     password: "{{ vps_hardening_admin_password_hash }}"
     password_lock: false
-    update_password: always
+    update_password: "{{ 'always' if (admin_password is defined or (admin_password_hash | length > 0)) else 'on_create' }}"
   no_log: true
   tags: [user]
 

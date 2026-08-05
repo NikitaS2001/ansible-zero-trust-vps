@@ -7,6 +7,17 @@
     proto: tcp
   tags: [ufw]
 
+- name: "UFW | Allow | Current SSH connection port for rollback safety"
+  ufw:
+    rule: allow
+    port: "{{ ansible_port | int }}"
+    proto: tcp
+  when:
+    - ansible_connection | default("") != "local"
+    - ansible_port is defined
+    - (ansible_port | int) != (ssh_port | int)
+  tags: [ufw]
+
 - name: "UFW | Allow | WireGuard UDP port"
   ufw:
     rule: allow
