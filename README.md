@@ -205,10 +205,6 @@ Key variables to set before first run:
 | `ansible_host` | `inventory/hosts.yml` | Public VPS IP or DNS |
 | `ssh_port` | `vars.yml` | Hardened SSH port |
 | `wg_port` | `vars.yml` | Public WireGuard UDP port |
-
-> Some providers, corporate firewalls and mobile networks block or throttle
-> UDP. If WireGuard handshakes fail only from certain networks, set `wg_port`
-> to `443/udp` or `53/udp` and open that port in the provider firewall.
 | `wg_vpn_subnet` | `vars.yml` | VPN client subnet, e.g. `10.8.0.0/24` |
 | `wg_server_ip` | `vars.yml` | WireGuard server VPN IP, e.g. `10.8.0.1` |
 | `wg_easy_admin_user` | `vars.yml` | wg-easy panel username, default `admin` |
@@ -225,6 +221,10 @@ Key variables to set before first run:
 | `adguard_internal_domain` | `vars.yml` | AdGuard internal hostname |
 | `vault_adguard_password_hash` | `vault_services.yml` | AdGuard bcrypt hash |
 | `vault_admin_ssh_pubkey` | `vault_ssh.yml` | SSH pubkey for `admin_user` |
+
+> Some providers, corporate firewalls and mobile networks block or throttle
+> UDP. If WireGuard handshakes fail only from certain networks, set `wg_port`
+> to `443/udp` or `53/udp` and open that port in the provider firewall.
 
 After first run, update `inventory/hosts.yml` to use the hardened port:
 
