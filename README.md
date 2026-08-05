@@ -76,7 +76,8 @@ Before running either deployment mode, verify:
 - `/dev/net/tun` is available and WireGuard can be created by the kernel.
 - The VPS kernel supports iptables/NAT for Docker and UFW.
 - Provider-level firewall rules allow the current SSH port, the hardened SSH
-  port you plan to use, and the WireGuard UDP port.
+  port you plan to use (default `2222`), and the WireGuard UDP port (default
+  `51820`).
 
 For public install mode, run the command from an interactive SSH session on the
 VPS itself. Keep that original SSH session open until you have confirmed a new
@@ -203,8 +204,10 @@ Key variables to set before first run:
 | Variable | File | Purpose |
 | --- | --- | --- |
 | `ansible_host` | `inventory/hosts.yml` | Public VPS IP or DNS |
-| `ssh_port` | `vars.yml` | Hardened SSH port |
-| `wg_port` | `vars.yml` | Public WireGuard UDP port |
+| `ssh_port` | `vars.yml` | Hardened SSH port, default `2222` |
+| `wg_port` | `vars.yml` | Public WireGuard UDP port, default `51820` |
+| `wg_easy_bootstrap_ui_port` | `vars.yml` | wg-easy UI port on localhost for the SSH tunnel, default `51821` |
+| `adguard_bootstrap_ui_port` | `vars.yml` | AdGuard UI port on localhost for the SSH tunnel, default `3000` |
 | `wg_vpn_subnet` | `vars.yml` | VPN client subnet, e.g. `10.8.0.0/24` |
 | `wg_server_ip` | `vars.yml` | WireGuard server VPN IP, e.g. `10.8.0.1` |
 | `wg_easy_admin_user` | `vars.yml` | wg-easy panel username, default `admin` |
