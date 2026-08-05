@@ -192,6 +192,9 @@ ansible-vault encrypt --vault-password-file "${TMP_DIR}/vault_pass" \
     "${ROOT_DIR}/group_vars/all/vault_ssh.yml" \
     "${ROOT_DIR}/group_vars/all/vault_services.yml"
 
+echo "[E2E] Installing controller collections from requirements.yml..."
+ansible-galaxy collection install -r "${ROOT_DIR}/requirements.yml" >/dev/null
+
 echo "[E2E] Running the playbook in remote mode (controller -> VM)..."
 ANSIBLE_HOST_KEY_CHECKING=False \
     ansible-playbook -i "${ROOT_DIR}/inventory/hosts.yml" \
