@@ -5,11 +5,12 @@ installer. Three targets are supported:
 
 | Script | Target | Purpose |
 |---|---|---|
-| `qemu-install.sh` | Plain qemu/KVM VM | Fast iteration when only qemu + KVM are available |
-| `qemu-remote-install.sh` | Plain qemu/KVM VM | Remote deployment mode (controller -> VM via SSH + vault) |
-| `run-public-install.sh` | Real VPS | Final verification of a release tag |
+| `qemu-install.sh` | Plain qemu/KVM VM | Public installer (`curl \| sudo bash`) — fast local iteration |
+| `qemu-remote-install.sh` | Plain qemu/KVM VM | Remote deployment mode (controller → VM via SSH + vault) |
+| `run-public-install.sh` | Real VPS | Final verification of a release tag (also runs in CI on demand) |
+| `external-client-qemu.sh` | Client VM → real VPS | Real external WireGuard client over the public internet |
 | `vps-preflight.sh` | Real VPS | Readiness checks before the final run |
-| `client-test.sh` | Any of the above + this machine | Real WireGuard client handshake over the VPN |
+| `client-in-guest.sh` | Inside the deployed host | In-guest WireGuard handshake + DNS + internal HTTPS (used by the other tests) |
 
 ## Fast iteration: qemu/KVM
 
@@ -72,7 +73,7 @@ VPS_IP=203.0.113.10 \
 VPS_SSH_KEY=~/.ssh/id_ed25519 \
 VPS_SSH_PORT=22 \
 INSTALL_REF=v1.0.0 \
-tests/e2e/run-public-install.sh --reboot-test
+tests/e2e/run-public-install.sh --reboot-test --client-test
 ```
 
 The remote script executes the exact documented command on the VPS:
@@ -86,20 +87,25 @@ verification suite over the hardened SSH port.
 
 ## Client handshake test
 
-After an install, run from a machine with TUN and wireguard-tools:
+Two ways to verify the VPN end to end:
 
-```bash
-TARGET=sysadmin@203.0.113.10 \
-ADMIN_SSH_PORT=2222 \
-SSH_KEY=~/.ssh/id_ed25519 \
-WG_PASSWORD='<panel password from the install>' \
-WG_ENDPOINT=203.0.113.10:51820 \
-tests/e2e/client-test.sh
-```
+1. **In-guest** (recommended for automation): `qemu-install.sh --client-test` and
+   `run-public-install.sh --client-test` run `client-in-guest.sh` inside the deployed
+   host. It creates a client through the wg-easy API, brings up `wg-quick`, and
+   verifies AdGuard (`10.66.0.2`) and the internal HTTPS endpoints with the trusted
+   root CA. No TUN device is needed on the machine driving the test.
 
-It creates a client through the wg-easy API over an SSH tunnel, brings up
-`wg-quick`, and verifies that AdGuard (`10.66.0.2`) and the internal HTTPS
-endpoints are reachable through the VPN.
+2. **External, over the real internet**: from a machine with qemu/KVM, point a fresh
+   client VM at an already-deployed VPS:
+
+   ```bash
+   VPS_HOST=203.0.113.10 VPS_SSH_KEY=~/.ssh/id_ed25519 tests/e2e/external-client-qemu.sh
+   ```
+
+   The client peer is registered through the wg-easy container, the tunnel uses the
+   real public endpoint, and DNS, `.internal` HTTPS and the WireGuard handshake are
+   verified over the public internet. The test peer is removed from the VPS
+   afterwards.
 
 ## CI
 
