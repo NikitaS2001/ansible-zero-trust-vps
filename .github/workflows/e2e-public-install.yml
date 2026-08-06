@@ -15,6 +15,10 @@ name: e2e-public-install
         description: Reboot the VPS and re-verify the stack
         type: boolean
         default: true
+      client_test:
+        description: Run the in-guest WireGuard client handshake test on the VPS
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -41,5 +45,7 @@ jobs:
         run: |
           echo "${{ secrets.E2E_VPS_SSH_KEY }}" | base64 -d > "$VPS_SSH_KEY_PATH"
           chmod 0600 "$VPS_SSH_KEY_PATH"
-          VPS_SSH_KEY="$VPS_SSH_KEY_PATH" \
-            tests/e2e/run-public-install.sh ${{ inputs.reboot_test && '--reboot-test' || '' }}
+          run_args=""
+          if [ "${{ inputs.reboot_test }}" = "true" ]; then run_args="$run_args --reboot-test"; fi
+          if [ "${{ inputs.client_test }}" = "true" ]; then run_args="$run_args --client-test"; fi
+          VPS_SSH_KEY="$VPS_SSH_KEY_PATH" tests/e2e/run-public-install.sh $run_args

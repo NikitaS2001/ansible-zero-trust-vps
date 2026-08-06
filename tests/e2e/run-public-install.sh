@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/<repo>/<tag>/install.sh | sudo bash
 #
 # Usage:
-#   VPS_IP=... VPS_SSH_KEY=... INSTALL_REF=v1.0.0 tests/e2e/run-public-install.sh [--reboot-test]
+#   VPS_IP=... VPS_SSH_KEY=... INSTALL_REF=v1.0.0 tests/e2e/run-public-install.sh [--reboot-test] [--client-test]
 #
 # Required env:
 #   VPS_IP        public IP of a fresh VPS with root SSH access
@@ -31,9 +31,11 @@ VPS_ROOT_USER="${VPS_ROOT_USER:-root}"
 E2E_SSH_PORT="${E2E_SSH_PORT:-2222}"
 E2E_WG_PORT="${E2E_WG_PORT:-51820}"
 DO_REBOOT=false
+DO_CLIENT_TEST=false
 for arg in "$@"; do
     case "${arg}" in
         --reboot-test) DO_REBOOT=true ;;
+        --client-test) DO_CLIENT_TEST=true ;;
         *) fail "Unknown argument: ${arg}" ;;
     esac
 done
@@ -94,6 +96,16 @@ if [[ "${DO_REBOOT}" == "true" ]]; then
     sleep 20
     verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519"
     echo "[E2E] Reboot survival verified"
+fi
+
+if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
+    echo "[E2E] Installing wireguard-tools and jq on the VPS..."
+    run_remote "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" \
+        'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils >/dev/null'
+    echo "[E2E] Running the in-guest WireGuard client handshake test..."
+    run_remote_stdin "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' bash -s" \
+        < "${E2E_DIR}/client-in-guest.sh"
 fi
 
 echo "[E2E] PASS: public installer E2E succeeded for ${VPS_IP} (${INSTALL_REF})"
