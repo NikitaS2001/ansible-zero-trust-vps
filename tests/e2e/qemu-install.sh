@@ -72,52 +72,11 @@ WG_PASS="$(openssl rand -hex 12)"
 echo "[E2E] image=${QEMU_IMAGE}"
 echo "[E2E] ref=${INSTALL_REF} ssh_port=${E2E_SSH_PORT} wg_port=${E2E_WG_PORT} user=${QEMU_USER}"
 
-# --- guest image ------------------------------------------------------------
-IMG="${TMP_DIR}/cloud.img"
-if [[ "${QEMU_IMAGE}" == http* ]]; then
-    echo "[E2E] Downloading cloud image..."
-    curl -fL --retry 3 -o "${IMG}" "${QEMU_IMAGE}"
-else
-    cp "${QEMU_IMAGE}" "${IMG}"
-fi
-DISK="${TMP_DIR}/disk.qcow2"
-qemu-img create -f qcow2 -b "${IMG}" -F qcow2 "${DISK}" 20G >/dev/null
-
-# --- cloud-init NoCloud seed ------------------------------------------------
-SEED_DIR="${TMP_DIR}/seed"
-mkdir -p "${SEED_DIR}"
-cat >"${SEED_DIR}/meta-data" <<'SEEDEOF'
-instance-id: ztvps-e2e
-local-hostname: ztvps-e2e
-SEEDEOF
-cat >"${SEED_DIR}/user-data" <<SEEDEOF
-#cloud-config
-ssh_authorized_keys:
-  - ${PUBKEY}
-ssh_pwauth: false
-SEEDEOF
-SEED_ISO="${TMP_DIR}/seed.iso"
-genisoimage -quiet -output "${SEED_ISO}" -volid cidata -joliet -rock "${SEED_DIR}"
-
-# --- boot the VM ------------------------------------------------------------
-echo "[E2E] Booting the VM (KVM)..."
-qemu-system-x86_64 -enable-kvm -m 2048 -smp 2 \
-    -drive file="${DISK}",if=virtio,format=qcow2 \
-    -drive file="${SEED_ISO}",if=virtio,format=raw \
-    -netdev user,id=n0,\
-hostfwd=tcp:127.0.0.1:"${QEMU_SSH_PORT}"-:22,\
-hostfwd=tcp:127.0.0.1:"${QEMU_ADMIN_PORT}"-:"${E2E_SSH_PORT}",\
-hostfwd=udp:127.0.0.1:"${QEMU_WG_PORT}"-:"${E2E_WG_PORT}" \
-    -device virtio-net-pci,netdev=n0 \
-    -display none -serial file:"${TMP_DIR}/serial.log" \
-    -daemonize -pidfile "${TMP_DIR}/qemu.pid"
-sleep 2
-if [[ ! -s "${TMP_DIR}/qemu.pid" ]]; then
-    echo "[FAIL] qemu did not start. Serial log:" >&2
-    tail -30 "${TMP_DIR}/serial.log" 2>/dev/null || true
-    exit 1
-fi
-QEMU_PID="$(cat "${TMP_DIR}/qemu.pid")"
+# --- guest image + cloud-init seed + boot ------------------------------------
+boot_vm "${TMP_DIR}" "${QEMU_IMAGE}" 20 2048 2 ztvps-e2e ztvps-e2e "" \
+    "hostfwd=tcp:127.0.0.1:${QEMU_SSH_PORT}-:22" \
+    "hostfwd=tcp:127.0.0.1:${QEMU_ADMIN_PORT}-:${E2E_SSH_PORT}" \
+    "hostfwd=udp:127.0.0.1:${QEMU_WG_PORT}-:${E2E_WG_PORT}"
 
 GUEST="${QEMU_USER}@127.0.0.1"
 echo "[E2E] Waiting for cloud-init to finish (SSH on guest:22)..."
@@ -165,7 +124,7 @@ fi
 if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
     echo "[E2E] Installing wireguard-tools and jq in the guest..."
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq >/dev/null'
+        'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
     run_remote_stdin "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${E2E_WG_PORT}' bash -s" \

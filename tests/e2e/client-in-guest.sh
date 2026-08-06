@@ -76,4 +76,20 @@ if ! curl -fsS --resolve "adguard.internal:443:10.66.0.3" \
 fi
 echo "[PASS] https://adguard.internal reachable (trusted root CA)"
 
+echo "--- diagnostics: private CA, local domains, WireGuard handshake ---"
+echo "DNS resolution via AdGuard (10.66.0.2):"
+for d in wg.internal adguard.internal; do
+    echo "  ${d} -> $(dig +short @10.66.0.2 "${d}" | tr '\n' ' ')"
+done
+echo "Private root CA fetched from the server:"
+openssl x509 -in "${ROOT_CA}" -noout -subject -issuer -dates 2>/dev/null \
+    || echo "  cannot read the root CA"
+echo "Certificate served by Caddy for wg.internal:"
+echo | openssl s_client -connect 10.66.0.3:443 -servername wg.internal \
+    -CAfile "${ROOT_CA}" 2>/dev/null \
+    | openssl x509 -noout -subject -issuer -dates -ext subjectAltName 2>/dev/null \
+    || echo "  cannot inspect the served certificate"
+echo "WireGuard client interface (handshake / transfer):"
+wg show | grep -E 'interface:|handshake:|transfer:' || true
+
 echo "[PASS] in-guest WireGuard client E2E succeeded"
