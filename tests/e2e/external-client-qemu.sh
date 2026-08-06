@@ -149,12 +149,10 @@ echo "[E2E] waiting for the client VM SSH..."
 require_ssh_ready "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" 60
 
 echo "[E2E] copying the client config and root CA into the VM"
-cat "${TMP_DIR}/client.conf" | \
-    run_remote_stdin "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
-    'cat > /tmp/zt-ext.conf && chmod 600 /tmp/zt-ext.conf'
-cat "${ROOT_CA}" | \
-    run_remote_stdin "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
-    'cat > /tmp/root.crt && chmod 600 /tmp/root.crt'
+run_remote_stdin "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
+    'cat > /tmp/zt-ext.conf && chmod 600 /tmp/zt-ext.conf' < "${TMP_DIR}/client.conf"
+run_remote_stdin "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
+    'cat > /tmp/root.crt && chmod 600 /tmp/root.crt' < "${ROOT_CA}"
 
 # --- in-VM verification -----------------------------------------------------------
 echo "[E2E] installing wireguard-tools and bringing the tunnel up"
