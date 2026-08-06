@@ -73,22 +73,9 @@ PY
 )"
 
 # --- guest image + seed (root SSH for the controller) -------------------------
-IMG="${TMP_DIR}/cloud.img"
-if [[ "${QEMU_IMAGE}" == http* ]]; then
-    curl -fL --retry 3 -o "${IMG}" "${QEMU_IMAGE}"
-else
-    cp "${QEMU_IMAGE}" "${IMG}"
-fi
-DISK="${TMP_DIR}/disk.qcow2"
-qemu-img create -f qcow2 -b "${IMG}" -F qcow2 "${DISK}" 20G >/dev/null
-
-SEED_DIR="${TMP_DIR}/seed"
-mkdir -p "${SEED_DIR}"
-cat >"${SEED_DIR}/meta-data" <<'SEEDEOF'
-instance-id: ztvps-remote-e2e
-local-hostname: ztvps-remote
-SEEDEOF
-cat >"${SEED_DIR}/user-data" <<SEEDEOF
+# The controller needs passwordless root SSH, so the seed defines a root user
+# explicitly instead of relying on the generated default user.
+cat > "${TMP_DIR}/user-data" <<SEEDEOF
 #cloud-config
 disable_root: false
 ssh_pwauth: false
@@ -98,27 +85,10 @@ users:
       - ${PUBKEY}
     lock_passwd: true
 SEEDEOF
-SEED_ISO="${TMP_DIR}/seed.iso"
-genisoimage -quiet -output "${SEED_ISO}" -volid cidata -joliet -rock "${SEED_DIR}"
-
-echo "[E2E] Booting the VM (KVM)..."
-qemu-system-x86_64 -enable-kvm -m 2048 -smp 2 \
-    -drive file="${DISK}",if=virtio,format=qcow2 \
-    -drive file="${SEED_ISO}",if=virtio,format=raw \
-    -netdev user,id=n0,\
-hostfwd=tcp:127.0.0.1:"${QEMU_SSH_PORT}"-:22,\
-hostfwd=tcp:127.0.0.1:"${QEMU_ADMIN_PORT}"-:"${E2E_SSH_PORT}",\
-hostfwd=udp:127.0.0.1:"${QEMU_WG_PORT}"-:"${E2E_WG_PORT}" \
-    -device virtio-net-pci,netdev=n0 \
-    -display none -serial file:"${TMP_DIR}/serial.log" \
-    -daemonize -pidfile "${TMP_DIR}/qemu.pid"
-sleep 2
-if [[ ! -s "${TMP_DIR}/qemu.pid" ]]; then
-    echo "[FAIL] qemu did not start. Serial log:" >&2
-    tail -30 "${TMP_DIR}/serial.log" 2>/dev/null || true
-    exit 1
-fi
-QEMU_PID="$(cat "${TMP_DIR}/qemu.pid")"
+boot_vm "${TMP_DIR}" "${QEMU_IMAGE}" 20 2048 2 ztvps-remote-e2e ztvps-remote "${TMP_DIR}/user-data" \
+    "hostfwd=tcp:127.0.0.1:${QEMU_SSH_PORT}-:22" \
+    "hostfwd=tcp:127.0.0.1:${QEMU_ADMIN_PORT}-:${E2E_SSH_PORT}" \
+    "hostfwd=udp:127.0.0.1:${QEMU_WG_PORT}-:${E2E_WG_PORT}"
 
 echo "[E2E] Waiting for root SSH on guest:22 (host port ${QEMU_SSH_PORT})..."
 require_ssh_ready "root@127.0.0.1" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" 60

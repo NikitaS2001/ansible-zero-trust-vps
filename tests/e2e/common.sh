@@ -119,3 +119,68 @@ verify_deployment() {
     [[ "${out}" == "CLEAN" ]] || fail "docker-compose.yml still contains INIT_PASSWORD"
     pass "compose file is free of the panel password"
 }
+
+# boot_vm <tmp_dir> <image> <disk_gb> <mem_mb> <smp> <instance_id> <hostname> \
+#         [user_data_file] [hostfwd ...]
+# Boots a headless qemu/KVM VM with a NoCloud cloud-init seed. Requires an SSH
+# keypair at <tmp_dir>/id_ed25519(.pub). When <user_data_file> is empty, a
+# default user-data is generated granting that key; otherwise the file is used
+# verbatim. Remaining args are hostfwd entries such as
+#   hostfwd=tcp:127.0.0.1:2223-:22
+# Sets the global QEMU_PID (used by the caller's cleanup trap) and writes the
+# serial console to <tmp_dir>/serial.log.
+boot_vm() {
+    local tmp_dir="$1" image="$2" disk_gb="$3" mem_mb="$4" smp="$5"
+    local instance_id="$6" hostname="$7" user_data_file="$8"
+    shift 8
+    local hostfwd netdev="user,id=n0"
+
+    echo "[E2E] Preparing the cloud image..."
+    if [[ "${image}" == http* ]]; then
+        curl -fL --retry 3 -o "${tmp_dir}/cloud.img" "${image}"
+    else
+        cp "${image}" "${tmp_dir}/cloud.img"
+    fi
+    qemu-img create -f qcow2 -b "${tmp_dir}/cloud.img" -F qcow2 \
+        "${tmp_dir}/disk.qcow2" "${disk_gb}G" >/dev/null
+
+    echo "[E2E] Creating the cloud-init NoCloud seed..."
+    mkdir -p "${tmp_dir}/seed"
+    cat > "${tmp_dir}/seed/meta-data" <<SEEDEOF
+instance-id: ${instance_id}
+local-hostname: ${hostname}
+SEEDEOF
+    if [[ -n "${user_data_file}" ]]; then
+        cp "${user_data_file}" "${tmp_dir}/seed/user-data"
+    else
+        cat > "${tmp_dir}/seed/user-data" <<SEEDEOF
+#cloud-config
+ssh_authorized_keys:
+  - $(cat "${tmp_dir}/id_ed25519.pub")
+ssh_pwauth: false
+SEEDEOF
+    fi
+    genisoimage -quiet -output "${tmp_dir}/seed.iso" -volid cidata \
+        -joliet -rock "${tmp_dir}/seed" >/dev/null
+
+    for hostfwd in "$@"; do
+        netdev+=",${hostfwd}"
+    done
+
+    echo "[E2E] Booting the VM (KVM)..."
+    qemu-system-x86_64 -enable-kvm -m "${mem_mb}" -smp "${smp}" \
+        -drive file="${tmp_dir}/disk.qcow2",if=virtio,format=qcow2 \
+        -drive file="${tmp_dir}/seed.iso",if=virtio,format=raw \
+        -netdev "${netdev}" \
+        -device virtio-net-pci,netdev=n0 \
+        -display none -serial file:"${tmp_dir}/serial.log" \
+        -daemonize -pidfile "${tmp_dir}/qemu.pid"
+    sleep 2
+    if [[ ! -s "${tmp_dir}/qemu.pid" ]]; then
+        echo "[FAIL] qemu did not start. Serial log:" >&2
+        tail -30 "${tmp_dir}/serial.log" 2>/dev/null || true
+        fail "qemu did not start"
+    fi
+    # shellcheck disable=SC2034  # consumed by the caller's cleanup trap
+    QEMU_PID="$(cat "${tmp_dir}/qemu.pid")"
+}
