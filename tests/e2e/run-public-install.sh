@@ -12,7 +12,8 @@
 #   INSTALL_REF   git tag or branch to install (e.g. v1.0.0)
 # Optional env:
 #   VPS_SSH_PORT (default 22), VPS_ROOT_USER (default root),
-#   ZERO_TRUST_* installer inputs (ZERO_TRUST_SSH_PUBKEY overrides the admin key),
+#   ZERO_TRUST_* installer inputs (ZERO_TRUST_ADMIN_SSH_KEY = private key path
+#   to hand the admin user, so access survives the harness),
 #   E2E_SSH_PORT (default 2222), E2E_WG_PORT (default 51820)
 set -euo pipefail
 
@@ -49,10 +50,11 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-vps.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 ssh-keygen -q -t ed25519 -N "" -f "${TMP_DIR}/id_ed25519" -C "e2e-ztvps"
-PUBKEY="$(cat "${TMP_DIR}/id_ed25519.pub")"
-# Let the operator hand the admin user a specific SSH key instead of the
-# ephemeral harness key (which is destroyed with TMP_DIR on exit).
-ADMIN_PUBKEY="${ZERO_TRUST_SSH_PUBKEY:-${PUBKEY}}"
+# The operator can hand the admin user their own key pair so that access
+# survives the harness (TMP_DIR is destroyed on exit). When unset, the
+# ephemeral harness key is used for both the installer and post-install SSH.
+ADMIN_SSH_KEY="${ZERO_TRUST_ADMIN_SSH_KEY:-${TMP_DIR}/id_ed25519}"
+ADMIN_PUBKEY="$(cat "${ADMIN_SSH_KEY}.pub")"
 
 ADMIN_USER="${ZERO_TRUST_ADMIN_USER:-sysadmin}"
 ADMIN_PASS="${ZERO_TRUST_ADMIN_PASSWORD:-$(openssl rand -hex 12)}"
@@ -97,24 +99,24 @@ run_remote_stdin "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" 'bash -s' <
 
 echo "[E2E] Verifying the deployed stack on the hardened SSH port ${SSH_PORT_IN}"
 export E2E_SSH_PORT="${SSH_PORT_IN}" E2E_WG_PORT="${WG_PORT_IN}"
-verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519"
+verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
 
 if [[ "${DO_REBOOT}" == "true" ]]; then
     echo "[E2E] Rebooting ${VPS_IP} and re-verifying..."
-    run_remote "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" 'sudo systemctl reboot' || true
-    require_ssh_down "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" 30
-    require_ssh_ready "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" 60
+    run_remote "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" 'sudo systemctl reboot' || true
+    require_ssh_down "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" 30
+    require_ssh_ready "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" 60
     sleep 20
-    verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519"
+    verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
     echo "[E2E] Reboot survival verified"
 fi
 
 if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
     echo "[E2E] Installing wireguard-tools and jq on the VPS..."
-    run_remote "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" \
+    run_remote "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" \
         'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils resolvconf >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
-    run_remote_stdin "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" \
+    run_remote_stdin "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" \
         "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' bash -s" \
         < "${E2E_DIR}/client-in-guest.sh"
 fi
