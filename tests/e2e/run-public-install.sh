@@ -61,6 +61,13 @@ INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-wg.internal adguard.internal}"
 echo "[E2E] Waiting for root SSH on ${ROOT_TARGET}:${VPS_SSH_PORT}"
 require_ssh_ready "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" 30
 
+# The documented one-liner pipes install.sh through curl into sudo bash on the
+# VPS; minimal Debian images ship neither curl nor sudo by default.
+echo "[E2E] Ensuring curl and sudo are available on the VPS..."
+run_remote "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
+    '(command -v curl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1) || (apt-get update -qq >/dev/null && apt-get install -y -qq curl sudo >/dev/null)' \
+    || fail "could not install curl/sudo on the VPS"
+
 INSTALL_URL="https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/${INSTALL_REF}/install.sh"
 echo "[E2E] Running the public installer from ${INSTALL_URL}"
 

@@ -71,6 +71,8 @@ session, and enough kernel support to run WireGuard and Docker.
 Before running either deployment mode, verify:
 
 - Root SSH access to the VPS on the current SSH port.
+- `curl` and `sudo` for the public install one-liner (minimal Debian images ship
+  neither; install them first with `apt-get update && apt-get install -y curl sudo`).
 - Outbound internet access from the VPS to apt repositories, GitHub, PyPI, the
   Docker APT repository, and container registries.
 - `/dev/net/tun` is available and WireGuard can be created by the kernel.
