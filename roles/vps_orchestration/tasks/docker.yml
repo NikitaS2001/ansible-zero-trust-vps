@@ -24,15 +24,11 @@
     filename: docker
   tags: [docker]
 
-- name: "Docker | Install | Install Docker CE"
-  apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-compose-plugin
-      - apache2-utils  # provides htpasswd for AdGuard bcrypt hash generation
-    state: present
+- name: "Docker | Config | Ensure Docker config directory exists"
+  file:
+    path: /etc/docker
+    state: directory
+    mode: '0755'
   tags: [docker]
 
 - name: "Docker | Config | Deploy daemon.json"
@@ -48,8 +44,119 @@
       }
     backup: yes
     mode: '0644'
+  register: vps_orchestration_docker_daemon_config
   notify: restart docker
   tags: [docker]
+
+- name: "Docker | Install | Install Docker CE"
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+  tags: [docker]
+
+- name: "Docker | Service | Ensure systemd override directory exists"
+  file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    mode: '0755'
+  tags: [docker]
+
+- name: "Docker | Service | Disable socket activation in service command"
+  copy:
+    dest: /etc/systemd/system/docker.service.d/10-no-socket-activation.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/dockerd -H unix:///var/run/docker.sock --containerd=/run/containerd/containerd.sock
+    mode: '0644'
+  register: vps_orchestration_docker_service_override
+  notify: restart docker
+  tags: [docker]
+
+- name: "Docker | Service | Reload systemd units"
+  systemd:
+    daemon_reload: yes
+  when: vps_orchestration_docker_service_override.changed
+  tags: [docker]
+
+- name: "Docker | Service | Ensure containerd is enabled and running"
+  service:
+    name: containerd
+    state: started
+    enabled: yes
+  tags: [docker]
+
+- name: "Docker | Service | Reset Docker failed state"  # noqa: command-instead-of-module
+  command: systemctl reset-failed docker.service docker.socket
+  changed_when: false
+  failed_when: false
+  tags: [docker]
+
+- name: "Docker | Service | Check Docker socket unit"  # noqa: command-instead-of-module
+  command: systemctl list-unit-files docker.socket --no-legend
+  register: vps_orchestration_docker_socket_unit
+  changed_when: false
+  failed_when: false
+  tags: [docker]
+
+- name: "Docker | Service | Disable Docker socket activation"
+  service:
+    name: docker.socket
+    state: stopped
+    enabled: no
+  when: vps_orchestration_docker_socket_unit.stdout | trim | length > 0
+  tags: [docker]
+
+- name: "Docker | Service | Start Docker with diagnostics"
+  tags: [docker]
+  block:
+    - name: "Docker | Service | Ensure Docker is enabled and running"
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      tags: [docker]
+
+    - name: "Docker | Service | Verify Docker daemon is reachable"  # noqa: command-instead-of-module
+      command: docker info
+      register: vps_orchestration_docker_info
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: vps_orchestration_docker_info.rc == 0
+      tags: [docker]
+  rescue:
+    - name: "Docker | Diagnose | Read Docker service status"  # noqa: command-instead-of-module
+      command: systemctl status docker --no-pager
+      register: vps_orchestration_docker_status
+      changed_when: false
+      failed_when: false
+      tags: [docker]
+
+    - name: "Docker | Diagnose | Read Docker service journal"  # noqa: command-instead-of-module
+      command: journalctl -xeu docker.service --no-pager -n 80
+      register: vps_orchestration_docker_journal
+      changed_when: false
+      failed_when: false
+      tags: [docker]
+
+    - name: "Docker | Diagnose | Fail with Docker startup details"
+      fail:
+        msg: |
+          Docker daemon failed to start.
+
+          systemctl status docker:
+          {{ vps_orchestration_docker_status.stdout | default("") }}
+          {{ vps_orchestration_docker_status.stderr | default("") }}
+
+          journalctl -xeu docker.service -n 80:
+          {{ vps_orchestration_docker_journal.stdout | default("") }}
+          {{ vps_orchestration_docker_journal.stderr | default("") }}
+      tags: [docker]
 
 - name: "Docker | User | Ensure admin is in docker group"
   user:

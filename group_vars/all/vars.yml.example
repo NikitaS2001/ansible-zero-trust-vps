@@ -1,22 +1,36 @@
+---
 # Network
 ssh_port: 2222
 wg_port: 51820
 wg_container_port: 51820
 wg_vpn_subnet: "10.8.0.0/24"
 wg_server_ip: "10.8.0.1"
-wg_client_dns: "172.20.0.2"
+wg_client_dns: "10.66.0.2"
+
+# wg-easy initial setup (Unattended Setup via INIT_* env vars, first start only)
+# wg_public_host is required for remote deployment mode; the public installer
+# auto-detects the public IP instead. Set wg_easy_admin_password to enable the
+# automated initial setup (otherwise the wg-easy setup wizard appears on first
+# login and must be completed manually).
+wg_easy_admin_user: "admin"
+wg_easy_admin_password: ""
+wg_public_host: ""
+wg_allowed_ips:
+  - "10.8.0.0/24"
+  - "10.66.0.2/32"
+  - "10.66.0.3/32"
 
 # Docker network
-docker_network_subnet: "172.20.0.0/24"
-adguard_container_ip: "172.20.0.2"
-caddy_container_ip: "172.20.0.3"
-wg_easy_container_ip: "172.20.0.4"
+docker_network_subnet: "10.66.0.0/24"
+adguard_container_ip: "10.66.0.2"
+caddy_container_ip: "10.66.0.3"
+wg_easy_container_ip: "10.66.0.4"
 
 # Internal domains
 wg_internal_domain: "wg.internal"
 adguard_internal_domain: "adguard.internal"
 
-# Bootstrap admin UI access through SSH local forwarding
+# Initial setup admin UI access through SSH local forwarding
 wg_easy_bootstrap_ui_port: 51821
 adguard_bootstrap_ui_port: 3000
 
@@ -24,13 +38,13 @@ adguard_bootstrap_ui_port: 3000
 project_root: "/opt/zero-trust-vps"
 
 # Pinned upstream installer artifacts
-docker_apt_distribution: "{{ ansible_distribution | lower }}"
-docker_apt_release: "{{ ansible_distribution_release }}"
+docker_apt_distribution: "{{ ansible_facts['distribution'] | lower }}"
+docker_apt_release: "{{ ansible_facts['distribution_release'] }}"
 docker_apt_arch_map:
   x86_64: amd64
   aarch64: arm64
   armv7l: armhf
-docker_apt_arch: "{{ docker_apt_arch_map[ansible_architecture] | default(ansible_architecture) }}"
+docker_apt_arch: "{{ docker_apt_arch_map[ansible_facts['architecture']] | default(ansible_facts['architecture']) }}"
 docker_apt_gpg_url: "https://download.docker.com/linux/{{ docker_apt_distribution }}/gpg"
 docker_apt_repo_url: "https://download.docker.com/linux/{{ docker_apt_distribution }}"
 docker_apt_gpg_checksum: "sha256:1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
@@ -44,9 +58,13 @@ vps_hardening_package_upgrade_mode: "safe"
 # Fail2Ban should not ignore the VPN subnet by default.
 fail2ban_ignore_ips:
   - "127.0.0.1/8"
+fail2ban_bantime: 3600
+fail2ban_findtime: 600
+fail2ban_maxretry: 5
 
 # Admin user created by Ansible
 admin_user: "sysadmin"
+admin_shell: "/bin/bash"
 ssh_service_name: "ssh"
 # Use "yes" for OpenSSH 8.x compatibility. On OpenSSH 9.x, "local" can be used
 # for stricter local-only forwarding.

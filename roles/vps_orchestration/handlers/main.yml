@@ -5,8 +5,8 @@
     state: restarted
   listen: restart docker
 
-- name: Restart ufw
-  service:
-    name: ufw
-    state: reloaded
+- name: Reload ufw
+  command: ufw reload  # noqa: command-instead-of-module
+  register: vps_orchestration_ufw_reload
+  changed_when: "'Firewall reloaded' in (vps_orchestration_ufw_reload.stdout ~ vps_orchestration_ufw_reload.stderr)"
   listen: reload ufw

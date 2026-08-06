@@ -6,21 +6,31 @@ wg_port: 51820
 # Admin user
 admin_user: sysadmin
 admin_group: sudo
+admin_shell: /bin/bash
 admin_password_hash: ""
 vault_admin_ssh_pubkey: ""
 
 # SSH
 ssh_service_name: ssh
+ssh_socket_name: ssh.socket
 ssh_allow_tcp_forwarding: "yes"
+vps_hardening_manage_ssh_socket: true
 
-# Bootstrap admin UI access through SSH local forwarding
+# Initial setup admin UI access through SSH local forwarding
 wg_easy_bootstrap_ui_port: 51821
 adguard_bootstrap_ui_port: 3000
 
 # Fail2Ban
 fail2ban_ignore_ips:
   - "127.0.0.1/8"
+fail2ban_bantime: 3600
+fail2ban_findtime: 600
+fail2ban_maxretry: 5
 
 # Package upgrade policy
 vps_hardening_apply_package_upgrade: false
 vps_hardening_package_upgrade_mode: "safe"
+
+# Local Ansible connections are common for ansible-pull. Keep direct local
+# playbook runs conservative unless an installer explicitly enables UFW.
+vps_hardening_enable_ufw_on_local_connection: false

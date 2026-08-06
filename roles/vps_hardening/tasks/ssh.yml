@@ -12,8 +12,46 @@
       notify: restart sshd
       tags: [ssh]
 
+    - name: "SSH | Socket | Check systemd socket unit"  # noqa: command-instead-of-module
+      command: "systemctl list-unit-files {{ ssh_socket_name }} --no-legend"
+      register: vps_hardening_ssh_socket_unit
+      changed_when: false
+      failed_when: false
+      when: vps_hardening_manage_ssh_socket | bool
+      tags: [ssh]
+
+    - name: "SSH | Socket | Disable socket activation for hardened sshd_config"
+      service:
+        name: "{{ ssh_socket_name }}"
+        state: stopped
+        enabled: no
+      when:
+        - vps_hardening_manage_ssh_socket | bool
+        - vps_hardening_ssh_socket_unit.rc | default(1) == 0
+      notify: restart sshd
+      tags: [ssh]
+
+    - name: "SSH | Service | Enable sshd service for boot"
+      service:
+        name: "{{ ssh_service_name }}"
+        state: started
+        enabled: yes
+      when:
+        - vps_hardening_manage_ssh_socket | bool
+        - vps_hardening_ssh_socket_unit.rc | default(1) == 0
+      notify: restart sshd
+      tags: [ssh]
+
     - name: "SSH | Flush | Force handler execution now"
       meta: flush_handlers
+      tags: [ssh]
+
+    - name: "SSH | Verify | Wait for local sshd on new port"
+      wait_for:
+        port: "{{ ssh_port }}"
+        host: 127.0.0.1
+        timeout: 30
+      when: ansible_connection == "local"
       tags: [ssh]
 
     - name: "SSH | Verify | Wait for sshd on new port"

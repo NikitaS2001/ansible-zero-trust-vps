@@ -5,13 +5,13 @@
     dest: /etc/sysctl.d/99-zero-trust.conf
     backup: yes
     mode: '0644'
-  when: ansible_virtualization_type not in ['lxc', 'openvz']
+  when: ansible_facts['virtualization_type'] not in ['lxc', 'openvz']
   notify: reload sysctl
   tags: [sysctl]
 
 - name: "VPS Hardening | Sysctl | Apply sysctl immediately"
   command: sysctl -p /etc/sysctl.d/99-zero-trust.conf
   register: vps_hardening_sysctl_apply
-  when: ansible_virtualization_type not in ['lxc', 'openvz']
-  changed_when: vps_hardening_sysctl_apply.stdout_lines | length > 0
+  when: ansible_facts['virtualization_type'] not in ['lxc', 'openvz']
+  changed_when: false
   tags: [sysctl]

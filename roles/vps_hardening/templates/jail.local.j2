@@ -1,7 +1,7 @@
 [DEFAULT]
-bantime  = 3600
-findtime = 600
-maxretry = 5
+bantime  = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
 ignoreip = {{ fail2ban_ignore_ips | join(' ') }}
 
 [sshd]

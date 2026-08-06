@@ -7,6 +7,17 @@
     proto: tcp
   tags: [ufw]
 
+- name: "UFW | Allow | Current SSH connection port for rollback safety"
+  ufw:
+    rule: allow
+    port: "{{ ansible_port | int }}"
+    proto: tcp
+  when:
+    - ansible_connection | default("") != "local"
+    - ansible_port is defined
+    - (ansible_port | int) != (ssh_port | int)
+  tags: [ufw]
+
 - name: "UFW | Allow | WireGuard UDP port"
   ufw:
     rule: allow
@@ -23,11 +34,24 @@
 - name: "UFW | State | Enable firewall"
   ufw:
     state: enabled
-  when: ansible_virtualization_type not in ['lxc', 'openvz'] and ansible_connection != "local"
+  when:
+    - ansible_facts["virtualization_type"] | default("") not in ["lxc", "openvz"]
+    - >-
+      (ansible_connection | default("")) != "local"
+      or (vps_hardening_enable_ufw_on_local_connection | bool)
   tags: [ufw]
 
 - name: "UFW | Debug | Skip enable on LXC/OpenVZ"
   debug:
-    msg: "Skipping UFW enable on LXC/OpenVZ — UFW may not be supported in container."
-  when: ansible_virtualization_type in ['lxc', 'openvz']
+    msg: "Skipping UFW enable on LXC/OpenVZ - UFW may not be supported in container."
+  when: ansible_facts["virtualization_type"] | default("") in ["lxc", "openvz"]
+  tags: [ufw]
+
+- name: "UFW | Debug | Skip enable on local connection"
+  debug:
+    msg: "Skipping UFW enable on local Ansible connection without explicit opt-in."
+  when:
+    - ansible_facts["virtualization_type"] | default("") not in ["lxc", "openvz"]
+    - (ansible_connection | default("")) == "local"
+    - not (vps_hardening_enable_ufw_on_local_connection | bool)
   tags: [ufw]
