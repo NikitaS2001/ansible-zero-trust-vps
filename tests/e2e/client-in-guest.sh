@@ -24,6 +24,11 @@ command -v wg-quick >/dev/null || { echo "[FAIL] wireguard-tools are required" >
 
 cleanup() {
     sudo wg-quick down /tmp/zt-e2e.conf >/dev/null 2>&1 || true
+    if [[ -n "${CLIENT_ID:-}" ]]; then
+        # remove the test client from the wg-easy API so no peer is left behind
+        curl -fsS -u "${WG_USER}:${WG_PASSWORD}" -X DELETE \
+            "http://127.0.0.1:${UI_PORT}/api/client/${CLIENT_ID}" >/dev/null 2>&1 || true
+    fi
     rm -f /tmp/zt-e2e.conf /tmp/zt-create.json
 }
 trap cleanup EXIT
