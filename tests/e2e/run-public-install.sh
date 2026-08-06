@@ -108,7 +108,7 @@ fi
 if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
     echo "[E2E] Installing wireguard-tools and jq on the VPS..."
     run_remote "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" \
-        'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils >/dev/null'
+        'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils resolvconf >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
     run_remote_stdin "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${TMP_DIR}/id_ed25519" \
         "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' bash -s" \
