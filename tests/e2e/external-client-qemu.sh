@@ -178,6 +178,12 @@ for d in wg.internal adguard.internal; do
 done
 dig +short @10.66.0.2 wg.internal | grep -q '^10\.66\.0\.3$' || { echo "[FAIL] DNS via the VPS AdGuard is wrong" >&2; exit 1; }
 
+if ! ping -c 2 -W 4 wg.internal >/dev/null 2>&1; then
+    echo "[FAIL] wg.internal (10.66.0.3) does not respond to ping by name over the tunnel" >&2
+    exit 1
+fi
+echo "[PASS] ping wg.internal (Caddy) reachable by name via the tunnel DNS"
+
 if ! curl -fsS --resolve "wg.internal:443:10.66.0.3" --cacert /tmp/root.crt \
     "https://wg.internal/" -o /dev/null; then
     echo "[FAIL] https://wg.internal not reachable over the real internet tunnel" >&2
