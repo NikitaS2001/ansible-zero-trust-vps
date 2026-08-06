@@ -12,7 +12,8 @@
 #   INSTALL_REF   git tag or branch to install (e.g. v1.0.0)
 # Optional env:
 #   VPS_SSH_PORT (default 22), VPS_ROOT_USER (default root),
-#   ZERO_TRUST_* installer inputs, E2E_SSH_PORT (default 2222), E2E_WG_PORT (default 51820)
+#   ZERO_TRUST_* installer inputs (ZERO_TRUST_SSH_PUBKEY overrides the admin key),
+#   E2E_SSH_PORT (default 2222), E2E_WG_PORT (default 51820)
 set -euo pipefail
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,6 +50,9 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 
 ssh-keygen -q -t ed25519 -N "" -f "${TMP_DIR}/id_ed25519" -C "e2e-ztvps"
 PUBKEY="$(cat "${TMP_DIR}/id_ed25519.pub")"
+# Let the operator hand the admin user a specific SSH key instead of the
+# ephemeral harness key (which is destroyed with TMP_DIR on exit).
+ADMIN_PUBKEY="${ZERO_TRUST_SSH_PUBKEY:-${PUBKEY}}"
 
 ADMIN_USER="${ZERO_TRUST_ADMIN_USER:-sysadmin}"
 ADMIN_PASS="${ZERO_TRUST_ADMIN_PASSWORD:-$(openssl rand -hex 12)}"
@@ -85,7 +89,7 @@ sudo env \\
     ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}' \\
     ZERO_TRUST_WG_PASSWORD='${WG_PASS}' \\
     ZERO_TRUST_INTERNAL_DOMAINS='${INTERNAL_DOMAINS}' \\
-    ZERO_TRUST_SSH_PUBKEY='${PUBKEY}' \\
+    ZERO_TRUST_SSH_PUBKEY='${ADMIN_PUBKEY}' \\
     bash
 INNER_EOF
 )
