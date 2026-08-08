@@ -10,7 +10,7 @@ name: e2e-public-install
       install_ref:
         description: Git tag or branch to install
         required: true
-        default: v1.0.0
+        default: v1.1.0
       reboot_test:
         description: Reboot the VPS and re-verify the stack
         type: boolean

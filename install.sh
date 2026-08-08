@@ -387,7 +387,9 @@ checkout_release() {
 
 install_collections() {
     info "Installing Ansible collections from requirements.yml..."
-    "${VENV_DIR}/bin/ansible-galaxy" collection install -r "${REPO_DIR}/requirements.yml"
+    # --force: requirements.yml pins exact versions, and without --force an
+    # already-installed older satisfying version would be kept forever.
+    "${VENV_DIR}/bin/ansible-galaxy" collection install -r "${REPO_DIR}/requirements.yml" --force
 }
 
 collect_configuration() {

@@ -225,6 +225,28 @@ sudo rm -rf /opt/zero-trust-vps/volumes/wg-easy
 
 Rerun the installer or playbook afterward.
 
+## Releases
+
+Installable artifacts are immutable git tags (`vX.Y.Z`). The installer deployed
+from a tag must deploy exactly that tag — `scripts/release-contract.sh`
+enforces this (`--tag` on tag pushes in CI, `--pr` structural checks on every
+pull request). The release step is explicit and mechanical:
+
+1. Bump the default `ZERO_TRUST_RELEASE_REF` in `install.sh` to the new tag.
+2. Update the README quickstart URL and the `e2e-public-install.yml`
+   `install_ref` default to the same tag.
+3. Run `scripts/release-contract.sh --pr` locally; create an **annotated and
+   signed** tag (`git tag -s -a vX.Y.Z -m ...`) on the release commit.
+4. Push the tag; CI runs `--tag` and prints the artifact SHA256 checksums —
+   publish them in the release notes so users can verify `install.sh` before
+   running `curl | sudo bash`.
+
+Mutable refs (`main`, branches) are for testing unreleased changes only, via
+the documented `ZERO_TRUST_RELEASE_REF` override. Known limitation (accepted
+risk): `install.sh` itself does not cryptographically verify the fetched ref
+signature before executing it; the SHA256 checksums published in the release
+notes are the manual verification path.
+
 ## Development and Testing
 
 Install and run the local checks:
