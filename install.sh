@@ -27,6 +27,7 @@ ADGUARD_INTERNAL_DOMAIN=""
 SSH_PUBKEY=""
 WG_PASSWORD=""
 WG_HOST=""
+WG_ENABLE_IPV6=""
 NONINTERACTIVE=""
 
 cleanup_on_failure() {
@@ -82,6 +83,9 @@ Non-interactive mode for automated testing:
   ZERO_TRUST_SSH_PUBKEY        SSH public key for the admin user (required)
   ZERO_TRUST_WG_HOST           Public hostname/IP for clients (optional,
                                auto-detected when omitted)
+  ZERO_TRUST_WG_ENABLE_IPV6    Enable IPv6 in the VPN stack (true/false,
+                               optional, default false; requires a host with
+                               IPv6 connectivity)
 
 The public quickstart should use the tagged script URL, not main.
 EOF
@@ -134,6 +138,19 @@ prompt_optional() {
     printf "%s (Enter for role default): " "${prompt_text}" >&3
     IFS= read -r value <&3
     printf -v "${__var_name}" '%s' "${value}"
+}
+
+prompt_yesno() {
+    local __var_name="$1"
+    local prompt_text="$2"
+    local value
+
+    printf "%s [y/N]: " "${prompt_text}" >&3
+    IFS= read -r value <&3
+    case "${value,,}" in
+        y | yes) printf -v "${__var_name}" 'true' ;;
+        *) printf -v "${__var_name}" 'false' ;;
+    esac
 }
 
 prompt_required_secret() {
@@ -364,6 +381,7 @@ collect_configuration() {
     prompt_required_secret WG_PASSWORD "WireGuard panel password (min 8 chars)"
     prompt_optional INTERNAL_DOMAINS "Internal domains, separated by space"
     prompt_optional WG_HOST "WireGuard public hostname or IP (Enter to auto-detect)"
+    prompt_yesno WG_ENABLE_IPV6 "Enable IPv6 in the VPN stack"
     prompt_required_line SSH_PUBKEY "SSH public key"
 
     require_max_length "${ADGUARD_PASSWORD}" "AdGuard admin password" 72
@@ -420,6 +438,7 @@ collect_configuration_noninteractive() {
     INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-}"
     SSH_PUBKEY="${ZERO_TRUST_SSH_PUBKEY:-}"
     WG_HOST="${ZERO_TRUST_WG_HOST:-}"
+    WG_ENABLE_IPV6="${ZERO_TRUST_WG_ENABLE_IPV6:-}"
 
     local missing=""
     local var
@@ -498,6 +517,12 @@ prepare_extra_vars_file() {
     if [[ -n "${WG_PORT}" ]]; then
         write_extra_var wg_port "${WG_PORT}"
         write_extra_var wg_container_port "${WG_PORT}"
+    fi
+    if [[ -n "${WG_ENABLE_IPV6}" ]]; then
+        case "${WG_ENABLE_IPV6,,}" in
+            y | yes | 1 | true) write_extra_var wg_enable_ipv6 true ;;
+            *) write_extra_var wg_enable_ipv6 false ;;
+        esac
     fi
     if [[ -n "${ADMIN_USER}" ]]; then
         write_extra_var admin_user "${ADMIN_USER}"

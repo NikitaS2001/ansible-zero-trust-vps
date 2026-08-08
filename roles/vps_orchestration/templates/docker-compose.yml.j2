@@ -1,9 +1,15 @@
 networks:
   vpn_net:
     driver: bridge
+{% if (wg_enable_ipv6 | default(false) | bool) %}
+    enable_ipv6: true
+{% endif %}
     ipam:
       config:
         - subnet: "{{ docker_network_subnet }}"
+{% if (wg_enable_ipv6 | default(false) | bool) %}
+        - subnet: "fd00:67:0:0::/64"
+{% endif %}
 
 services:
   wg-easy:
@@ -16,13 +22,23 @@ services:
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv4.conf.all.src_valid_mark=1
+{% if (wg_enable_ipv6 | default(false) | bool) %}
+      - net.ipv6.conf.all.forwarding=1
+{% else %}
       - net.ipv6.conf.all.disable_ipv6=1
+{% endif %}
     environment:
       # INSECURE=true serves the wg-easy UI over HTTP on 127.0.0.1. It is
       # reachable only via an SSH tunnel or through Caddy TLS over the VPN,
       # and the panel itself is password-protected by the INIT_* setup.
       - INSECURE=true
+{% if (wg_enable_ipv6 | default(false) | bool) %}
+      # IPv6 mode: wg-easy allocates IPv6 subnets for clients and NATs their
+      # traffic; requires a host with global IPv6 connectivity.
+      - DISABLE_IPV6=false
+{% else %}
       - DISABLE_IPV6=true
+{% endif %}
 {% if (not wg_easy_initialized | default(false) | bool) and (wg_easy_admin_password | length > 0) %}
       # First-start only: wg-easy consumes the INIT_* variables during its
       # initial setup and ignores them afterwards. They are rendered only until

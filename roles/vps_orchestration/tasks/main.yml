@@ -1,4 +1,24 @@
 ---
+- name: "VPS Orchestration | Preflight | Probe host IPv6 connectivity"
+  command: ip -6 route get 2001:4860:4860::8888
+  register: vps_orchestration_ipv6_probe
+  changed_when: false
+  failed_when: false
+  when: wg_enable_ipv6 | default(false) | bool
+  tags: [compose]
+
+- name: "VPS Orchestration | Preflight | Refuse IPv6 mode without host IPv6"
+  fail:
+    msg: >
+      wg_enable_ipv6 is true but this host has no IPv6 connectivity
+      (ip -6 route get returned rc={{ vps_orchestration_ipv6_probe.rc }}).
+      The VPN cannot route IPv6 client traffic without host IPv6 egress.
+      Keep the default (IPv6 disabled) or deploy on a dual-stack host.
+  when:
+    - wg_enable_ipv6 | default(false) | bool
+    - vps_orchestration_ipv6_probe.rc != 0
+  tags: [compose]
+
 - name: "VPS Orchestration | Main | Include Docker setup"
   include_tasks: docker.yml
   tags: [docker]

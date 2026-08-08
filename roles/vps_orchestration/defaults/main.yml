@@ -15,6 +15,10 @@ wg_server_ip: "10.8.0.1"
 wg_client_dns: "10.66.0.2"
 wg_port: 51820
 wg_container_port: 51820
+# When true the stack allocates IPv6 addresses for clients and tunnels IPv6
+# traffic (client configs get ::/0). Requires a host with global IPv6 egress;
+# the playbook refuses IPv6 mode on hosts without IPv6.
+wg_enable_ipv6: false
 
 # wg-easy initial setup (Unattended Setup via INIT_* env vars, first start only)
 wg_easy_admin_user: admin

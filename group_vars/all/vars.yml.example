@@ -19,6 +19,10 @@ wg_allowed_ips:
   - "10.8.0.0/24"
   - "10.66.0.2/32"
   - "10.66.0.3/32"
+# Set to true to allocate IPv6 addresses for clients and tunnel IPv6 traffic
+# (client configs get ::/0). Requires a host with global IPv6 connectivity;
+# the playbook refuses IPv6 mode on IPv4-only hosts.
+wg_enable_ipv6: false
 
 # Docker network
 docker_network_subnet: "10.66.0.0/24"
