@@ -1,19 +1,26 @@
 ---
 - name: "Compose | Detect | Check whether wg-easy was already initialized"
   stat:
-    path: "{{ project_root }}/volumes/wg-easy/wg0.conf"
-  register: vps_orchestration_wg_easy_conf
+    # wg-easy v15 keeps the authoritative state in SQLite, not in wg0.conf
+    # (which is derived from the database on start). Using the DB file as the
+    # sentinel matches the actual v15 lifecycle. Note: the DB may exist while
+    # the setup wizard is still pending (setup_step != 0); with the automated
+    # INIT_* flow setup always completes, so the file is a safe gate here.
+    path: "{{ project_root }}/volumes/wg-easy/wg-easy.db"
+  register: vps_orchestration_wg_easy_db
   tags: [compose]
 
 - name: "Compose | Deploy | Write docker-compose.yml"
   template:
     src: docker-compose.yml.j2
     dest: "{{ project_root }}/docker-compose.yml"
-    backup: yes
-    mode: "{{ '0600' if not vps_orchestration_wg_easy_conf.stat.exists else '0644' }}"
+    # No backup here: on a first deploy this render contains the panel
+    # password in the INIT_* block and a .bak would preserve the secret.
+    backup: no
+    mode: "{{ '0600' if not vps_orchestration_wg_easy_db.stat.exists else '0644' }}"
   no_log: true
   vars:
-    wg_easy_initialized: "{{ vps_orchestration_wg_easy_conf.stat.exists | bool }}"
+    wg_easy_initialized: "{{ vps_orchestration_wg_easy_db.stat.exists | bool }}"
   tags: [compose]
 
 - name: "Compose | Deploy | Write Caddyfile"
@@ -44,5 +51,37 @@
   no_log: true
   vars:
     wg_easy_initialized: true
-  when: not vps_orchestration_wg_easy_conf.stat.exists
+  when: not vps_orchestration_wg_easy_db.stat.exists
+  tags: [compose]
+
+# wg-easy v15 consumes INIT_* during its first start, but the values stay in
+# the running container's Config.Env until the container is recreated. Recreate
+# the stack right after the re-secure render so the panel password does not
+# remain inspectable by any local Docker/root actor (P0-3). This runs only on
+# the first deploy; subsequent runs see the DB and skip it.
+- name: "Compose | Reconcile | Recreate containers without the INIT_* block"
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_root }}"
+    state: present
+    recreate: always
+  when: not vps_orchestration_wg_easy_db.stat.exists
+  tags: [compose]
+
+# Heal already-deployed hosts (upgraded from an earlier version whose sentinel
+# was wg0.conf and which never ran the second reconciliation): if the running
+# wg-easy container still carries INIT_PASSWORD in its environment, recreate it
+# from the password-free Compose file.
+- name: "Compose | Reconcile | Detect INIT_PASSWORD in the running wg-easy env"
+  command: docker inspect wg-easy --format "{{ '{{ .Config.Env }}' }}"
+  register: vps_orchestration_wg_env
+  changed_when: false
+  failed_when: false
+  tags: [compose]
+
+- name: "Compose | Reconcile | Recreate wg-easy without INIT_PASSWORD"
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_root }}"
+    state: present
+    recreate: always
+  when: "'INIT_PASSWORD' in (vps_orchestration_wg_env.stdout | default(''))"
   tags: [compose]

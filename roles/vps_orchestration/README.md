@@ -146,8 +146,16 @@ wg-easy's `INIT_*` environment variables (username, password, host, port, DNS,
 default Allowed IPs) into the Compose file. wg-easy consumes them during the
 first container start and ignores them afterwards, so the panel is
 password-protected without the interactive setup wizard. The `INIT_*` block is
-removed once `{{ project_root }}/volumes/wg-easy/wg0.conf` exists, so the panel
-password is not persisted in the Compose file.
+gated on the wg-easy v15 SQLite database
+(`{{ project_root }}/volumes/wg-easy/wg-easy.db`), which is the authoritative
+initialized-state sentinel (the old `wg0.conf` sentinel did not match the v15
+lifecycle where the DB is the source of truth). On the first deploy the role
+re-renders the Compose file without the block **and** runs a second
+`docker compose up --force-recreate` so the panel password is removed both from
+the file and from the running container's `Config.Env`. Existing deployments
+still carrying `INIT_PASSWORD` in the container environment are healed on the
+next playbook run (the role detects it via `docker inspect` and recreates the
+container).
 
 ### Secrets Handling in Installer Mode
 

@@ -41,6 +41,13 @@
   until: vps_orchestration_wg_easy_session.status == 401
   tags: [verify]
 
+- name: "Verify | WG | wg-easy container env is free of INIT_PASSWORD"
+  command: docker inspect wg-easy --format "{{ '{{ .Config.Env }}' }}"
+  register: vps_orchestration_wg_env_check
+  changed_when: false
+  failed_when: "'INIT_PASSWORD' in vps_orchestration_wg_env_check.stdout"
+  tags: [verify]
+
 - name: "Verify | UI | Wait for AdGuard bootstrap UI"
   uri:
     url: "http://127.0.0.1:{{ adguard_bootstrap_ui_port }}/control/status"
