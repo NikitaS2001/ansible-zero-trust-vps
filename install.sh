@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Public installer for ansible-zero-trust-vps.
 # Intended usage:
-#   curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.0.0/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.1.0/install.sh | sudo bash
 
 set -euo pipefail
 
 readonly REPO_URL="${ZERO_TRUST_REPO_URL:-https://github.com/NikitaS2001/ansible-zero-trust-vps.git}"
-readonly RELEASE_REF="${ZERO_TRUST_RELEASE_REF:-v1.0.0}"
+readonly RELEASE_REF="${ZERO_TRUST_RELEASE_REF:-v1.1.0}"
 readonly INSTALL_ROOT="/opt/zero-trust-vps-installer"
 readonly REPO_DIR="${INSTALL_ROOT}/repo"
 readonly VENV_DIR="${INSTALL_ROOT}/venv"
@@ -378,13 +378,15 @@ collect_configuration() {
     prompt_optional ADMIN_USER "Admin username"
     prompt_required_secret ADMIN_PASSWORD "Admin password (min 8 chars)"
     prompt_required_secret ADGUARD_PASSWORD "AdGuard admin password (min 8 chars)"
-    prompt_required_secret WG_PASSWORD "WireGuard panel password (min 8 chars)"
+    prompt_required_secret WG_PASSWORD "WireGuard panel password (min 12 chars)"
     prompt_optional INTERNAL_DOMAINS "Internal domains, separated by space"
     prompt_optional WG_HOST "WireGuard public hostname or IP (Enter to auto-detect)"
     prompt_yesno WG_ENABLE_IPV6 "Enable IPv6 in the VPN stack"
     prompt_required_line SSH_PUBKEY "SSH public key"
 
     require_max_length "${ADGUARD_PASSWORD}" "AdGuard admin password" 72
+    # wg-easy v15 requires at least 12 characters for the panel password at login.
+    require_min_length "${WG_PASSWORD}" "WireGuard panel password" 12
 
     validate_port "SSH port" "${SSH_PORT}"
     validate_port "WireGuard port" "${WG_PORT}"
@@ -399,9 +401,10 @@ collect_configuration() {
 require_min_length() {
     local value="$1"
     local label="$2"
+    local min="${3:-8}"
 
-    if [[ "${#value}" -lt 8 ]]; then
-        error "${label} must be at least 8 characters."
+    if [[ "${#value}" -lt "${min}" ]]; then
+        error "${label} must be at least ${min} characters."
     fi
 }
 
@@ -454,7 +457,8 @@ collect_configuration_noninteractive() {
     require_min_length "${ADMIN_PASSWORD}" "Admin password"
     require_min_length "${ADGUARD_PASSWORD}" "AdGuard admin password"
     require_max_length "${ADGUARD_PASSWORD}" "AdGuard admin password" 72
-    require_min_length "${WG_PASSWORD}" "WireGuard panel password"
+    # wg-easy v15 requires at least 12 characters for the panel password at login.
+    require_min_length "${WG_PASSWORD}" "WireGuard panel password" 12
 
     validate_port "SSH port" "${SSH_PORT}"
     validate_port "WireGuard port" "${WG_PORT}"

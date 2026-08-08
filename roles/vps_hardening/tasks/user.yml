@@ -52,7 +52,7 @@
   tags: [user]
 
 - name: "VPS Hardening | User | Add SSH authorized key"
-  authorized_key:
+  ansible.posix.authorized_key:
     user: "{{ admin_user }}"
     key: "{{ vault_admin_ssh_pubkey }}"
     state: present
