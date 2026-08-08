@@ -49,7 +49,7 @@ services:
       - INIT_HOST={{ wg_public_host }}
       - INIT_PORT={{ wg_port }}
       - INIT_DNS={{ wg_client_dns }}
-      - INIT_ALLOWED_IPS={{ wg_allowed_ips | join(',') }}
+      - INIT_ALLOWED_IPS={% if (wg_enable_ipv6 | default(false) | bool) %}{{ (wg_allowed_ips + ['::/0']) | join(',') }}{% else %}{{ wg_allowed_ips | join(',') }}{% endif %}
 {% endif %}
     volumes:
       - "{{ project_root }}/volumes/wg-easy:/etc/wireguard"

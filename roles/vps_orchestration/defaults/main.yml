@@ -16,8 +16,10 @@ wg_client_dns: "10.66.0.2"
 wg_port: 51820
 wg_container_port: 51820
 # When true the stack allocates IPv6 addresses for clients and tunnels IPv6
-# traffic (client configs get ::/0). Requires a host with global IPv6 egress;
-# the playbook refuses IPv6 mode on hosts without IPv6.
+# traffic (client configs automatically get ::/0, so there is no IPv6 leak).
+# Requires a host with global IPv6 egress; the playbook refuses IPv6 mode on
+# hosts without IPv6. When false (default), client configs stay IPv4-only and
+# IPv6-enabled clients must block IPv6 themselves to avoid a leak.
 wg_enable_ipv6: false
 
 # wg-easy initial setup (Unattended Setup via INIT_* env vars, first start only)

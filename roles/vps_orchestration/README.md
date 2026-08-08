@@ -36,7 +36,7 @@ zero-trust VPN gateway:
 | `wg_easy_admin_password` | `""` | wg-easy panel password; enables the `INIT_*` automated first-start setup |
 | `wg_public_host` | `""` | Public IP/domain WireGuard clients connect to (required when `INIT_*` is used) |
 | `wg_allowed_ips` | `["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32"]` | Default Allowed IPs for new wg-easy clients |
-| `wg_enable_ipv6` | `false` | Tunnel IPv6 to clients (`::/0` in configs); requires a host with IPv6 egress, otherwise the playbook refuses |
+| `wg_enable_ipv6` | `false` | Dual-stack stack: peers get IPv6 addresses and `::/0` automatically (no IPv6 leak); requires a host with IPv6 egress, otherwise the playbook refuses |
 | `wg_internal_domain` | `wg.internal` | Internal hostname for wg-easy web UI |
 | `adguard_internal_domain` | `adguard.internal` | Internal hostname for AdGuard admin UI |
 | `wg_easy_bootstrap_ui_port` | `51821` | wg-easy UI port bound to localhost |
