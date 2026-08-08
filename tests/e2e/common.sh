@@ -2,6 +2,11 @@
 # Shared helpers for tests/e2e/*.sh
 set -euo pipefail
 
+# Internal domain names, overridable via the environment for deployments that
+# use a custom internal_domain_suffix.
+WG_INTERNAL_DOMAIN="${WG_INTERNAL_DOMAIN:-wg.internal}"
+ADGUARD_INTERNAL_DOMAIN="${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}"
+
 fail() {
     echo "[FAIL] $*" >&2
     exit 1

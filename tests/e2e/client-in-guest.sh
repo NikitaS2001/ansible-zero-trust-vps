@@ -67,30 +67,30 @@ if ! ping -c 2 -W 3 10.66.0.2 >/dev/null 2>&1; then
 fi
 echo "[PASS] AdGuard reachable over the VPN"
 
-if ! curl -fsS --resolve "wg.internal:443:10.66.0.3" \
-    --cacert "${ROOT_CA}" "https://wg.internal/" -o /dev/null; then
-    echo "[FAIL] https://wg.internal is not reachable over the VPN" >&2
+if ! curl -fsS --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:10.66.0.3" \
+    --cacert "${ROOT_CA}" "https://${WG_INTERNAL_DOMAIN:-wg.internal}/" -o /dev/null; then
+    echo "[FAIL] https://${WG_INTERNAL_DOMAIN:-wg.internal} is not reachable over the VPN" >&2
     exit 1
 fi
-echo "[PASS] https://wg.internal reachable (trusted root CA)"
+echo "[PASS] https://${WG_INTERNAL_DOMAIN:-wg.internal} reachable (trusted root CA)"
 
-if ! curl -fsS --resolve "adguard.internal:443:10.66.0.3" \
-    --cacert "${ROOT_CA}" "https://adguard.internal/" -o /dev/null; then
-    echo "[FAIL] https://adguard.internal is not reachable over the VPN" >&2
+if ! curl -fsS --resolve "${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}:443:10.66.0.3" \
+    --cacert "${ROOT_CA}" "https://${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}/" -o /dev/null; then
+    echo "[FAIL] https://${ADGUARD_INTERNAL_DOMAIN:-adguard.internal} is not reachable over the VPN" >&2
     exit 1
 fi
-echo "[PASS] https://adguard.internal reachable (trusted root CA)"
+echo "[PASS] https://${ADGUARD_INTERNAL_DOMAIN:-adguard.internal} reachable (trusted root CA)"
 
 echo "--- diagnostics: private CA, local domains, WireGuard handshake ---"
 echo "DNS resolution via AdGuard (10.66.0.2):"
-for d in wg.internal adguard.internal; do
+for d in "${WG_INTERNAL_DOMAIN:-wg.internal}" "${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}"; do
     echo "  ${d} -> $(dig +short @10.66.0.2 "${d}" | tr '\n' ' ')"
 done
 echo "Private root CA fetched from the server:"
 openssl x509 -in "${ROOT_CA}" -noout -subject -issuer -dates 2>/dev/null \
     || echo "  cannot read the root CA"
-echo "Certificate served by Caddy for wg.internal:"
-echo | openssl s_client -connect 10.66.0.3:443 -servername wg.internal \
+echo "Certificate served by Caddy for ${WG_INTERNAL_DOMAIN:-wg.internal}:"
+echo | openssl s_client -connect 10.66.0.3:443 -servername "${WG_INTERNAL_DOMAIN:-wg.internal}" \
     -CAfile "${ROOT_CA}" 2>/dev/null \
     | openssl x509 -noout -subject -issuer -dates -ext subjectAltName 2>/dev/null \
     || echo "  cannot inspect the served certificate"

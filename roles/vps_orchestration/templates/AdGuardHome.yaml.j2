@@ -26,7 +26,7 @@ filtering:
   protection_enabled: true
   filtering_enabled: true
   rewrites:
-    - domain: "*.internal"
+    - domain: "*.{{ internal_domain_suffix }}"
       answer: {{ caddy_container_ip }}
       enabled: true
 querylog:

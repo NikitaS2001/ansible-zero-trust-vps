@@ -173,8 +173,9 @@ assert_role_defaults_cover_installer_values() {
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_client_dns 10.66.0.2
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_port 51820
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_container_port 51820
-    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_internal_domain wg.internal
-    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_internal_domain adguard.internal
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml internal_domain_suffix internal
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_internal_domain "wg.{{ internal_domain_suffix }}"
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_internal_domain "adguard.{{ internal_domain_suffix }}"
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_easy_bootstrap_ui_port 51821
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_bootstrap_ui_port 3000
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml vps_orchestration_enable_ufw_before_ufw_docker false
@@ -188,8 +189,9 @@ assert_optional_installer_prompts_have_role_defaults() {
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml wg_port 51820
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_port 51820
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml admin_user sysadmin
-    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_internal_domain wg.internal
-    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_internal_domain adguard.internal
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml internal_domain_suffix internal
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_internal_domain "wg.{{ internal_domain_suffix }}"
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_internal_domain "adguard.{{ internal_domain_suffix }}"
 }
 
 assert_wg_allowed_ips_default() {

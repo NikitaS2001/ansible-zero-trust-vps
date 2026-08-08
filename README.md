@@ -113,7 +113,7 @@ the complete defaults and the [hardening](roles/vps_hardening/README.md) and
 | Connection | `ansible_host`, `ssh_port`, `wg_port`, `admin_user` |
 | wg-easy | `wg_public_host`, `wg_easy_admin_user`, `wg_easy_admin_password`, `wg_allowed_ips`, `wg_enable_ipv6`, `wg_client_dns` |
 | Docker network | `docker_network_subnet`, `adguard_container_ip`, `caddy_container_ip`, `wg_easy_container_ip` |
-| Internal names | `wg_internal_domain`, `adguard_internal_domain` |
+| Internal names | `wg_internal_domain`, `adguard_internal_domain`, `internal_domain_suffix` |
 | Vault values | `vault_adguard_password_hash`, `vault_admin_ssh_pubkey` |
 
 Encrypt only the two vault files, `vault_services.yml` and `vault_ssh.yml`.

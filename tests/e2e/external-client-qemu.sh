@@ -173,33 +173,33 @@ fi
 echo "[PASS] AdGuard reachable over the real internet tunnel"
 
 echo "--- DNS via the VPS AdGuard (10.66.0.2) ---"
-for d in wg.internal adguard.internal; do
+for d in "${WG_INTERNAL_DOMAIN:-wg.internal}" "${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}"; do
     echo "  ${d} -> $(dig +short @10.66.0.2 "${d}" | tr '\n' ' ')"
 done
-dig +short @10.66.0.2 wg.internal | grep -q '^10\.66\.0\.3$' || { echo "[FAIL] DNS via the VPS AdGuard is wrong" >&2; exit 1; }
+dig +short @10.66.0.2 ${WG_INTERNAL_DOMAIN:-wg.internal} | grep -q '^10\.66\.0\.3$' || { echo "[FAIL] DNS via the VPS AdGuard is wrong" >&2; exit 1; }
 
-if ! ping -c 2 -W 4 wg.internal >/dev/null 2>&1; then
-    echo "[FAIL] wg.internal (10.66.0.3) does not respond to ping by name over the tunnel" >&2
+if ! ping -c 2 -W 4 "${WG_INTERNAL_DOMAIN:-wg.internal}" >/dev/null 2>&1; then
+    echo "[FAIL] ${WG_INTERNAL_DOMAIN:-wg.internal} (10.66.0.3) does not respond to ping by name over the tunnel" >&2
     exit 1
 fi
-echo "[PASS] ping wg.internal (Caddy) reachable by name via the tunnel DNS"
+echo "[PASS] ping ${WG_INTERNAL_DOMAIN:-wg.internal} (Caddy) reachable by name via the tunnel DNS"
 
-if ! curl -fsS --resolve "wg.internal:443:10.66.0.3" --cacert /tmp/root.crt \
-    "https://wg.internal/" -o /dev/null; then
-    echo "[FAIL] https://wg.internal not reachable over the real internet tunnel" >&2
+if ! curl -fsS --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:10.66.0.3" --cacert /tmp/root.crt \
+    "https://${WG_INTERNAL_DOMAIN:-wg.internal}/" -o /dev/null; then
+    echo "[FAIL] https://${WG_INTERNAL_DOMAIN:-wg.internal} not reachable over the real internet tunnel" >&2
     exit 1
 fi
-echo "[PASS] https://wg.internal reachable (trusted VPS private CA)"
+echo "[PASS] https://${WG_INTERNAL_DOMAIN:-wg.internal} reachable (trusted VPS private CA)"
 
-if ! curl -fsS --resolve "adguard.internal:443:10.66.0.3" --cacert /tmp/root.crt \
-    "https://adguard.internal/" -o /dev/null; then
-    echo "[FAIL] https://adguard.internal not reachable over the real internet tunnel" >&2
+if ! curl -fsS --resolve "${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}:443:10.66.0.3" --cacert /tmp/root.crt \
+    "https://${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}/" -o /dev/null; then
+    echo "[FAIL] https://${ADGUARD_INTERNAL_DOMAIN:-adguard.internal} not reachable over the real internet tunnel" >&2
     exit 1
 fi
-echo "[PASS] https://adguard.internal reachable (trusted VPS private CA)"
+echo "[PASS] https://${ADGUARD_INTERNAL_DOMAIN:-adguard.internal} reachable (trusted VPS private CA)"
 
-echo "--- certificate served by the VPS Caddy for wg.internal ---"
-echo | openssl s_client -connect 10.66.0.3:443 -servername wg.internal \
+echo "--- certificate served by the VPS Caddy for ${WG_INTERNAL_DOMAIN:-wg.internal} ---"
+echo | openssl s_client -connect 10.66.0.3:443 -servername "${WG_INTERNAL_DOMAIN:-wg.internal}" \
     -CAfile /tmp/root.crt 2>/dev/null \
     | openssl x509 -noout -issuer -dates -ext subjectAltName 2>/dev/null \
     || echo "  cannot inspect the served certificate"

@@ -28,6 +28,7 @@ SSH_PUBKEY=""
 WG_PASSWORD=""
 WG_HOST=""
 WG_ENABLE_IPV6=""
+INTERNAL_DOMAIN_SUFFIX=""
 NONINTERACTIVE=""
 
 cleanup_on_failure() {
@@ -80,6 +81,9 @@ Non-interactive mode for automated testing:
   ZERO_TRUST_ADGUARD_PASSWORD  AdGuard admin password (required, min 8 chars)
   ZERO_TRUST_WG_PASSWORD       WireGuard panel password (required, min 8 chars)
   ZERO_TRUST_INTERNAL_DOMAINS  Two internal hostnames, space separated
+  ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX  Local DNS suffix for the internal domains
+                               (optional, default internal; recommended
+                               .internal or .home.arpa)
   ZERO_TRUST_SSH_PUBKEY        SSH public key for the admin user (required)
   ZERO_TRUST_WG_HOST           Public hostname/IP for clients (optional,
                                auto-detected when omitted)
@@ -259,6 +263,26 @@ validate_internal_domains() {
     ADGUARD_INTERNAL_DOMAIN="${internal_domains[1]}"
 }
 
+validate_internal_domain_suffix() {
+    local suffix="$1"
+    local domains="$2"
+
+    if [[ -z "${suffix}" ]]; then
+        return 0
+    fi
+    validate_hostname "${suffix}" || error "Invalid internal domain suffix: ${suffix}"
+    if [[ -n "${domains}" ]]; then
+        local -a internal_domains
+        read -r -a internal_domains <<<"${domains}"
+        local d
+        for d in "${internal_domains[@]}"; do
+            if [[ "${d}" != *".${suffix}" ]]; then
+                error "Internal domain '${d}' does not end with the configured suffix '.${suffix}'."
+            fi
+        done
+    fi
+}
+
 validate_ssh_pubkey() {
     local value="$1"
     local key_type
@@ -380,6 +404,7 @@ collect_configuration() {
     prompt_required_secret ADGUARD_PASSWORD "AdGuard admin password (min 8 chars)"
     prompt_required_secret WG_PASSWORD "WireGuard panel password (min 12 chars)"
     prompt_optional INTERNAL_DOMAINS "Internal domains, separated by space"
+    prompt_optional INTERNAL_DOMAIN_SUFFIX "Internal domain suffix (Enter for role default: internal)"
     prompt_optional WG_HOST "WireGuard public hostname or IP (Enter to auto-detect)"
     prompt_yesno WG_ENABLE_IPV6 "Enable IPv6 in the VPN stack"
     prompt_required_line SSH_PUBKEY "SSH public key"
@@ -392,6 +417,7 @@ collect_configuration() {
     validate_port "WireGuard port" "${WG_PORT}"
     validate_optional_admin_user "${ADMIN_USER}"
     validate_internal_domains "${INTERNAL_DOMAINS}"
+    validate_internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${INTERNAL_DOMAINS}"
     validate_ssh_pubkey "${SSH_PUBKEY}"
     if [[ -n "${WG_HOST}" ]] && ! validate_hostname "${WG_HOST}"; then
         error "Invalid public hostname or IP for WireGuard clients: ${WG_HOST}"
@@ -439,6 +465,7 @@ collect_configuration_noninteractive() {
     ADGUARD_PASSWORD="${ZERO_TRUST_ADGUARD_PASSWORD:-}"
     WG_PASSWORD="${ZERO_TRUST_WG_PASSWORD:-}"
     INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-}"
+    INTERNAL_DOMAIN_SUFFIX="${ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX:-}"
     SSH_PUBKEY="${ZERO_TRUST_SSH_PUBKEY:-}"
     WG_HOST="${ZERO_TRUST_WG_HOST:-}"
     WG_ENABLE_IPV6="${ZERO_TRUST_WG_ENABLE_IPV6:-}"
@@ -464,6 +491,7 @@ collect_configuration_noninteractive() {
     validate_port "WireGuard port" "${WG_PORT}"
     validate_optional_admin_user "${ADMIN_USER}"
     validate_internal_domains "${INTERNAL_DOMAINS}"
+    validate_internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${INTERNAL_DOMAINS}"
     validate_ssh_pubkey "${SSH_PUBKEY}"
     if [[ -n "${WG_HOST}" ]] && ! validate_hostname "${WG_HOST}"; then
         error "Invalid public hostname or IP for WireGuard clients: ${WG_HOST}"
@@ -536,6 +564,9 @@ prepare_extra_vars_file() {
     fi
     if [[ -n "${ADGUARD_INTERNAL_DOMAIN}" ]]; then
         write_extra_var adguard_internal_domain "${ADGUARD_INTERNAL_DOMAIN}"
+    fi
+    if [[ -n "${INTERNAL_DOMAIN_SUFFIX}" ]]; then
+        write_extra_var internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}"
     fi
 }
 

@@ -37,8 +37,9 @@ zero-trust VPN gateway:
 | `wg_public_host` | `""` | Public IP/domain WireGuard clients connect to (required when `INIT_*` is used) |
 | `wg_allowed_ips` | `["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32"]` | Default Allowed IPs for new wg-easy clients |
 | `wg_enable_ipv6` | `false` | Dual-stack stack: peers get IPv6 addresses and `::/0` automatically (no IPv6 leak); requires a host with IPv6 egress, otherwise the playbook refuses |
-| `wg_internal_domain` | `wg.internal` | Internal hostname for wg-easy web UI |
-| `adguard_internal_domain` | `adguard.internal` | Internal hostname for AdGuard admin UI |
+| `wg_internal_domain` | `wg.internal` | Internal hostname for wg-easy web UI (derived from `internal_domain_suffix`, overridable) |
+| `adguard_internal_domain` | `adguard.internal` | Internal hostname for AdGuard admin UI (derived from `internal_domain_suffix`, overridable) |
+| `internal_domain_suffix` | `internal` | Local DNS suffix for the AdGuard `*.<suffix>` rewrite; keep `.internal` (ICANN-reserved) or `.home.arpa` |
 | `wg_easy_bootstrap_ui_port` | `51821` | wg-easy UI port bound to localhost |
 | `adguard_bootstrap_ui_port` | `3000` | AdGuard UI port bound to localhost |
 | `docker_apt_distribution` | *(derived)* | Lowercase distribution name for Docker APT repo |

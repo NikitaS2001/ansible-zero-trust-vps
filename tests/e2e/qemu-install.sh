@@ -101,7 +101,7 @@ run_remote "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
         ZERO_TRUST_ADMIN_PASSWORD='${ADMIN_PASS}' \\
         ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}' \\
         ZERO_TRUST_WG_PASSWORD='${WG_PASS}' \\
-        ZERO_TRUST_INTERNAL_DOMAINS='wg.internal adguard.internal' \\
+        ZERO_TRUST_INTERNAL_DOMAINS='${WG_INTERNAL_DOMAIN:-wg.internal} ${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}' \\
         ZERO_TRUST_SSH_PUBKEY='${PUBKEY}' \\
         ZERO_TRUST_WG_HOST=127.0.0.1 \\
         bash ./install.sh"
@@ -127,7 +127,7 @@ if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
         'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils resolvconf >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
     run_remote_stdin "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${E2E_WG_PORT}' bash -s" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${E2E_WG_PORT}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN:-wg.internal}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}' bash -s" \
         < "${E2E_DIR}/client-in-guest.sh"
 fi
 

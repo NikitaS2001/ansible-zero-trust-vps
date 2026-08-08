@@ -62,7 +62,7 @@ ADGUARD_PASS="${ZERO_TRUST_ADGUARD_PASSWORD:-$(openssl rand -hex 12)}"
 WG_PASS="${ZERO_TRUST_WG_PASSWORD:-$(openssl rand -hex 12)}"
 SSH_PORT_IN="${ZERO_TRUST_SSH_PORT:-${E2E_SSH_PORT}}"
 WG_PORT_IN="${ZERO_TRUST_WG_PORT:-${E2E_WG_PORT}}"
-INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-wg.internal adguard.internal}"
+INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-${WG_INTERNAL_DOMAIN:-wg.internal} ${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}}"
 
 echo "[E2E] Waiting for root SSH on ${ROOT_TARGET}:${VPS_SSH_PORT}"
 require_ssh_ready "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" 30
@@ -117,7 +117,7 @@ if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
         'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils resolvconf >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
     run_remote_stdin "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" \
-        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' bash -s" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN:-wg.internal}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}' bash -s" \
         < "${E2E_DIR}/client-in-guest.sh"
 fi
 
