@@ -48,13 +48,17 @@
   failed_when: "'INIT_PASSWORD' in vps_orchestration_wg_env_check.stdout"
   tags: [verify]
 
-- name: "Verify | WG | wg-easy panel is not published on a public interface"
+- name: "Verify | WG | wg-easy panel is bound to localhost only"
   command: docker port wg-easy
   register: vps_orchestration_wg_ports
   changed_when: false
-  failed_when: >
-    ('0.0.0.0:51821' in vps_orchestration_wg_ports.stdout)
-    or (':::51821' in vps_orchestration_wg_ports.stdout)
+  # Fail when any 51821/tcp mapping is published on anything other than
+  # 127.0.0.1 (a specific public IP bind would otherwise evade a 0.0.0.0 check).
+  failed_when: >-
+    (vps_orchestration_wg_ports.stdout_lines
+      | select('search', '51821/tcp')
+      | map('regex_replace', '.*-> ([^:]+):51821', '\\1') | list)
+      | difference(['127.0.0.1']) | length > 0
   tags: [verify]
 
 # CVE-2026-63089 mitigation: a weak one-time-link token can leak client keys,

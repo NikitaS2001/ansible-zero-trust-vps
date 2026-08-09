@@ -134,6 +134,7 @@ caddy_container_ip: "10.66.0.3"
 wg_easy_container_ip: "10.66.0.4"
 
 # Internal domains and UI ports
+internal_domain_suffix: "${INTERNAL_DOMAIN_SUFFIX:-internal}"
 wg_internal_domain: "${WG_INTERNAL_DOMAIN:-wg.internal}"
 adguard_internal_domain: "${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}"
 wg_easy_bootstrap_ui_port: 51821

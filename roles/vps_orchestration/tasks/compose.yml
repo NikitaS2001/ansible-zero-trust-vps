@@ -85,3 +85,23 @@
     recreate: always
   when: "'INIT_PASSWORD' in (vps_orchestration_wg_env.stdout | default(''))"
   tags: [compose]
+
+# Legacy cleanup: earlier versions rendered the first Compose file with
+# backup: yes, so an interrupted first deploy left docker-compose.yml.bak*
+# files that contain the INIT_PASSWORD block. New renders never create them,
+# but remove any that survived an upgrade.
+- name: "Compose | Cleanup | Find legacy password-bearing Compose backups"
+  find:
+    paths: "{{ project_root }}"
+    patterns: "docker-compose.yml.bak*"
+    file_type: file
+  register: vps_orchestration_legacy_baks
+  tags: [compose]
+
+- name: "Compose | Cleanup | Delete legacy Compose backups"
+  file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ vps_orchestration_legacy_baks.files }}"
+  no_log: true
+  tags: [compose]

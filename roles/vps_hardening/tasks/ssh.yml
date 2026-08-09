@@ -98,6 +98,9 @@
     - ansible_connection | default("") != "local"
     - ansible_port is defined
     - (ansible_port | int) != (ssh_port | int)
+  # The rule may legitimately not exist (e.g. the connection used the new port
+  # already); that is not a failure.
+  failed_when: false
   tags: [ssh]
 
 - name: "SSH | Update | Set ansible connection for remainder"  # noqa: var-naming[no-role-prefix]

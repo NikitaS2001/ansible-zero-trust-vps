@@ -9,8 +9,9 @@
 #     quiescent (the VPN blips for the seconds the tar takes)
 #   - archives the project root: volumes/*, docker-compose.yml,
 #     docker-compose.override.yml, Caddyfile, Caddyfile.d
-#   - encrypts the archive with age when AGE_KEY (a public key) is set;
-#     otherwise writes a plaintext archive and warns
+#   - encrypts the archive with age when AGE_KEY (a public key) is set; the
+#     encrypted file gets a .age suffix (zt-<stamp>.tar.gz.age); otherwise a
+#     plaintext archive is written and a warning is printed
 #   - rotates old backups, keeping ZERO_TRUST_KEEP_BACKUPS (default 14)
 #
 # Encrypted-restore companion: scripts/restore.sh. For very large/heavy
@@ -28,7 +29,9 @@ cleanup() {
     COMPOSE_ARGS=(-f "${PROJECT_ROOT}/docker-compose.yml")
     [[ -f "${PROJECT_ROOT}/docker-compose.override.yml" ]] \
         && COMPOSE_ARGS+=(-f "${PROJECT_ROOT}/docker-compose.override.yml")
-    docker compose "${COMPOSE_ARGS[@]}" up -d --no-recreate 2>/dev/null || true
+    if ! docker compose "${COMPOSE_ARGS[@]}" up -d --no-recreate >/dev/null 2>&1; then
+        echo "[WARN] failed to restart the containers during cleanup; start them manually" >&2
+    fi
     rm -rf "${TMP_DIR}"
 }
 trap cleanup EXIT
@@ -52,11 +55,14 @@ for member in "volumes" "docker-compose.yml" "Caddyfile" "Caddyfile.d" "docker-c
     [[ -e "${PROJECT_ROOT}/${member}" ]] && TAR_ARGS+=("${BASE}/${member}")
 done
 tar -czf "${TAR_FILE}" "${TAR_ARGS[@]}"
+# Verify the archive is readable before moving on.
+tar -tzf "${TAR_FILE}" >/dev/null
 
 if [[ -n "${AGE_KEY:-}" ]]; then
     command -v age >/dev/null || { echo "[FAIL] AGE_KEY is set but 'age' is not installed" >&2; exit 1; }
     echo "[3/4] Encrypting with age..."
-    age -r "${AGE_KEY}" -o "${OUT}" "${TAR_FILE}"
+    age -r "${AGE_KEY}" -o "${OUT}.age" "${TAR_FILE}"
+    echo "[OK] Encrypted backup: ${OUT}.age"
 else
     echo "[3/4] No AGE_KEY set; keeping the archive PLAINTEXT. Export AGE_KEY to encrypt." >&2
     mv "${TAR_FILE}" "${OUT}"

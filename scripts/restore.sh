@@ -18,15 +18,17 @@ AGE_KEY="${2:-${ZERO_TRUST_AGE_KEY:-}}"
 TMP_DIR="$(mktemp -d /tmp/zt-restore.XXXXXX)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
-TAR="${BACKUP}"
-case "${BACKUP}" in
-    *.age)
-        command -v age >/dev/null || { echo "[FAIL] 'age' is not installed" >&2; exit 1; }
-        [[ -n "${AGE_KEY}" ]] || { echo "[FAIL] encrypted backup requires an age identity file" >&2; exit 1; }
-        TAR="${TMP_DIR}/backup.tar.gz"
-        age -d -i "${AGE_KEY}" -o "${TAR}" "${BACKUP}"
-        ;;
-esac
+TAR=""
+# Detect age-encrypted archives by magic, not just by the .age suffix, so a
+# misnamed (or legacy .tar.gz) encrypted backup is still restored correctly.
+if head -c 18 "${BACKUP}" | grep -q '^age-encryption.org'; then
+    command -v age >/dev/null || { echo "[FAIL] 'age' is not installed" >&2; exit 1; }
+    [[ -n "${AGE_KEY}" ]] || { echo "[FAIL] encrypted backup requires an age identity file" >&2; exit 1; }
+    TAR="${TMP_DIR}/backup.tar.gz"
+    age -d -i "${AGE_KEY}" -o "${TAR}" "${BACKUP}"
+else
+    TAR="${BACKUP}"
+fi
 
 echo "[1/4] Stopping the stack before restore..."
 COMPOSE_ARGS=(-f "${PROJECT_ROOT}/docker-compose.yml")

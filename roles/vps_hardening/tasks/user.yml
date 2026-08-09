@@ -61,6 +61,9 @@
     # exclusive removes keys that are no longer managed by the role, so key
     # rotation revokes the old key instead of appending it.
     exclusive: "{{ vps_hardening_authorized_keys_exclusive | bool }}"
+  # Never run with an empty key: exclusive + a missing pubkey would remove
+  # every key from the account and lock the operator out.
+  when: vault_admin_ssh_pubkey | default('') | length > 0
   no_log: true
   tags: [user]
 

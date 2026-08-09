@@ -42,10 +42,20 @@ quickstart_ref="$(
     || fail "README quickstart tag '${quickstart_ref:-<none>}' does not match RELEASE_REF '${release_ref}'"
 pass "README quickstart uses ${release_ref}"
 
-if grep -vE '^\s*$|^---|^collections:|^  - name:|^    version: "==' requirements.yml | grep -q .; then
-    fail "requirements.yml must pin every collection with an exact '==' version"
+# Every collection must have an exact "==" version: a missing version line
+# would let ansible-galaxy install any version. awk exits 1 when a - name:
+# entry ends without a "version: \"==\"" line.
+if awk '
+    /^  - name:/ { in_entry = 1; has_pin = 0; next }
+    in_entry && /^    version: "==/ { has_pin = 1; next }
+    in_entry && /^    version:/ { next }
+    in_entry && /^[^ ]/ { if (!has_pin) exit 1; in_entry = 0 }
+    END { if (in_entry && !has_pin) exit 1 }
+' requirements.yml; then
+    pass "requirements.yml pins every collection exactly"
+else
+    fail "every collection must be pinned with an exact '==' version"
 fi
-pass "requirements.yml uses exact '==' pins"
 
 if [[ "${MODE}" == "--pr" ]]; then
     pass "release contract (structural) OK"
