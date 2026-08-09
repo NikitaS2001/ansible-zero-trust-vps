@@ -214,6 +214,20 @@ assert_installer_provides_wg_easy_init() {
     grep -q 'ZERO_TRUST_NONINTERACTIVE' install.sh         || fail "install.sh must support non-interactive mode for automated testing"
 }
 
+assert_extension_pattern_intact() {
+    # The user-facing extension story ("add your own service behind an
+    # internal domain") depends on the AdGuard wildcard rewrite and on Caddy
+    # serving *.internal with the internal CA. Guard both so a future change
+    # cannot silently break service additions.
+    grep -Fq 'domain: "*.{{ internal_domain_suffix }}"' \
+        roles/vps_orchestration/templates/AdGuardHome.yaml.j2 \
+        || fail "AdGuardHome.yaml.j2 must keep the *.{{ internal_domain_suffix }} wildcard rewrite"
+    grep -Fq 'tls internal' roles/vps_orchestration/templates/Caddyfile.j2 \
+        || fail "Caddyfile.j2 must keep the tls internal sites"
+    grep -Fq 'import Caddyfile.d/*.conf' roles/vps_orchestration/templates/Caddyfile.j2 \
+        || fail "Caddyfile.j2 must import user site blocks from Caddyfile.d"
+}
+
 [[ -x install.sh ]] || fail "install.sh must exist and be executable"
 install_release_ref="$(read_install_release_ref)"
 grep -Fq "/${install_release_ref}/install.sh" README.md \
@@ -229,6 +243,7 @@ assert_role_defaults_cover_installer_values
 assert_optional_installer_prompts_have_role_defaults
 assert_wg_allowed_ips_default
 assert_installer_provides_wg_easy_init
+assert_extension_pattern_intact
 pass "installer entrypoints follow tagged quickstart and strict SSOT rules"
 
 ansible-inventory -i inventory/localhost.yml --graph vps >/dev/null \

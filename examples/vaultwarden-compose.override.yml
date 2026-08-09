@@ -1,0 +1,22 @@
+---
+# Example: run Vaultwarden behind an internal domain.
+#
+# 1. Copy this file to /opt/zero-trust-vps/docker-compose.override.yml
+#    (the role never rewrites it, so it survives playbook re-runs).
+# 2. Copy examples/vaultwarden.caddy.conf to
+#    /opt/zero-trust-vps/Caddyfile.d/vaultwarden.conf.
+# 3. Start the service:
+#      cd /opt/zero-trust-vps && sudo docker compose up -d
+# 4. Open https://vaultwarden.internal (trust the root CA first).
+#
+# Keep the service and its volumes under /opt/zero-trust-vps so the project
+# backup (scripts/backup.sh) captures it together with the base stack.
+services:
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    networks:
+      vpn_net: {}
+    volumes:
+      - ./volumes/vaultwarden:/data

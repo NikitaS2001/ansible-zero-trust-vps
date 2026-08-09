@@ -145,6 +145,51 @@ For the optional AdGuard bootstrap panel, use:
 ssh -p <ssh_port> -L 3000:127.0.0.1:3000 <admin_user>@<ansible_host>
 ```
 
+## Add Your Own Service Behind an Internal Domain
+
+The stack is a platform: after installation you can add services and expose
+them under internal domains (default `*.internal`, or your configured
+`internal_domain_suffix`), reachable only through the VPN. DNS is already
+handled — AdGuard rewrites `*.<suffix>` to Caddy — so a new service needs two
+files under `/opt/zero-trust-vps/`:
+
+1. **Compose override** — `docker-compose.override.yml` adds the container to
+   the shared `vpn_net` network (the role never overwrites this file):
+   ```yaml
+   services:
+     myservice:
+       image: your/image:tag
+       restart: unless-stopped
+       networks: { vpn_net: {} }
+       volumes: [ "./volumes/myservice:/data" ]
+   ```
+2. **Caddy site block** — `Caddyfile.d/myservice.conf`:
+   ```
+   myservice.internal {
+       tls internal
+       reverse_proxy myservice:80
+   }
+   ```
+Then apply:
+```bash
+cd /opt/zero-trust-vps
+sudo docker compose up -d
+sudo docker restart caddy   # deterministic reload of the new site block
+```
+Open `https://myservice.internal` (trust the root CA first). A complete
+working example (Vaultwarden) is in `examples/`.
+
+**Backup contract:** keep user services and their volumes under
+`/opt/zero-trust-vps` (the project root) so `scripts/backup.sh` captures them
+together with the base stack. Anything outside the project root is not backed
+up.
+
+**Choosing a different local domain:** set `internal_domain_suffix` (and, if
+desired, `wg_internal_domain` / `adguard_internal_domain`) in
+`group_vars/all/vars.yml` before deploying. Recommended suffixes: `.internal`
+(ICANN-reserved) or `.home.arpa` (RFC 8375). Avoid `.local` (conflicts with
+mDNS) and unreserved suffixes such as `.lan` or `.home`.
+
 ## Security Model
 
 - `admin_user` has passwordless sudo and the `docker` group: both are

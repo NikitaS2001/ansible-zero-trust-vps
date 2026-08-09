@@ -12,3 +12,12 @@
     tls internal
     reverse_proxy adguard:3000
 }
+
+# User-added services: drop a `<name>.conf` site block into the mounted
+# Caddyfile.d directory ({{ project_root }}/Caddyfile.d) to expose a service
+# under an internal domain, e.g.:
+#   vaultwarden.internal {
+#       tls internal
+#       reverse_proxy vaultwarden:80
+#   }
+import Caddyfile.d/*.conf

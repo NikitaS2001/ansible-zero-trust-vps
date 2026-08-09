@@ -85,3 +85,4 @@ services:
       - "{{ project_root }}/volumes/caddy/data:/data"
       - "{{ project_root }}/volumes/caddy/config:/config"
       - "{{ project_root }}/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "{{ project_root }}/Caddyfile.d:/etc/caddy/Caddyfile.d:ro"
