@@ -42,9 +42,10 @@
     msg: >
       {{ wg_internal_domain }} / {{ adguard_internal_domain }} must end with
       .{{ internal_domain_suffix }} so the AdGuard wildcard rewrite covers them.
-  when: not wg_internal_domain.endswith('.' ~ internal_domain_suffix) \
+  when: >-
+    not wg_internal_domain.endswith('.' ~ internal_domain_suffix)
     or not adguard_internal_domain.endswith('.' ~ internal_domain_suffix)
-  tags: [compose]
+  tags: [compose, orchestration_domain_preflight]
 
 - name: "VPS Orchestration | Preflight | Probe Docker/WireGuard subnet overlap"
   command: >
