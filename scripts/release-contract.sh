@@ -26,6 +26,19 @@ esac
 fail() { echo "[FAIL] $*" >&2; exit 1; }
 pass() { echo "[PASS] $*"; }
 
+if [[ "${MODE}" == "--tag" ]]; then
+    tag_name="${GITHUB_REF_NAME:-$(git describe --tags --exact-match 2>/dev/null || true)}"
+    [[ -n "${tag_name}" ]] || fail "--tag mode requires HEAD to be exactly a git tag"
+    tag_commit="$(git rev-parse --verify --quiet "${tag_name}^{commit}")" \
+        || fail "git tag '${tag_name}' does not resolve to a commit"
+    head_commit="$(git rev-parse --verify --quiet 'HEAD^{commit}')" \
+        || fail "HEAD does not resolve to a commit"
+    [[ "${tag_commit}" == "${head_commit}" ]] \
+        || fail "git tag '${tag_name}' does not point at HEAD"
+    [[ -z "$(git status --porcelain=v1)" ]] \
+        || fail "--tag mode requires a clean worktree"
+fi
+
 release_ref="$(
     sed -nE 's/^readonly RELEASE_REF="\$\{ZERO_TRUST_RELEASE_REF:-([^}]+)\}"$/\1/p' install.sh
 )"
@@ -46,11 +59,17 @@ pass "README quickstart uses ${release_ref}"
 # would let ansible-galaxy install any version. awk exits 1 when a - name:
 # entry ends without a "version: \"==\"" line.
 if awk '
-    /^  - name:/ { in_entry = 1; has_pin = 0; next }
-    in_entry && /^    version: "==/ { has_pin = 1; next }
-    in_entry && /^    version:/ { next }
-    in_entry && /^[^ ]/ { if (!has_pin) exit 1; in_entry = 0 }
-    END { if (in_entry && !has_pin) exit 1 }
+    function finish_entry() {
+        if (in_entry && !has_pin) exit 1
+    }
+    /^  - name:/ {
+        finish_entry()
+        in_entry = 1
+        has_pin = 0
+        next
+    }
+    in_entry && /^    version: "==[^"]+"[[:space:]]*$/ { has_pin = 1 }
+    END { finish_entry() }
 ' requirements.yml; then
     pass "requirements.yml pins every collection exactly"
 else
@@ -63,8 +82,6 @@ if [[ "${MODE}" == "--pr" ]]; then
 fi
 
 # --tag: strict checks
-tag_name="${GITHUB_REF_NAME:-$(git describe --tags --exact-match 2>/dev/null || true)}"
-[[ -n "${tag_name}" ]] || fail "--tag mode requires HEAD to be exactly a git tag"
 [[ "${tag_name}" == "${release_ref}" ]] \
     || fail "git tag '${tag_name}' does not match installer default '${release_ref}'"
 
