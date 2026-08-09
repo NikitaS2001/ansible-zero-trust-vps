@@ -57,10 +57,11 @@
     - name: "SSH | Verify | Wait for sshd on new port"
       wait_for:
         port: "{{ ssh_port }}"
-        host: "{{ ansible_host }}"
+        host: "{{ hostvars[inventory_hostname].ansible_host }}"
         timeout: 30
       delegate_to: localhost
-      when: ansible_connection != "local"
+      become: false
+      when: (hostvars[inventory_hostname].ansible_connection | default("ssh")) != "local"
       tags: [ssh]
   rescue:
     - name: "SSH | Rescue | Restore previous sshd_config"
@@ -73,8 +74,20 @@
       notify: restart sshd
       tags: [ssh]
 
-    - name: "SSH | Rescue | Restart sshd after rollback"
+    - name: "SSH | Rescue | Check whether original SSH listener survived"
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ ansible_port | int }}"
+        state: started
+        timeout: 1
+      register: vps_hardening_original_ssh_listener
+      changed_when: false
+      failed_when: false
+      tags: [ssh]
+
+    - name: "SSH | Rescue | Restart sshd when original listener is absent"
       meta: flush_handlers
+      when: (vps_hardening_original_ssh_listener.state | default("")) != "started"
       tags: [ssh]
 
     - name: "SSH | Rescue | Fail after restoring previous sshd_config"
@@ -98,10 +111,7 @@
     - ansible_connection | default("") != "local"
     - ansible_port is defined
     - (ansible_port | int) != (ssh_port | int)
-  # The rule may legitimately not exist (e.g. the connection used the new port
-  # already); that is not a failure.
-  failed_when: false
-  tags: [ssh]
+  tags: [ssh, ssh_ufw_cleanup]
 
 - name: "SSH | Update | Set ansible connection for remainder"  # noqa: var-naming[no-role-prefix]
   set_fact:

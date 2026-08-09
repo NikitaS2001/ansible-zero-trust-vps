@@ -5,7 +5,8 @@
 # ansible-playbook over SSH) - not with the public installer.
 #
 # Usage:
-#   tests/e2e/qemu-remote-install.sh [--reboot-test]
+#   tests/e2e/qemu-remote-install.sh [--reboot-test] [--ssh-cutover-test]
+#       [--ssh-rollback-test] [--ufw-backend-failure-test]
 #
 # Env:
 #   QEMU_IMAGE          cloud image URL or local path (default Ubuntu 24.04)
@@ -14,6 +15,7 @@
 #   E2E_WG_PORT         WireGuard UDP port configured by the playbook (51820)
 #   QEMU_SSH_PORT       host tcp -> guest:22   (2223)
 #   QEMU_ADMIN_PORT     host tcp -> guest:<E2E_SSH_PORT> (2222)
+#   QEMU_CLEANUP_PORT   second host tcp -> guest:<E2E_SSH_PORT> (2224)
 #   QEMU_WG_PORT        host udp -> guest:<E2E_WG_PORT> (51822)
 set -euo pipefail
 
@@ -31,23 +33,47 @@ E2E_SSH_PORT="${E2E_SSH_PORT:-2222}"
 E2E_WG_PORT="${E2E_WG_PORT:-51820}"
 QEMU_SSH_PORT="${QEMU_SSH_PORT:-2223}"
 QEMU_ADMIN_PORT="${QEMU_ADMIN_PORT:-2222}"
+QEMU_CLEANUP_PORT="${QEMU_CLEANUP_PORT:-2224}"
 QEMU_WG_PORT="${QEMU_WG_PORT:-51822}"
+QEMU_ROLLBACK_PROBE_PORT="${QEMU_ROLLBACK_PROBE_PORT:-2299}"
 
 DO_REBOOT=false
+DO_SSH_CUTOVER=false
+DO_SSH_ROLLBACK=false
+DO_UFW_BACKEND_FAILURE=false
 for arg in "$@"; do
     case "${arg}" in
         --reboot-test) DO_REBOOT=true ;;
+        --ssh-cutover-test) DO_SSH_CUTOVER=true ;;
+        --ssh-rollback-test) DO_SSH_ROLLBACK=true ;;
+        --ufw-backend-failure-test) DO_UFW_BACKEND_FAILURE=true ;;
         *) fail "Unknown argument: ${arg}" ;;
     esac
 done
 
-for tool in qemu-system-x86_64 qemu-img genisoimage curl ssh-keygen openssl ansible-playbook ansible-vault; do
+for tool in qemu-system-x86_64 qemu-img genisoimage curl ssh-keygen openssl ansible-playbook ansible-vault nc ss; do
     command -v "${tool}" >/dev/null || fail "required tool not found: ${tool}"
 done
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-remote.XXXXXX")"
 QEMU_PID=""
+UFW_GUARD_PID=""
 cleanup() {
+    local cleanup_ok=true
+    if [[ -n "${UFW_GUARD_PID}" ]] && kill -0 "${UFW_GUARD_PID}" >/dev/null 2>&1; then
+        run_remote_authenticated "sysadmin@127.0.0.1" "${QEMU_CLEANUP_PORT}" \
+            "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+            'sudo touch /var/tmp/task-5-ufw-release' >/dev/null 2>&1 || true
+        for _ in {1..10}; do
+            kill -0 "${UFW_GUARD_PID}" >/dev/null 2>&1 || break
+            sleep 1
+        done
+        if kill -0 "${UFW_GUARD_PID}" >/dev/null 2>&1; then
+            kill "${UFW_GUARD_PID}" >/dev/null 2>&1 || true
+            cleanup_ok=false
+        fi
+        wait "${UFW_GUARD_PID}" >/dev/null 2>&1 || true
+    fi
     # remove the controller files written into the repo (all gitignored)
     rm -f "${ROOT_DIR}/inventory/hosts.yml"
     rm -f "${ROOT_DIR}/group_vars/all/vars.yml"
@@ -55,9 +81,22 @@ cleanup() {
     rm -f "${ROOT_DIR}/group_vars/all/vault_services.yml"
     if [[ -n "${QEMU_PID}" ]] && kill -0 "${QEMU_PID}" >/dev/null 2>&1; then
         kill "${QEMU_PID}" >/dev/null 2>&1 || true
-        sleep 2
+        for _ in {1..10}; do
+            kill -0 "${QEMU_PID}" >/dev/null 2>&1 || break
+            sleep 1
+        done
+        if kill -0 "${QEMU_PID}" >/dev/null 2>&1; then
+            kill -9 "${QEMU_PID}" >/dev/null 2>&1 || true
+            cleanup_ok=false
+        fi
     fi
     rm -rf "${TMP_DIR}"
+    if [[ "${cleanup_ok}" == "true" && ! -e "${TMP_DIR}" ]]; then
+        echo "[CLEANUP] qemu=stopped temp_keys=removed known_hosts=removed state=removed cleanup=complete"
+    else
+        echo "[CLEANUP] cleanup=incomplete" >&2
+        return 1
+    fi
 }
 trap cleanup EXIT
 
@@ -88,14 +127,22 @@ SEEDEOF
 boot_vm "${TMP_DIR}" "${QEMU_IMAGE}" 20 2048 2 ztvps-remote-e2e ztvps-remote "${TMP_DIR}/user-data" \
     "hostfwd=tcp:127.0.0.1:${QEMU_SSH_PORT}-:22" \
     "hostfwd=tcp:127.0.0.1:${QEMU_ADMIN_PORT}-:${E2E_SSH_PORT}" \
+    "hostfwd=tcp:127.0.0.1:${QEMU_CLEANUP_PORT}-:${E2E_SSH_PORT}" \
     "hostfwd=udp:127.0.0.1:${QEMU_WG_PORT}-:${E2E_WG_PORT}"
 
 echo "[E2E] Waiting for root SSH on guest:22 (host port ${QEMU_SSH_PORT})..."
 require_ssh_ready "root@127.0.0.1" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" 60
+touch "${TMP_DIR}/known_hosts"
+chmod 0600 "${TMP_DIR}/known_hosts"
+record_ssh_host_key "127.0.0.1" "${QEMU_SSH_PORT}" "${TMP_DIR}/known_hosts"
+run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+    "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" 'true'
+pass "pre-cutover authenticated root SSH"
 
 # --- controller side: inventory + group_vars + vault --------------------------
 # These paths are gitignored in the repo, exactly like a real remote deploy.
-cat >"${ROOT_DIR}/inventory/hosts.yml" <<EOF
+write_direct_inventory() {
+    cat >"${ROOT_DIR}/inventory/hosts.yml" <<EOF
 ---
 all:
   children:
@@ -108,10 +155,31 @@ all:
           ansible_ssh_private_key_file: ${TMP_DIR}/id_ed25519
           ansible_python_interpreter: /usr/bin/python3
 EOF
-cat >"${ROOT_DIR}/group_vars/all/vars.yml" <<EOF
+}
+
+write_rollback_inventory() {
+    cat >"${ROOT_DIR}/inventory/hosts.yml" <<EOF
+---
+all:
+  children:
+    vps:
+      hosts:
+        vps01:
+          ansible_host: 192.0.2.1
+          ansible_port: 22
+          ansible_user: root
+          ansible_ssh_private_key_file: ${TMP_DIR}/id_ed25519
+          ansible_ssh_common_args: "-o ProxyCommand='nc 127.0.0.1 ${QEMU_SSH_PORT}'"
+          ansible_python_interpreter: /usr/bin/python3
+EOF
+}
+write_direct_inventory
+write_group_vars() {
+    local configured_ssh_port="$1"
+    cat >"${ROOT_DIR}/group_vars/all/vars.yml" <<EOF
 ---
 # Network
-ssh_port: ${E2E_SSH_PORT}
+ssh_port: ${configured_ssh_port}
 wg_port: ${E2E_WG_PORT}
 wg_container_port: ${E2E_WG_PORT}
 wg_vpn_subnet: "10.8.0.0/24"
@@ -149,6 +217,8 @@ admin_shell: "/bin/bash"
 ssh_service_name: "ssh"
 ssh_allow_tcp_forwarding: "yes"
 EOF
+}
+write_group_vars "${E2E_SSH_PORT}"
 cat >"${ROOT_DIR}/group_vars/all/vault_ssh.yml" <<EOF
 ---
 vault_admin_ssh_pubkey: "${PUBKEY}"
@@ -166,14 +236,236 @@ ansible-vault encrypt --vault-password-file "${TMP_DIR}/vault_pass" \
 echo "[E2E] Installing controller collections from requirements.yml..."
 ansible-galaxy collection install -r "${ROOT_DIR}/requirements.yml" >/dev/null
 
-echo "[E2E] Running the playbook in remote mode (controller -> VM)..."
-ANSIBLE_HOST_KEY_CHECKING=False \
-    ansible-playbook -i "${ROOT_DIR}/inventory/hosts.yml" \
-    --vault-password-file "${TMP_DIR}/vault_pass" site.yml
+run_playbook() {
+    local output_file="$1"
+    local playbook="$2"
+    shift 2
+    ANSIBLE_HOST_KEY_CHECKING=False \
+        ansible-playbook -i "${ROOT_DIR}/inventory/hosts.yml" \
+        --vault-password-file "${TMP_DIR}/vault_pass" "${playbook}" \
+        "$@" >"${output_file}" 2>&1
+}
 
-echo "[E2E] Verifying the deployed stack on the hardened SSH port ${QEMU_ADMIN_PORT}"
-export E2E_SSH_PORT E2E_WG_PORT
-verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
+run_successful_cutover() {
+    local playbook_log="${TMP_DIR}/cutover-ansible.log"
+    write_direct_inventory
+    write_group_vars "${E2E_SSH_PORT}"
+    echo "[E2E] Running SSH/UFW hardening cutover..."
+    if ! run_playbook "${playbook_log}" "${TMP_DIR}/hardening.yml" \
+        --tags packages,user,ufw,ssh; then
+        sed -n '/SSH | Verify | Wait for sshd on new port/,/SSH | Rescue | Restore previous/p' \
+            "${playbook_log}" >&2
+        fail "SSH/UFW hardening cutover failed"
+    fi
+    record_ssh_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/known_hosts"
+    local sshd_effective
+    sshd_effective="$(run_remote_authenticated "sysadmin@127.0.0.1" \
+        "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+        'sudo sshd -T')"
+    grep -qx "port ${E2E_SSH_PORT}" <<<"${sshd_effective}" || \
+        fail "sshd -T did not report the hardened port"
+    pass "BatchMode admin-key login and sudo sshd -T on hardened port"
+    require_authenticated_ssh_closed "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts"
+    pass "old SSH port closed after successful cutover"
+}
+
+run_rollback_probe() {
+    local playbook_log="${TMP_DIR}/rollback-ansible.log"
+    local control_socket="${TMP_DIR}/rollback-control"
+    local before_hash after_hash session_output
+    if ss -ltn "sport = :${QEMU_ROLLBACK_PROBE_PORT}" | tail -n +2 | grep -q .; then
+        fail "rollback probe port ${QEMU_ROLLBACK_PROBE_PORT} is already in use"
+    fi
+    write_rollback_inventory
+    write_group_vars "${QEMU_ROLLBACK_PROBE_PORT}"
+    before_hash="$(run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+        'sha256sum /etc/ssh/sshd_config | cut -d" " -f1')"
+    open_authenticated_ssh_control "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" "${control_socket}"
+    if run_playbook "${playbook_log}" "${TMP_DIR}/hardening.yml" \
+        --tags packages,user,ufw,ssh; then
+        fail "injected unreachable SSH cutover unexpectedly succeeded"
+    fi
+    if ! grep -q 'SSH | Rescue | Fail after restoring previous sshd_config' \
+        "${playbook_log}"; then
+        sed -n '/SSH | Verify | Wait for sshd on new port/,$p' "${playbook_log}" >&2
+        run_remote_over_control "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+            "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" "${control_socket}" \
+            'sudo /usr/sbin/sshd -t -f /etc/ssh/sshd_config 2>&1; sudo systemctl status ssh --no-pager -l 2>&1 | tail -12' \
+            >&2 || true
+        fail "play failed before the intended SSH rollback"
+    fi
+    session_output="$(run_remote_over_control "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" "${control_socket}" \
+        'printf rollback-session-ok')"
+    [[ "${session_output}" == "rollback-session-ok" ]] || \
+        fail "pre-cutover authenticated SSH session was unusable after rollback"
+    close_authenticated_ssh_control "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" "${control_socket}"
+    run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" 'true'
+    after_hash="$(run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+        'sha256sum /etc/ssh/sshd_config | cut -d" " -f1')"
+    [[ "${after_hash}" == "${before_hash}" ]] || \
+        fail "rollback did not restore the original sshd_config"
+    pass "authenticated old SSH session and fresh login survived rollback"
+}
+
+write_cleanup_inventory() {
+    cat >"${ROOT_DIR}/inventory/hosts.yml" <<EOF
+---
+all:
+  children:
+    vps:
+      hosts:
+        vps01:
+          ansible_host: 127.0.0.1
+          ansible_port: ${QEMU_CLEANUP_PORT}
+          ansible_user: sysadmin
+          ansible_ssh_private_key_file: ${TMP_DIR}/id_ed25519
+          ansible_python_interpreter: /usr/bin/python3
+EOF
+}
+
+run_tagged_cleanup() {
+    local output_file="$1"
+    ANSIBLE_HOST_KEY_CHECKING=False \
+        ansible-playbook -i "${ROOT_DIR}/inventory/hosts.yml" \
+        --vault-password-file "${TMP_DIR}/vault_pass" \
+        "${TMP_DIR}/ssh-cleanup.yml" --tags ssh_ufw_cleanup -v \
+        >"${output_file}" 2>&1
+}
+
+run_ufw_backend_probes() {
+    local absent_log="${TMP_DIR}/ufw-absent.log"
+    local failure_log="${TMP_DIR}/ufw-failure.log"
+    local ready=false
+    record_ssh_host_key "127.0.0.1" "${QEMU_CLEANUP_PORT}" "${TMP_DIR}/known_hosts"
+    write_cleanup_inventory
+    cat >"${TMP_DIR}/ssh-cleanup.yml" <<EOF
+---
+- name: Test the real SSH UFW cleanup task
+  hosts: vps
+  gather_facts: false
+  become: true
+  vars_files:
+    - ${ROOT_DIR}/group_vars/all/vars.yml
+    - ${ROOT_DIR}/group_vars/all/vault_ssh.yml
+    - ${ROOT_DIR}/group_vars/all/vault_services.yml
+  tasks:
+    - name: Include the production SSH tasks
+      include_tasks: ${ROOT_DIR}/roles/vps_hardening/tasks/ssh.yml
+      tags: [always]
+EOF
+    if run_remote_authenticated "sysadmin@127.0.0.1" "${QEMU_CLEANUP_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+        "sudo ufw status | grep -Eq '^${QEMU_CLEANUP_PORT}/tcp[[:space:]]'"; then
+        fail "cleanup probe rule was not absent before the tagged play"
+    fi
+    if ! run_tagged_cleanup "${absent_log}"; then
+        sed -n '/SSH | Cleanup/,$p' "${absent_log}" >&2
+        fail "deleting an absent UFW rule failed"
+    fi
+    grep -q 'SSH | Cleanup | Remove temporary old-port UFW allow after cutover' \
+        "${absent_log}" || fail "dedicated cleanup tag did not execute the production task"
+    grep -Eq 'changed=0[[:space:]]+unreachable=0[[:space:]]+failed=0' \
+        "${absent_log}" || fail "absent UFW rule was not unchanged rc0"
+    pass "absent old-port UFW rule returned rc=0 changed=0"
+
+    run_remote_authenticated "sysadmin@127.0.0.1" "${QEMU_CLEANUP_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" 'sudo bash -s' <<'GUARD' &
+set -euo pipefail
+backup="$(mktemp /var/tmp/task-5-ufw.XXXXXX)"
+restore_ufw() {
+    cp -a "${backup}" /usr/sbin/ufw
+    rm -f "${backup}" /var/tmp/task-5-ufw-ready /var/tmp/task-5-ufw-release
+}
+trap restore_ufw EXIT HUP INT TERM
+cp -a /usr/sbin/ufw "${backup}"
+printf '%s\n' '#!/bin/sh' 'echo "injected UFW backend failure" >&2' 'exit 1' >/usr/sbin/ufw
+chmod 0755 /usr/sbin/ufw
+touch /var/tmp/task-5-ufw-ready
+while [[ ! -e /var/tmp/task-5-ufw-release ]]; do sleep 1; done
+GUARD
+    UFW_GUARD_PID="$!"
+    for _ in {1..30}; do
+        if run_remote_authenticated "sysadmin@127.0.0.1" "${QEMU_CLEANUP_PORT}" \
+            "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+            'sudo test -e /var/tmp/task-5-ufw-ready'; then
+            ready=true
+            break
+        fi
+        sleep 1
+    done
+    [[ "${ready}" == "true" ]] || fail "UFW failure stub did not become ready"
+    if run_tagged_cleanup "${failure_log}"; then
+        fail "injected UFW backend failure was suppressed"
+    fi
+    grep -q 'injected UFW backend failure' "${failure_log}" || \
+        fail "tagged play failed without surfacing the injected backend error"
+    run_remote_authenticated "sysadmin@127.0.0.1" "${QEMU_CLEANUP_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+        'sudo touch /var/tmp/task-5-ufw-release'
+    wait "${UFW_GUARD_PID}"
+    UFW_GUARD_PID=""
+    run_remote_authenticated "sysadmin@127.0.0.1" "${QEMU_CLEANUP_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+        'sudo ufw version >/dev/null'
+    pass "injected UFW backend failure returned nonzero and trap restored ufw"
+}
+
+cat >"${TMP_DIR}/hardening.yml" <<EOF
+---
+- name: Exercise SSH and UFW hardening
+  hosts: vps
+  gather_facts: true
+  become: true
+  vars_files:
+    - ${ROOT_DIR}/group_vars/all/vars.yml
+    - ${ROOT_DIR}/group_vars/all/vault_ssh.yml
+    - ${ROOT_DIR}/group_vars/all/vault_services.yml
+  roles:
+    - role: ${ROOT_DIR}/roles/vps_hardening
+EOF
+
+if [[ "${DO_SSH_ROLLBACK}" == "true" ]]; then
+    run_rollback_probe
+    if [[ "${DO_UFW_BACKEND_FAILURE}" == "true" ]]; then
+        run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+            "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+            'systemctl reboot' >/dev/null 2>&1 || true
+        require_ssh_down "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+            "${TMP_DIR}/id_ed25519" 60
+        require_ssh_ready "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+            "${TMP_DIR}/id_ed25519" 60
+        pass "rollback state rebooted with original authenticated SSH reachable"
+    fi
+    write_direct_inventory
+    write_group_vars "${E2E_SSH_PORT}"
+fi
+
+if [[ "${DO_SSH_CUTOVER}" == "true" || "${DO_UFW_BACKEND_FAILURE}" == "true" ]]; then
+    run_successful_cutover
+elif [[ "${DO_SSH_ROLLBACK}" != "true" ]]; then
+    echo "[E2E] Running the complete playbook in remote mode..."
+    if ! run_playbook "${TMP_DIR}/full-ansible.log" "${ROOT_DIR}/site.yml"; then
+        fail "remote-mode playbook failed"
+    fi
+fi
+
+if [[ "${DO_UFW_BACKEND_FAILURE}" == "true" ]]; then
+    run_ufw_backend_probes
+fi
+
+if [[ "${DO_SSH_CUTOVER}" != "true" && "${DO_SSH_ROLLBACK}" != "true" && \
+      "${DO_UFW_BACKEND_FAILURE}" != "true" ]]; then
+    echo "[E2E] Verifying the deployed stack on the hardened SSH port ${QEMU_ADMIN_PORT}"
+    export E2E_SSH_PORT E2E_WG_PORT
+    verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
+fi
 
 if [[ "${DO_REBOOT}" == "true" ]]; then
     echo "[E2E] Rebooting the VM and re-verifying..."

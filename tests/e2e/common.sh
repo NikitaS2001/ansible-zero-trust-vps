@@ -36,6 +36,81 @@ run_remote_stdin() {
         "${target}" "$@"
 }
 
+record_ssh_host_key() {
+    local host="$1" port="$2" known_hosts="$3"
+    local scan_file
+    scan_file="$(mktemp "${known_hosts}.scan.XXXXXX")"
+    chmod 0600 "${scan_file}"
+    if ! ssh-keyscan -T 5 -p "${port}" -t ed25519 "${host}" \
+        >"${scan_file}" 2>/dev/null; then
+        rm -f "${scan_file}"
+        fail "could not record SSH host key for ${host}:${port}"
+    fi
+    if [[ "$(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' "${scan_file}" | wc -l)" -ne 1 ]]; then
+        rm -f "${scan_file}"
+        fail "expected exactly one ED25519 host key for ${host}:${port}"
+    fi
+    cat "${scan_file}" >>"${known_hosts}"
+    rm -f "${scan_file}"
+    chmod 0600 "${known_hosts}"
+}
+
+# Authenticated SSH used by cutover/rollback probes. Keep this option vector in
+# lock-step with the production verification contract.
+run_remote_authenticated() {
+    local target="$1" port="$2" key="$3" known_hosts="$4"
+    shift 4
+    ssh -F none -i "${key}" -p "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        -o ConnectTimeout=10 \
+        "${target}" "$@"
+}
+
+open_authenticated_ssh_control() {
+    local target="$1" port="$2" key="$3" known_hosts="$4" control_socket="$5"
+    ssh -F none -i "${key}" -p "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        -o ConnectTimeout=10 \
+        -o ControlMaster=yes -o ControlPath="${control_socket}" \
+        -o ControlPersist=600 -fN "${target}"
+}
+
+run_remote_over_control() {
+    local target="$1" port="$2" key="$3" known_hosts="$4" control_socket="$5"
+    shift 5
+    ssh -F none -i "${key}" -p "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        -o ControlPath="${control_socket}" \
+        "${target}" "$@"
+}
+
+close_authenticated_ssh_control() {
+    local target="$1" port="$2" key="$3" known_hosts="$4" control_socket="$5"
+    ssh -F none -i "${key}" -p "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        -o ControlPath="${control_socket}" -O exit "${target}" >/dev/null
+}
+
+require_authenticated_ssh_closed() {
+    local target="$1" port="$2" key="$3" known_hosts="$4"
+    if run_remote_authenticated "${target}" "${port}" "${key}" "${known_hosts}" \
+        'true' >/dev/null 2>&1; then
+        fail "authenticated SSH unexpectedly remained open on ${target}:${port}"
+    fi
+}
+
 require_ssh_down() {
     local target="$1"; local port="$2"; local key="$3"; local retries="${4:-30}"
     local i=0
