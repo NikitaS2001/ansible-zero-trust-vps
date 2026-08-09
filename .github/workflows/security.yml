@@ -54,6 +54,8 @@ jobs:
             scripts/verify-ssot.sh \
             scripts/release-contract.sh \
             scripts/synthetic-check.sh \
+            scripts/backup.sh \
+            scripts/restore.sh \
             tests/e2e/common.sh \
             tests/e2e/qemu-install.sh \
             tests/e2e/qemu-remote-install.sh \

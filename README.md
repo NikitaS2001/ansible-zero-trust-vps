@@ -213,6 +213,36 @@ mDNS) and unreserved suffixes such as `.lan` or `.home`.
 
 ## Operations and Recovery
 
+### Backup and Restore
+
+`scripts/backup.sh` snapshots the stack on the VPS: it stops the containers,
+tars the project runtime state (`volumes/*`, `docker-compose.yml`,
+`docker-compose.override.yml`, `Caddyfile`, `Caddyfile.d`), restarts the
+containers, and rotates old archives (keep last 14 by default). Restore with
+`scripts/restore.sh`, then re-run the playbook and
+`scripts/synthetic-check.sh` to verify.
+
+Encryption: export `AGE_KEY` (an age public key) before backup to get an
+age-encrypted archive:
+
+```bash
+age-keygen -o ~/.config/zt/age-identity.txt      # one-time; keep this safe
+AGE_KEY="$(age-keygen -y ~/.config/zt/age-identity.txt)" sudo scripts/backup.sh
+# restore:
+sudo scripts/restore.sh /opt/zt-backups/zt-....tar.gz.age ~/.config/zt/age-identity.txt
+```
+
+Schedule it nightly (cron):
+
+```
+0 3 * * * root AGE_KEY=age1... /opt/zero-trust-vps-installer/repo/scripts/backup.sh >> /var/log/zt-backup.log 2>&1
+```
+
+Copy the archive off-host (rsync/scp/restic to a separate location) — an
+on-host backup does not survive disk loss. For very large volumes, prefer
+restic over tar. The backup/restore round-trip is exercised by
+`tests/e2e/restore-drill.sh`.
+
 ### SSH Lockout Recovery
 
 Before changing SSH, open the hardened SSH port in the provider firewall and
