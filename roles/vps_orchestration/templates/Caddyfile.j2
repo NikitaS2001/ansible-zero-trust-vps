@@ -5,7 +5,16 @@
 
 {{ wg_internal_domain }} {
     tls internal
-    reverse_proxy wg-easy:51821
+
+    @cve_2026_63089 path /cnf /cnf/ /cnf/*
+    handle @cve_2026_63089 {
+        header X-Zero-Trust-Policy "cve-2026-63089"
+        respond 404
+    }
+
+    handle {
+        reverse_proxy wg-easy:51821
+    }
 }
 
 {{ adguard_internal_domain }} {

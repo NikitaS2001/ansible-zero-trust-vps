@@ -16,6 +16,9 @@ WG_ENDPOINT="${WG_ENDPOINT:-127.0.0.1:51820}"
 ROOT_CA="${ROOT_CA:-/opt/zero-trust-vps-installer/repo/fetched_certs/localhost/root.crt}"
 CLIENT_NAME="e2e-client-$(date +%s)"
 UI_PORT="${UI_PORT:-51821}"
+WG_DOMAIN="${WG_INTERNAL_DOMAIN:-wg.internal}"
+CADDY_IP="${CADDY_IP:-10.66.0.3}"
+API_CLIENT_ID=""
 
 command -v curl >/dev/null || { echo "[FAIL] curl is required" >&2; exit 1; }
 command -v jq >/dev/null || { echo "[FAIL] jq is required" >&2; exit 1; }
@@ -24,14 +27,143 @@ command -v wg-quick >/dev/null || { echo "[FAIL] wireguard-tools are required" >
 
 cleanup() {
     sudo wg-quick down /tmp/zt-e2e.conf >/dev/null 2>&1 || true
+    if [[ -n "${API_CLIENT_ID}" ]]; then
+        curl -fsS -u "${WG_USER}:${WG_PASSWORD}" -X DELETE \
+            "http://127.0.0.1:${UI_PORT}/api/client/${API_CLIENT_ID}" >/dev/null 2>&1 || true
+    fi
     if [[ -n "${CLIENT_ID:-}" ]]; then
         # remove the test client from the wg-easy API so no peer is left behind
         curl -fsS -u "${WG_USER}:${WG_PASSWORD}" -X DELETE \
             "http://127.0.0.1:${UI_PORT}/api/client/${CLIENT_ID}" >/dev/null 2>&1 || true
     fi
-    rm -f /tmp/zt-e2e.conf /tmp/zt-create.json
+    rm -f /tmp/zt-e2e.conf /tmp/zt-create.json /tmp/zt-api-create.json \
+        /tmp/zt-api-list.json /tmp/zt-caddy-body /tmp/zt-caddy-headers \
+        /tmp/zt-session-cookie /tmp/zt-session-login.json
 }
 trap cleanup EXIT
+
+assert_no_policy_header() {
+    local response_headers="$1"
+    if grep -Eiq '^X-Zero-Trust-Policy:' "${response_headers}"; then
+        echo "[FAIL] normal wg-easy route carried the CVE policy header" >&2
+        exit 1
+    fi
+}
+
+caddy_request() {
+    local request_path="$1"
+    shift
+    curl -sS --resolve "${WG_DOMAIN}:443:${CADDY_IP}" --cacert "${ROOT_CA}" \
+        -D /tmp/zt-caddy-headers -o /tmp/zt-caddy-body -w '%{http_code}' \
+        "$@" "https://${WG_DOMAIN}${request_path}"
+}
+
+verify_normal_caddy_api() {
+    local status
+
+    status="$(caddy_request '/')"
+    [[ "${status}" == "200" || "${status}" == "302" ]] || {
+        echo "[FAIL] wg-easy root returned ${status} through Caddy" >&2
+        exit 1
+    }
+    assert_no_policy_header /tmp/zt-caddy-headers
+
+    jq -n --arg username "${WG_USER}" --arg password "${WG_PASSWORD}" \
+        '{username: $username, password: $password, remember: false}' \
+        >/tmp/zt-session-login.json
+    chmod 0600 /tmp/zt-session-login.json
+    status="$(caddy_request '/api/session' -X POST -H 'Content-Type: application/json' \
+        --data-binary @/tmp/zt-session-login.json -c /tmp/zt-session-cookie)"
+    [[ "${status}" == "200" ]] || {
+        echo "[FAIL] wg-easy login returned ${status} through Caddy" >&2
+        exit 1
+    }
+    jq -e '.status == "success"' /tmp/zt-caddy-body >/dev/null || {
+        echo "[FAIL] wg-easy login response was unsuccessful through Caddy" >&2
+        exit 1
+    }
+    assert_no_policy_header /tmp/zt-caddy-headers
+    chmod 0600 /tmp/zt-session-cookie
+
+    status="$(caddy_request '/api/client' -X POST -H 'Content-Type: application/json' \
+        -b /tmp/zt-session-cookie \
+        --data "{\"name\":\"${CLIENT_NAME}-api\",\"expiresAt\":null}")"
+    [[ "${status}" == "200" ]] || {
+        echo "[FAIL] authenticated client create returned ${status} through Caddy" >&2
+        exit 1
+    }
+    assert_no_policy_header /tmp/zt-caddy-headers
+    cp /tmp/zt-caddy-body /tmp/zt-api-create.json
+    API_CLIENT_ID="$(jq -r '.clientId' /tmp/zt-api-create.json)"
+    [[ -n "${API_CLIENT_ID}" && "${API_CLIENT_ID}" != "null" ]] || {
+        echo "[FAIL] authenticated client create returned no client id" >&2
+        exit 1
+    }
+
+    status="$(caddy_request '/api/client' -b /tmp/zt-session-cookie)"
+    [[ "${status}" == "200" ]] || {
+        echo "[FAIL] authenticated client list returned ${status} through Caddy" >&2
+        exit 1
+    }
+    assert_no_policy_header /tmp/zt-caddy-headers
+    cp /tmp/zt-caddy-body /tmp/zt-api-list.json
+    jq -e --arg id "${API_CLIENT_ID}" \
+        '[.. | objects | .id? | tostring] | index($id) != null' \
+        /tmp/zt-api-list.json >/dev/null || {
+        echo "[FAIL] authenticated client list omitted the created client" >&2
+        exit 1
+    }
+
+    status="$(caddy_request "/api/client/${API_CLIENT_ID}" -X DELETE \
+        -b /tmp/zt-session-cookie)"
+    [[ "${status}" == "200" ]] || {
+        echo "[FAIL] authenticated client delete returned ${status} through Caddy" >&2
+        exit 1
+    }
+    assert_no_policy_header /tmp/zt-caddy-headers
+
+    status="$(caddy_request '/api/client' -b /tmp/zt-session-cookie)"
+    [[ "${status}" == "200" ]] || {
+        echo "[FAIL] authenticated cleanup list returned ${status} through Caddy" >&2
+        exit 1
+    }
+    jq -e --arg id "${API_CLIENT_ID}" \
+        '[.. | objects | .id? | tostring] | index($id) == null' \
+        /tmp/zt-caddy-body >/dev/null || {
+        echo "[FAIL] authenticated client cleanup was incomplete" >&2
+        exit 1
+    }
+    API_CLIENT_ID=""
+    echo "[PASS] root, login, and authenticated client create/list/delete traversed Caddy"
+}
+
+verify_cve_route_policy() {
+    local policy_path policy_value status
+
+    for policy_path in /cnf /cnf/ /cnf/untrusted-token; do
+        status="$(caddy_request "${policy_path}")"
+        [[ "${status}" == "404" ]] || {
+            echo "[FAIL] ${policy_path} returned ${status}, expected CVE policy 404" >&2
+            exit 1
+        }
+        policy_value="$(awk -F ': *' \
+            'tolower($1) == "x-zero-trust-policy" {gsub(/\r$/, "", $2); print $2}' \
+            /tmp/zt-caddy-headers)"
+        [[ "${policy_value}" == "cve-2026-63089" ]] || {
+            echo "[FAIL] ${policy_path} lacked the exact CVE policy header" >&2
+            exit 1
+        }
+        echo "[PASS] ${policy_path} blocked by the CVE route policy"
+    done
+
+    status="$(caddy_request '/cnfx')"
+    [[ "${status}" == "302" ]] || {
+        echo "[FAIL] near-miss /cnfx returned ${status}, expected upstream 302" >&2
+        exit 1
+    }
+    assert_no_policy_header /tmp/zt-caddy-headers
+    echo "[PASS] near-miss /cnfx retained normal upstream behavior"
+}
 
 # 1. create a client through the wg-easy API (HTTP Basic auth)
 create_ok=false
@@ -73,6 +205,9 @@ if ! curl -fsS --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:10.66.0.3" \
     exit 1
 fi
 echo "[PASS] https://${WG_INTERNAL_DOMAIN:-wg.internal} reachable (trusted root CA)"
+
+verify_normal_caddy_api
+verify_cve_route_policy
 
 if ! curl -fsS --resolve "${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}:443:10.66.0.3" \
     --cacert "${ROOT_CA}" "https://${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}/" -o /dev/null; then
