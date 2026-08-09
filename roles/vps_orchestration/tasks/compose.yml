@@ -1,13 +1,52 @@
 ---
-- name: "Compose | Detect | Check whether wg-easy was already initialized"
+- name: "Compose | Detect | Check whether the wg-easy database exists"
   stat:
-    # wg-easy v15 keeps the authoritative state in SQLite, not in wg0.conf
-    # (which is derived from the database on start). Using the DB file as the
-    # sentinel matches the actual v15 lifecycle. Note: the DB may exist while
-    # the setup wizard is still pending (setup_step != 0); with the automated
-    # INIT_* flow setup always completes, so the file is a safe gate here.
     path: "{{ project_root }}/volumes/wg-easy/wg-easy.db"
   register: vps_orchestration_wg_easy_db
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Detect | Default wg-easy setup to incomplete"
+  set_fact:
+    wg_easy_initialized: false
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Detect | Read authoritative wg-easy setup state"
+  command:
+    argv:
+      - python3
+      - -c
+      - |
+        import pathlib
+        import sqlite3
+        import sys
+
+        database_uri = pathlib.Path(sys.argv[1]).resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(database_uri, uri=True) as connection:
+            rows = connection.execute(
+                "SELECT setup_step FROM general_table"
+            ).fetchall()
+        if len(rows) != 1 or type(rows[0][0]) is not int:
+            raise RuntimeError("unexpected wg-easy setup state")
+        print("complete" if rows[0][0] == 0 else "incomplete")
+      - "{{ project_root }}/volumes/wg-easy/wg-easy.db"
+  register: vps_orchestration_wg_easy_setup_state
+  changed_when: false
+  when: vps_orchestration_wg_easy_db.stat.exists
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Detect | Record authoritative wg-easy setup state"
+  set_fact:
+    wg_easy_initialized: >-
+      {{ vps_orchestration_wg_easy_setup_state.stdout == 'complete' }}
+  when: vps_orchestration_wg_easy_db.stat.exists
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Detect | Select automated wg-easy bootstrap"
+  set_fact:
+    vps_orchestration_wg_easy_bootstrap_required: >-
+      {{ (not wg_easy_initialized | bool)
+         and (wg_easy_admin_password | length > 0) }}
+  no_log: true
   tags: [compose]
 
 - name: "Compose | Deploy | Write docker-compose.yml"
@@ -17,10 +56,13 @@
     # No backup here: on a first deploy this render contains the panel
     # password in the INIT_* block and a .bak would preserve the secret.
     backup: no
-    mode: "{{ '0600' if not vps_orchestration_wg_easy_db.stat.exists else '0644' }}"
+    mode: >-
+      {{ '0600' if vps_orchestration_wg_easy_bootstrap_required | bool
+         else '0644' }}
   no_log: true
   vars:
-    wg_easy_initialized: "{{ vps_orchestration_wg_easy_db.stat.exists | bool }}"
+    wg_easy_include_init: >-
+      {{ vps_orchestration_wg_easy_bootstrap_required | bool }}
   tags: [compose]
 
 - name: "Compose | Deploy | Write Caddyfile"
@@ -36,72 +78,174 @@
     project_src: "{{ project_root }}"
     state: present
     recreate: auto
+  no_log: "{{ vps_orchestration_wg_easy_bootstrap_required | bool }}"
   tags: [compose]
 
-# On the first deploy the Compose file above contained the wg-easy panel
-# password in the INIT_* block. wg-easy consumed it during its first start,
-# so re-render the file without the block in the same run instead of leaving
-# the plaintext on disk until the next playbook invocation. No backup here:
-# a backup of this render would preserve the panel password.
-- name: "Compose | Re-secure | Remove the INIT_* block from the Compose file"
-  template:
-    src: docker-compose.yml.j2
-    dest: "{{ project_root }}/docker-compose.yml"
-    mode: '0644'
-  no_log: true
-  vars:
-    wg_easy_initialized: true
-  when: not vps_orchestration_wg_easy_db.stat.exists
+- name: "Compose | Bootstrap | Complete durable wg-easy setup"
   tags: [compose]
+  block:
+    - name: "Compose | Bootstrap | Authenticate initial wg-easy setup"
+      uri:
+        url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/api/session"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ wg_easy_admin_user }}"
+          password: "{{ wg_easy_admin_password }}"
+          remember: false
+        return_content: true
+        status_code: 200
+      register: vps_orchestration_wg_easy_initial_login
+      retries: 18
+      delay: 5
+      until:
+        - vps_orchestration_wg_easy_initial_login.status == 200
+        - vps_orchestration_wg_easy_initial_login.json.status == 'success'
+      no_log: true
+      when: vps_orchestration_wg_easy_bootstrap_required | bool
 
-# wg-easy v15 consumes INIT_* during its first start, but the values stay in
-# the running container's Config.Env until the container is recreated. Recreate
-# the stack right after the re-secure render so the panel password does not
-# remain inspectable by any local Docker/root actor (P0-3). This runs only on
-# the first deploy; subsequent runs see the DB and skip it.
-- name: "Compose | Reconcile | Recreate containers without the INIT_* block"
-  community.docker.docker_compose_v2:
-    project_src: "{{ project_root }}"
-    state: present
-    recreate: always
-  when: not vps_orchestration_wg_easy_db.stat.exists
-  tags: [compose]
+    - name: "Compose | Re-secure | Render Compose without INIT variables"
+      template:
+        src: docker-compose.yml.j2
+        dest: "{{ project_root }}/docker-compose.yml"
+        backup: no
+        mode: '0644'
+      vars:
+        wg_easy_include_init: false
+      no_log: true
+      when: vps_orchestration_wg_easy_bootstrap_required | bool
 
-# Heal already-deployed hosts (upgraded from an earlier version whose sentinel
-# was wg0.conf and which never ran the second reconciliation): if the running
-# wg-easy container still carries INIT_PASSWORD in its environment, recreate it
-# from the password-free Compose file.
-- name: "Compose | Reconcile | Detect INIT_PASSWORD in the running wg-easy env"
-  command: docker inspect wg-easy --format "{{ '{{ .Config.Env }}' }}"
-  register: vps_orchestration_wg_env
-  changed_when: false
-  failed_when: false
-  tags: [compose]
+    - name: "Compose | Re-secure | Recreate containers without INIT variables"
+      community.docker.docker_compose_v2:
+        project_src: "{{ project_root }}"
+        state: present
+        recreate: always
+      no_log: true
+      when: vps_orchestration_wg_easy_bootstrap_required | bool
 
-- name: "Compose | Reconcile | Recreate wg-easy without INIT_PASSWORD"
-  community.docker.docker_compose_v2:
-    project_src: "{{ project_root }}"
-    state: present
-    recreate: always
-  when: "'INIT_PASSWORD' in (vps_orchestration_wg_env.stdout | default(''))"
-  tags: [compose]
+    - name: "Compose | Bootstrap | Authenticate re-secured wg-easy setup"
+      uri:
+        url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/api/session"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ wg_easy_admin_user }}"
+          password: "{{ wg_easy_admin_password }}"
+          remember: false
+        return_content: true
+        status_code: 200
+      register: vps_orchestration_wg_easy_resecured_login
+      retries: 18
+      delay: 5
+      until:
+        - vps_orchestration_wg_easy_resecured_login.status == 200
+        - vps_orchestration_wg_easy_resecured_login.json.status == 'success'
+      no_log: true
+      when: vps_orchestration_wg_easy_bootstrap_required | bool
 
-# Legacy cleanup: earlier versions rendered the first Compose file with
-# backup: yes, so an interrupted first deploy left docker-compose.yml.bak*
-# files that contain the INIT_PASSWORD block. New renders never create them,
-# but remove any that survived an upgrade.
-- name: "Compose | Cleanup | Find legacy password-bearing Compose backups"
-  find:
-    paths: "{{ project_root }}"
-    patterns: "docker-compose.yml.bak*"
-    file_type: file
-  register: vps_orchestration_legacy_baks
-  tags: [compose]
+  rescue:
+    - name: "Compose | Rescue | Render Compose without INIT variables"
+      template:
+        src: docker-compose.yml.j2
+        dest: "{{ project_root }}/docker-compose.yml"
+        backup: no
+        mode: '0644'
+      vars:
+        wg_easy_include_init: false
+      no_log: true
 
-- name: "Compose | Cleanup | Delete legacy Compose backups"
-  file:
-    path: "{{ item.path }}"
-    state: absent
-  loop: "{{ vps_orchestration_legacy_baks.files }}"
-  no_log: true
-  tags: [compose]
+    - name: "Compose | Rescue | Inspect scrubbed persistent Compose"
+      command:
+        argv:
+          - grep
+          - -Eq
+          - '^[[:space:]]+INIT_[A-Z_]+:'
+          - "{{ project_root }}/docker-compose.yml"
+      register: vps_orchestration_wg_easy_rescue_compose_init
+      changed_when: false
+      failed_when: >-
+        vps_orchestration_wg_easy_rescue_compose_init.rc not in [0, 1]
+      no_log: true
+
+    - name: "Compose | Rescue | Fail closed when persistent INIT variables remain"
+      fail:
+        msg: "wg-easy bootstrap failed and persistent credential cleanup could not be verified"
+      when: vps_orchestration_wg_easy_rescue_compose_init.rc == 0
+      no_log: true
+
+    - name: "Compose | Rescue | Remove potentially credential-bearing wg-easy"
+      command:
+        argv: [docker, rm, --force, wg-easy]
+      changed_when: true
+      failed_when: false
+      no_log: true
+
+    - name: "Compose | Rescue | Recreate from secret-free Compose"
+      community.docker.docker_compose_v2:
+        project_src: "{{ project_root }}"
+        state: present
+        recreate: always
+      register: vps_orchestration_wg_easy_rescue_recreate
+      failed_when: false
+      no_log: true
+
+    - name: "Compose | Rescue | Inspect scrubbed wg-easy environment"
+      command:
+        argv:
+          - docker
+          - inspect
+          - wg-easy
+          - --format
+          - "{{ '{{ range .Config.Env }}{{ println . }}{{ end }}' }}"
+      register: vps_orchestration_wg_easy_rescue_env
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: "Compose | Rescue | Record credential scrub result"
+      set_fact:
+        vps_orchestration_wg_easy_rescue_secret_free: >-
+          {{ vps_orchestration_wg_easy_rescue_env.rc != 0
+             or (vps_orchestration_wg_easy_rescue_env.stdout_lines
+                 | select('match', '^INIT_')
+                 | reject('equalto', 'INIT_ENABLED=false')
+                 | list
+                 | length == 0) }}
+      no_log: true
+
+    - name: "Compose | Rescue | Fail closed when INIT_PASSWORD remains"
+      fail:
+        msg: "wg-easy bootstrap failed and password cleanup could not be verified"
+      when:
+        - vps_orchestration_wg_easy_rescue_env.rc == 0
+        - >-
+          vps_orchestration_wg_easy_rescue_env.stdout_lines
+          | select('match', '^INIT_PASSWORD=')
+          | list
+          | length > 0
+      no_log: true
+
+    - name: "Compose | Rescue | Fail closed when unsafe INIT variables remain"
+      fail:
+        msg: "wg-easy bootstrap failed and credential cleanup could not be verified"
+      when: not vps_orchestration_wg_easy_rescue_secret_free | bool
+      no_log: true
+
+    - name: "Compose | Rescue | Report redacted bootstrap failure"
+      fail:
+        msg: "wg-easy automated bootstrap failed; secret state was scrubbed and setup remains retryable"
+
+  always:
+    - name: "Compose | Cleanup | Find legacy Compose backups"
+      find:
+        paths: "{{ project_root }}"
+        patterns: "docker-compose.yml.bak*"
+        file_type: file
+      register: vps_orchestration_legacy_baks
+
+    - name: "Compose | Cleanup | Delete legacy Compose backups"
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ vps_orchestration_legacy_baks.files }}"
+      no_log: true

@@ -46,6 +46,7 @@
   register: vps_orchestration_wg_env_check
   changed_when: false
   failed_when: "'INIT_PASSWORD' in vps_orchestration_wg_env_check.stdout"
+  no_log: true
   tags: [verify]
 
 - name: "Verify | WG | wg-easy panel is bound to localhost only"
