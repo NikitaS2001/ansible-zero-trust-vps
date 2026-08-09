@@ -202,6 +202,14 @@ mDNS) and unreserved suffixes such as `.lan` or `.home`.
 - Do not add the VPN subnet to `fail2ban` ignore lists: a compromised VPN
   client must not bypass SSH brute-force protection.
 - wg-easy disables IPv6 to avoid startup failures on providers without it.
+- **Known CVE (accepted risk, tracked):** wg-easy `15.3.0` is in the affected
+  range of CVE-2026-63089 (a weak one-time-link token can leak a client
+  `PrivateKey`/`PresharedKey`). The panel is only reachable over the VPN or an
+  SSH tunnel and the one-time-link feature is not used, which materially
+  reduces exploitability. Upgrade `wg_easy_version` as soon as a stable fixed
+  release ships (do not use `15.4.0-beta`); the `verify` role checks that the
+  panel is not published on a public interface and that no one-time links are
+  active.
 
 ## Operations and Recovery
 

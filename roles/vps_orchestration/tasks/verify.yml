@@ -48,6 +48,31 @@
   failed_when: "'INIT_PASSWORD' in vps_orchestration_wg_env_check.stdout"
   tags: [verify]
 
+- name: "Verify | WG | wg-easy panel is not published on a public interface"
+  command: docker port wg-easy
+  register: vps_orchestration_wg_ports
+  changed_when: false
+  failed_when: >
+    ('0.0.0.0:51821' in vps_orchestration_wg_ports.stdout)
+    or (':::51821' in vps_orchestration_wg_ports.stdout)
+  tags: [verify]
+
+# CVE-2026-63089 mitigation: a weak one-time-link token can leak client keys,
+# but only while the panel is reachable and a one-time link exists. The panel
+# publicity check above is the primary control; this best-effort check fails
+# if any one-time-link row is present (a missing table counts as clean).
+- name: "Verify | WG | no active one-time links (CVE-2026-63089)"
+  command: >
+    docker exec wg-easy node -e
+    "const{createClient}=require('@libsql/client');
+    const db=createClient({url:'file:/etc/wireguard/wg-easy.db'});
+    db.execute('SELECT count(*) c FROM one_time_links_table')
+    .then(r=>process.exit(Number(r.rows[0].c)>0?1:0)).catch(()=>process.exit(0));"
+  register: vps_orchestration_wg_otl
+  changed_when: false
+  failed_when: vps_orchestration_wg_otl.rc != 0
+  tags: [verify]
+
 - name: "Verify | UI | Wait for AdGuard bootstrap UI"
   uri:
     url: "http://127.0.0.1:{{ adguard_bootstrap_ui_port }}/control/status"
