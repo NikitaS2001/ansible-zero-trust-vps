@@ -7,6 +7,10 @@ wg_port: 51820
 admin_user: sysadmin
 admin_group: sudo
 admin_shell: /bin/bash
+# When true, authorized_key runs with exclusive: true so keys not managed by
+# the role are removed from the admin account (rotation revokes old keys).
+# Set to false to allow manually-added keys to coexist.
+vps_hardening_authorized_keys_exclusive: true
 admin_password_hash: ""
 vault_admin_ssh_pubkey: ""
 

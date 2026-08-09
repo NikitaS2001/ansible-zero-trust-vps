@@ -90,7 +90,7 @@ flowchart LR
 | --- | --- | --- |
 | wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` | WireGuard UDP; panel on localhost |
 | AdGuard Home | `adguard/adguardhome:v0.107.78` | localhost admin panel |
-| Caddy | `caddy:2.11.3` | VPN-only container TCP/443; not published on host |
+| Caddy | `caddy:2.11.4` | VPN-only container TCP/443; not published on host |
 
 ## Requirements
 

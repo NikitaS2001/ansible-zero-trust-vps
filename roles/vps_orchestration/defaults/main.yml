@@ -35,7 +35,7 @@ wg_allowed_ips:
 adguard_version: "v0.107.78"
 
 # Caddy
-caddy_version: "2.11.3"
+caddy_version: "2.11.4"
 
 # Internal domains. The suffix is used for the AdGuard wildcard rewrite
 # (*.<suffix> -> Caddy) and for the derived default domains below (both can be

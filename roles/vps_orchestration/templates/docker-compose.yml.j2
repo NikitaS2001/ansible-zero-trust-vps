@@ -73,6 +73,12 @@ services:
     volumes:
       - "{{ project_root }}/volumes/adguard/work:/opt/adguardhome/work"
       - "{{ project_root }}/volumes/adguard/conf:/opt/adguardhome/conf"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/control/status >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   caddy:
     image: caddy:{{ caddy_version }}
@@ -86,3 +92,10 @@ services:
       - "{{ project_root }}/volumes/caddy/config:/config"
       - "{{ project_root }}/Caddyfile:/etc/caddy/Caddyfile:ro"
       - "{{ project_root }}/Caddyfile.d:/etc/caddy/Caddyfile.d:ro"
+    healthcheck:
+      # Caddy's local admin endpoint is enabled by default on 127.0.0.1:2019.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

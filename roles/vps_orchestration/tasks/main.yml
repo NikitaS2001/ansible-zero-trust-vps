@@ -19,6 +19,32 @@
     - vps_orchestration_ipv6_probe.rc != 0
   tags: [compose]
 
+- name: "VPS Orchestration | Preflight | wg-easy panel password meets v15 minimum"
+  assert:
+    that: wg_easy_admin_password | length == 0 or wg_easy_admin_password | length >= 12
+    msg: >
+      wg_easy_admin_password must be empty (manual wizard setup) or at least
+      12 characters; wg-easy v15 rejects shorter passwords at login.
+  tags: [compose]
+
+- name: "VPS Orchestration | Preflight | Internal domains match the configured suffix"
+  fail:
+    msg: >
+      {{ wg_internal_domain }} / {{ adguard_internal_domain }} must end with
+      .{{ internal_domain_suffix }} so the AdGuard wildcard rewrite covers them.
+  when: not wg_internal_domain.endswith('.' ~ internal_domain_suffix) \
+    or not adguard_internal_domain.endswith('.' ~ internal_domain_suffix)
+  tags: [compose]
+
+- name: "VPS Orchestration | Preflight | Docker and WireGuard subnets do not overlap"
+  fail:
+    msg: >
+      docker_network_subnet ({{ docker_network_subnet }}) must not overlap the
+      WireGuard subnet ({{ wg_vpn_subnet }}).
+  when: docker_network_subnet.split('.')[0] == wg_vpn_subnet.split('.')[0] \
+    and docker_network_subnet.split('.')[1] == wg_vpn_subnet.split('.')[1]
+  tags: [compose]
+
 - name: "VPS Orchestration | Main | Include Docker setup"
   include_tasks: docker.yml
   tags: [docker]

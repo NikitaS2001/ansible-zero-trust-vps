@@ -84,6 +84,22 @@
           The previous sshd_config was restored when a backup was available.
       tags: [ssh]
 
+# Cutover succeeded: drop the temporary allow rule for the old connection
+# port that ufw.yml added, so the firewall converges instead of keeping an
+# orphaned open port. On rollback (the rescue above) this task is skipped and
+# the old-port rule stays, preserving access.
+- name: "SSH | Cleanup | Remove temporary old-port UFW allow after cutover"
+  community.general.ufw:
+    rule: allow
+    port: "{{ ansible_port | int }}"
+    proto: tcp
+    delete: yes
+  when:
+    - ansible_connection | default("") != "local"
+    - ansible_port is defined
+    - (ansible_port | int) != (ssh_port | int)
+  tags: [ssh]
+
 - name: "SSH | Update | Set ansible connection for remainder"  # noqa: var-naming[no-role-prefix]
   set_fact:
     ansible_port: "{{ ssh_port }}"

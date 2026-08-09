@@ -545,6 +545,10 @@ prepare_extra_vars_file() {
     write_extra_var wg_public_host "${WG_HOST}"
     write_extra_var vault_admin_ssh_pubkey "${SSH_PUBKEY}"
 
+    # The secrets were just written to the 0600 extra-vars file; drop them from
+    # the environment so child processes (ansible-pull, git) cannot see them.
+    unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
+
     if [[ -n "${SSH_PORT}" ]]; then
         write_extra_var ssh_port "${SSH_PORT}"
     fi

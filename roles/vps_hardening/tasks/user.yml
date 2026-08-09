@@ -42,7 +42,9 @@
   user:
     name: "{{ admin_user }}"
     groups: "{{ admin_group }},docker"
-    append: yes
+    # append: no makes group membership convergent: a removed privileged group
+    # is dropped on the next run instead of lingering.
+    append: no
     state: present
     shell: "{{ admin_shell }}"
     password: "{{ vps_hardening_admin_password_hash }}"
@@ -56,6 +58,9 @@
     user: "{{ admin_user }}"
     key: "{{ vault_admin_ssh_pubkey }}"
     state: present
+    # exclusive removes keys that are no longer managed by the role, so key
+    # rotation revokes the old key instead of appending it.
+    exclusive: "{{ vps_hardening_authorized_keys_exclusive | bool }}"
   no_log: true
   tags: [user]
 
