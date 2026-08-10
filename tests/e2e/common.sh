@@ -162,12 +162,16 @@ verify_deployment() {
     grep -q "${wg_port}/udp" <<<"${out}" || fail "WireGuard port ${wg_port}/udp missing from UFW"
     pass "UFW rules"
 
-    echo "[check] wg-easy, adguard and caddy containers are running"
-    out="$(run_remote "${target}" "${port}" "${key}" 'sudo docker ps --format "{{.Names}} {{.Status}}"')"
-    for c in wg-easy adguard caddy; do
-        grep -q "^${c} " <<<"${out}" || fail "container ${c} is not running"
+    echo "[check] container running state and optional health are ready"
+    out="$(run_remote "${target}" "${port}" "${key}" \
+        'sudo docker inspect --format "{{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" wg-easy adguard caddy')"
+    grep -Eq '^/wg-easy running (none|healthy)$' <<<"${out}" || \
+        fail "wg-easy is not running and ready: ${out}"
+    for c in adguard caddy; do
+        grep -q "^/${c} running healthy$" <<<"${out}" || \
+            fail "container ${c} is not running and healthy: ${out}"
     done
-    pass "containers up"
+    pass "container state and health"
 
     echo "[check] WireGuard interface is up inside wg-easy"
     run_remote "${target}" "${port}" "${key}" 'sudo docker exec wg-easy wg show' >/dev/null

@@ -232,4 +232,13 @@ echo | openssl s_client -connect 10.66.0.3:443 -servername "${WG_INTERNAL_DOMAIN
 echo "WireGuard client interface (handshake / transfer):"
 wg show | grep -E 'interface:|handshake:|transfer:' || true
 
+latest_handshake="$(wg show all latest-handshakes | awk '{print $NF}' | sort -rn | head -1)"
+handshake_now="$(date +%s)"
+if [[ ! "${latest_handshake}" =~ ^[0-9]+$ ]] || \
+    ((latest_handshake <= 0 || latest_handshake > handshake_now || handshake_now - latest_handshake > 180)); then
+    echo "[FAIL] WireGuard client has no handshake in the last 180 seconds" >&2
+    exit 1
+fi
+echo "[PASS] WireGuard client has a recent handshake"
+
 echo "[PASS] in-guest WireGuard client E2E succeeded"

@@ -10,19 +10,32 @@ set -euo pipefail
 
 WG_INTERNAL_DOMAIN="${WG_INTERNAL_DOMAIN:-wg.internal}"
 ADGUARD_INTERNAL_DOMAIN="${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}"
-CADDY_IP="$(docker inspect -f '{{.NetworkSettings.Networks.vpn_net.IPAddress}}' caddy 2>/dev/null || true)"
+CADDY_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' caddy 2>/dev/null || true)"
 
 fail() { echo "[FAIL] $*" >&2; exit 1; }
 
 echo "== containers =="
 for c in wg-easy adguard caddy; do
-    state="$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || echo missing)"
-    case "${state}" in
-        healthy) echo "[OK] ${c} healthy" ;;
-        "")      echo "[OK] ${c} up (no healthcheck configured)" ;;
-        *)       fail "container ${c} is ${state}" ;;
-    esac
+    status="$(docker inspect -f '{{.State.Status}}' "$c" 2>/dev/null || echo missing)"
+    [[ "${status}" == "running" ]] || fail "container ${c} status is ${status}"
+
+    health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$c" 2>/dev/null || echo missing)"
+    if [[ "${c}" == "wg-easy" && "${health}" == "none" ]]; then
+        echo "[OK] ${c} running (no healthcheck configured)"
+    elif [[ "${health}" == "healthy" ]]; then
+        echo "[OK] ${c} running and healthy"
+    else
+        fail "container ${c} health is ${health}"
+    fi
 done
+
+echo "== wg-easy readiness =="
+wg_session_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+    http://127.0.0.1:51821/api/session 2>/dev/null || true)"
+[[ "${wg_session_status}" == "401" ]] || \
+    fail "wg-easy /api/session returned '${wg_session_status}', expected 401"
+docker exec wg-easy wg show >/dev/null 2>&1 || fail "wg-easy wg show failed"
+echo "[OK] wg-easy authentication and WireGuard interface ready"
 
 echo "== HTTPS via Caddy (internal CA) =="
 [[ -n "${CADDY_IP}" ]] || fail "could not determine the Caddy container IP"

@@ -61,6 +61,8 @@ services:
     ports:
       - "{{ wg_port }}:{{ wg_container_port }}/udp"
       - "127.0.0.1:{{ wg_easy_bootstrap_ui_port }}:51821/tcp"
+    healthcheck:
+      disable: true
     networks:
       vpn_net:
         ipv4_address: "{{ wg_easy_container_ip }}"
@@ -78,7 +80,7 @@ services:
       - "{{ project_root }}/volumes/adguard/work:/opt/adguardhome/work"
       - "{{ project_root }}/volumes/adguard/conf:/opt/adguardhome/conf"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/control/status >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
