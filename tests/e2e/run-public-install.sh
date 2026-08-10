@@ -20,6 +20,9 @@ set -euo pipefail
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${E2E_DIR}/../.." && pwd)"
 cd "${ROOT_DIR}"
+INTERNAL_DOMAIN_SUFFIX="${ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX:-${INTERNAL_DOMAIN_SUFFIX:-internal}}"
+WG_INTERNAL_DOMAIN="${WG_INTERNAL_DOMAIN:-wg.${INTERNAL_DOMAIN_SUFFIX}}"
+ADGUARD_INTERNAL_DOMAIN="${ADGUARD_INTERNAL_DOMAIN:-adguard.${INTERNAL_DOMAIN_SUFFIX}}"
 # shellcheck disable=SC1091
 # shellcheck source=tests/e2e/common.sh
 source "${E2E_DIR}/common.sh"
@@ -62,7 +65,7 @@ ADGUARD_PASS="${ZERO_TRUST_ADGUARD_PASSWORD:-$(openssl rand -hex 12)}"
 WG_PASS="${ZERO_TRUST_WG_PASSWORD:-$(openssl rand -hex 12)}"
 SSH_PORT_IN="${ZERO_TRUST_SSH_PORT:-${E2E_SSH_PORT}}"
 WG_PORT_IN="${ZERO_TRUST_WG_PORT:-${E2E_WG_PORT}}"
-INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-${WG_INTERNAL_DOMAIN:-wg.internal} ${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}}"
+INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-${WG_INTERNAL_DOMAIN} ${ADGUARD_INTERNAL_DOMAIN}}"
 
 echo "[E2E] Waiting for root SSH on ${ROOT_TARGET}:${VPS_SSH_PORT}"
 require_ssh_ready "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" 30
@@ -90,6 +93,7 @@ sudo env \\
     ZERO_TRUST_ADMIN_PASSWORD='${ADMIN_PASS}' \\
     ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}' \\
     ZERO_TRUST_WG_PASSWORD='${WG_PASS}' \\
+    ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX='${INTERNAL_DOMAIN_SUFFIX}' \\
     ZERO_TRUST_INTERNAL_DOMAINS='${INTERNAL_DOMAINS}' \\
     ZERO_TRUST_SSH_PUBKEY='${ADMIN_PUBKEY}' \\
     bash
@@ -117,7 +121,7 @@ if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
         'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils resolvconf >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
     run_remote_stdin "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" \
-        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN:-wg.internal}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}' bash -s" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN}' bash -s" \
         < "${E2E_DIR}/client-in-guest.sh"
 fi
 

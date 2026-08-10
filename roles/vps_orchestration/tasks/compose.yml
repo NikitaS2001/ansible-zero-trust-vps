@@ -65,13 +65,252 @@
       {{ vps_orchestration_wg_easy_bootstrap_required | bool }}
   tags: [compose]
 
-- name: "Compose | Deploy | Write Caddyfile"
-  template:
-    src: Caddyfile.j2
-    dest: "{{ project_root }}/Caddyfile"
-    backup: yes
-    mode: '0644'
+- name: "Compose | Caddy | Prepare, validate, and activate managed config"
   tags: [compose]
+  block:
+    - name: "Compose | Caddy | Create managed candidate beside live file"
+      tempfile:
+        path: "{{ project_root }}"
+        prefix: .Caddyfile.candidate.
+        state: file
+      register: vps_orchestration_caddy_candidate
+
+    - name: "Compose | Caddy | Render managed candidate"
+      template:
+        src: Caddyfile.j2
+        dest: "{{ vps_orchestration_caddy_candidate.path }}"
+        mode: '0600'
+
+    - name: "Compose | Caddy | Inspect managed candidate"
+      stat:
+        path: "{{ vps_orchestration_caddy_candidate.path }}"
+        checksum_algorithm: sha256
+      register: vps_orchestration_caddy_candidate_stat
+
+    - name: "Compose | Caddy | Inspect live managed file"
+      stat:
+        path: "{{ project_root }}/Caddyfile"
+        checksum_algorithm: sha256
+      register: vps_orchestration_caddy_live
+
+    - name: "Compose | Caddy | Create private validation tree"
+      tempfile:
+        path: "{{ project_root }}"
+        prefix: .caddy-validate.
+        state: directory
+      register: vps_orchestration_caddy_validation_tree
+
+    - name: "Compose | Caddy | Create private extension directory"
+      file:
+        path: "{{ vps_orchestration_caddy_validation_tree.path }}/Caddyfile.d"
+        state: directory
+        mode: '0700'
+
+    - name: "Compose | Caddy | Inspect user extension directory"
+      stat:
+        path: "{{ project_root }}/Caddyfile.d"
+      register: vps_orchestration_caddy_extensions
+
+    - name: "Compose | Caddy | Copy user extensions into validation tree"
+      copy:
+        src: "{{ project_root }}/Caddyfile.d/"
+        dest: "{{ vps_orchestration_caddy_validation_tree.path }}/Caddyfile.d/"
+        remote_src: true
+        mode: preserve
+      when: vps_orchestration_caddy_extensions.stat.isdir | default(false)
+
+    - name: "Compose | Caddy | Copy managed candidate into validation tree"
+      copy:
+        src: "{{ vps_orchestration_caddy_candidate.path }}"
+        dest: "{{ vps_orchestration_caddy_validation_tree.path }}/Caddyfile"
+        remote_src: true
+        mode: '0600'
+
+    - name: "Compose | Caddy | Hash complete candidate tree"
+      command:
+        argv:
+          - python3
+          - -c
+          - |
+            import hashlib
+            import pathlib
+            import sys
+
+            root = pathlib.Path(sys.argv[1])
+            digest = hashlib.sha256()
+            for path in sorted(item for item in root.rglob("*") if item.is_file()):
+                digest.update(path.relative_to(root).as_posix().encode())
+                digest.update(b"\0")
+                digest.update(path.read_bytes())
+                digest.update(b"\0")
+            print(digest.hexdigest())
+          - "{{ vps_orchestration_caddy_validation_tree.path }}"
+      register: vps_orchestration_caddy_candidate_tree_hash
+      changed_when: false
+
+    - name: "Compose | Caddy | Validate complete candidate tree"
+      command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - none
+          - --volume
+          - "{{ vps_orchestration_caddy_validation_tree.path }}:/etc/caddy:ro"
+          - caddy:2.11.4
+          - caddy
+          - validate
+          - --config
+          - /etc/caddy/Caddyfile
+          - --adapter
+          - caddyfile
+      register: vps_orchestration_caddy_validation
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: "Compose | Caddy | Reject invalid candidate"
+      fail:
+        msg: "Caddy candidate validation failed; active configuration was not changed"
+      when: vps_orchestration_caddy_validation.rc != 0
+
+    - name: "Compose | Caddy | Read active tree hash"
+      command:
+        argv:
+          - cat
+          - "{{ project_root }}/.Caddyfile.active.sha256"
+      register: vps_orchestration_caddy_active_tree_hash
+      changed_when: false
+      failed_when: false
+
+    - name: "Compose | Caddy | Record whether activation is required"
+      set_fact:
+        vps_orchestration_caddy_activation_required: >-
+          {{ not vps_orchestration_caddy_live.stat.exists
+             or vps_orchestration_caddy_live.stat.checksum
+                != vps_orchestration_caddy_candidate_stat.stat.checksum
+             or vps_orchestration_caddy_live.stat.mode != '0600'
+             or vps_orchestration_caddy_active_tree_hash.rc != 0
+             or vps_orchestration_caddy_active_tree_hash.stdout
+                != vps_orchestration_caddy_candidate_tree_hash.stdout }}
+
+    - name: "Compose | Caddy | Detect running Caddy"
+      command:
+        argv:
+          - docker
+          - inspect
+          - --format
+          - "{{ '{{ .State.Running }}' }}"
+          - caddy
+      register: vps_orchestration_caddy_running
+      changed_when: false
+      failed_when: false
+
+    - name: "Compose | Caddy | Activate validated managed config"
+      when: vps_orchestration_caddy_activation_required | bool
+      block:
+        - name: "Compose | Caddy | Create prior-file placeholder"
+          tempfile:
+            path: "{{ project_root }}"
+            prefix: .Caddyfile.previous.
+            state: file
+          register: vps_orchestration_caddy_previous
+          when: vps_orchestration_caddy_live.stat.exists
+
+        - name: "Compose | Caddy | Preserve prior managed file"
+          copy:
+            src: "{{ project_root }}/Caddyfile"
+            dest: "{{ vps_orchestration_caddy_previous.path }}"
+            remote_src: true
+            mode: '0600'
+          when: vps_orchestration_caddy_live.stat.exists
+
+        - name: "Compose | Activate | Install validated Caddyfile atomically"
+          command:
+            argv:
+              - mv
+              - --force
+              - "{{ vps_orchestration_caddy_candidate.path }}"
+              - "{{ project_root }}/Caddyfile"
+
+        - name: "Compose | Activate | Reload running Caddy"
+          command:
+            argv:
+              - docker
+              - exec
+              - caddy
+              - caddy
+              - reload
+              - --config
+              - /etc/caddy/Caddyfile
+              - --adapter
+              - caddyfile
+          when:
+            - vps_orchestration_caddy_running.rc == 0
+            - vps_orchestration_caddy_running.stdout == 'true'
+
+        - name: "Compose | Activate | Record active tree hash"
+          copy:
+            content: "{{ vps_orchestration_caddy_candidate_tree_hash.stdout }}\n"
+            dest: "{{ project_root }}/.Caddyfile.active.sha256"
+            mode: '0600'
+
+      rescue:
+        - name: "Compose | Rollback | Restore prior managed file atomically"
+          command:
+            argv:
+              - mv
+              - --force
+              - "{{ vps_orchestration_caddy_previous.path }}"
+              - "{{ project_root }}/Caddyfile"
+          when: vps_orchestration_caddy_live.stat.exists
+
+        - name: "Compose | Rollback | Remove failed first-install file"
+          file:
+            path: "{{ project_root }}/Caddyfile"
+            state: absent
+          when: not vps_orchestration_caddy_live.stat.exists
+
+        - name: "Compose | Rollback | Reload prior active config"
+          command:
+            argv:
+              - docker
+              - exec
+              - caddy
+              - caddy
+              - reload
+              - --config
+              - /etc/caddy/Caddyfile
+              - --adapter
+              - caddyfile
+          when:
+            - vps_orchestration_caddy_live.stat.exists
+            - vps_orchestration_caddy_running.rc == 0
+            - vps_orchestration_caddy_running.stdout == 'true'
+
+        - name: "Compose | Rollback | Report activation failure"
+          fail:
+            msg: "Caddy reload failed; prior managed and active configuration were restored"
+
+  always:
+    - name: "Compose | Caddy | Remove managed candidate"
+      file:
+        path: "{{ vps_orchestration_caddy_candidate.path }}"
+        state: absent
+      when: vps_orchestration_caddy_candidate.path is defined
+
+    - name: "Compose | Caddy | Remove private validation tree"
+      file:
+        path: "{{ vps_orchestration_caddy_validation_tree.path }}"
+        state: absent
+      when: vps_orchestration_caddy_validation_tree.path is defined
+
+    - name: "Compose | Caddy | Remove prior-file placeholder"
+      file:
+        path: "{{ vps_orchestration_caddy_previous.path }}"
+        state: absent
+      when: vps_orchestration_caddy_previous.path is defined
 
 - name: "Compose | Run | Start Docker Compose stack"
   community.docker.docker_compose_v2:
