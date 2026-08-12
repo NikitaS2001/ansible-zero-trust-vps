@@ -110,6 +110,46 @@ jobs:
           [[ "$(wc -l < "$client_state/connection.env")" -eq 5 ]]
           [[ "$(wc -l < "$client_state/peer.env")" -eq 4 ]]
 
+          declare -A allowed=([CLIENT_SSH_HOST]=1 [CLIENT_SSH_PORT]=1
+            [CLIENT_SSH_USER]=1 [CLIENT_SSH_KEY]=1 [CLIENT_KNOWN_HOSTS]=1)
+          declare -A seen=()
+          while IFS= read -r line; do
+            [[ "$line" == *=* ]]
+            key="${line%%=*}"
+            value="${line#*=}"
+            [[ -n "${allowed[$key]:-}" && -z "${seen[$key]:-}" && -n "$value" ]]
+            printf -v "$key" '%s' "$value"
+            seen[$key]=1
+          done < "$client_state/connection.env"
+          [[ "${#seen[@]}" -eq 5 ]]
+          peer_public_key="$(sed -n 's/^PEER_PUBLIC_KEY=//p' "$client_state/peer.env")"
+          [[ "$peer_public_key" =~ ^[A-Za-z0-9+/]{43}=$ ]]
+          client_ssh=(ssh -F none -i "$CLIENT_SSH_KEY" -p "$CLIENT_SSH_PORT"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$CLIENT_KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null
+            "$CLIENT_SSH_USER@$CLIENT_SSH_HOST")
+          vps_ssh=(ssh -F none -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$VPS_KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null
+            "$VPS_SSH_USER@$VPS_HOST")
+          pre_client_handshake="$("${client_ssh[@]}" \
+            'sudo wg show zt-ext latest-handshakes | cut -f2')"
+          pre_server_handshake="$("${vps_ssh[@]}" sudo env \
+            PEER_PUBLIC_KEY="$peer_public_key" bash -se <<'VPS_PRE'
+          set -euo pipefail
+          docker exec wg-easy wg show wg0 latest-handshakes |
+            awk -v peer="$PEER_PUBLIC_KEY" '$1 == peer {print $2}'
+          VPS_PRE
+          )"
+          source tests/e2e/common.sh
+          validate_recent_matching_handshake_epochs "$(date +%s)" \
+            "$pre_client_handshake" "$pre_server_handshake"
+          {
+            printf 'PRE_RESTORE_CLIENT_HANDSHAKE=%s\n' "$pre_client_handshake"
+            printf 'PRE_RESTORE_SERVER_HANDSHAKE=%s\n' "$pre_server_handshake"
+          } >> "$GITHUB_ENV"
+          echo 'predicate.pre_restore_matching_handshake=PASS'
+
       - name: Run release-candidate restore drill
         if: ${{ inputs.restore_test }}
         env:
@@ -129,12 +169,16 @@ jobs:
           TESTED_SHA: ${{ steps.source.outputs.tested_sha }}
         run: |
           set -euo pipefail
+          source tests/e2e/common.sh
           declare -A allowed=(
             [CLIENT_SSH_HOST]=1 [CLIENT_SSH_PORT]=1 [CLIENT_SSH_USER]=1
             [CLIENT_SSH_KEY]=1 [CLIENT_KNOWN_HOSTS]=1
           )
           declare -A seen=()
-          while IFS='=' read -r key value; do
+          while IFS= read -r line; do
+            [[ "$line" == *=* ]]
+            key="${line%%=*}"
+            value="${line#*=}"
             [[ -n "${allowed[$key]:-}" && -z "${seen[$key]:-}" && -n "$value" ]] || exit 1
             printf -v "$key" '%s' "$value"
             seen[$key]=1
@@ -145,7 +189,10 @@ jobs:
             [PEER_PUBLIC_KEY]=1 [VPS_HOST]=1 [VPS_SSH_PORT]=1 [VPS_SSH_USER]=1
           )
           declare -A peer_seen=()
-          while IFS='=' read -r key value; do
+          while IFS= read -r line; do
+            [[ "$line" == *=* ]]
+            key="${line%%=*}"
+            value="${line#*=}"
             [[ -n "${peer_allowed[$key]:-}" && -z "${peer_seen[$key]:-}" && -n "$value" ]] || exit 1
             printf -v "peer_$key" '%s' "$value"
             peer_seen[$key]=1
@@ -159,7 +206,66 @@ jobs:
             -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
             -o UserKnownHostsFile="$CLIENT_KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null
             "$CLIENT_SSH_USER@$CLIENT_SSH_HOST")
-          "${client_ssh[@]}" 'bash -se' <<'CLIENT'
+          vps_ssh=(ssh -F none -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$VPS_KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null
+            "$VPS_SSH_USER@$VPS_HOST")
+
+          runtime_peer_ready=false
+          for attempt in $(seq 1 30); do
+            if "${vps_ssh[@]}" sudo env PEER_PUBLIC_KEY="$peer_PEER_PUBLIC_KEY" bash -se <<'VPS_READY'
+          set -euo pipefail
+          docker exec wg-easy wg show wg0 peers | grep -Fqx -- "$PEER_PUBLIC_KEY"
+          VPS_READY
+            then
+              runtime_peer_ready=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "$runtime_peer_ready" == true ]]
+          echo 'predicate.prepared_peer_runtime_ready=PASS'
+
+          restore_boundary="$(date +%s)"
+          client_reconnected=false
+          for attempt in $(seq 1 30); do
+            client_handshake="$("${client_ssh[@]}" env \
+              EXPECTED_CLIENT_PUBLIC_KEY="$peer_PEER_PUBLIC_KEY" bash -se <<'CLIENT'
+          set -euo pipefail
+          [[ "$(sudo wg show zt-ext public-key)" == "$EXPECTED_CLIENT_PUBLIC_KEY" ]]
+          ping -c 1 -W 2 10.66.0.2 >/dev/null
+          [[ "$(dig +short @10.66.0.2 wg.internal A)" == 10.8.0.1 ]]
+          [[ "$(curl -ksS --max-time 4 -o /dev/null -w '%{http_code}' \
+            --resolve wg.internal:443:10.8.0.1 \
+            https://wg.internal/api/session)" == 401 ]]
+          mapfile -t handshakes < <(sudo wg show zt-ext latest-handshakes | awk '{print $2}')
+          [[ "${#handshakes[@]}" -eq 1 ]]
+          printf '%s\n' "${handshakes[0]}"
+          CLIENT
+            )" || client_handshake=""
+            server_handshake="$("${vps_ssh[@]}" sudo env \
+              PEER_PUBLIC_KEY="$peer_PEER_PUBLIC_KEY" bash -se <<'VPS_HANDSHAKE'
+          set -euo pipefail
+          docker exec wg-easy wg show wg0 latest-handshakes |
+            awk -v peer="$PEER_PUBLIC_KEY" '$1 == peer {print $2}'
+          VPS_HANDSHAKE
+            )" || server_handshake=""
+            now="$(date +%s)"
+            if validate_restored_handshake_epochs "$now" "$restore_boundary" \
+              "$PRE_RESTORE_CLIENT_HANDSHAKE" "$PRE_RESTORE_SERVER_HANDSHAKE" \
+              "$client_handshake" "$server_handshake"; then
+              client_reconnected=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "$client_reconnected" == true ]]
+          echo 'predicate.client_handshake=PASS'
+          echo 'predicate.matched_epoch=PASS'
+          echo 'predicate.prepared_client_recent_handshake=PASS'
+
+          "${client_ssh[@]}" bash -se <<'CLIENT'
+          set -euo pipefail
           for path in /cnf /cnf/ /cnf/probe; do
             headers="$(mktemp)"
             status="$(curl -ksS -D "$headers" --resolve wg.internal:443:10.8.0.1 \
@@ -176,11 +282,8 @@ jobs:
           [[ "$(dig +short @10.66.0.2 wg.internal A)" == 10.8.0.1 ]]
           CLIENT
 
-          vps_ssh=(ssh -F none -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT"
-            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$VPS_KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null
-            "$VPS_SSH_USER@$VPS_HOST")
-          "${vps_ssh[@]}" sudo env PEER_PUBLIC_KEY="$peer_PEER_PUBLIC_KEY" TESTED_SHA="$TESTED_SHA" bash -se <<'VPS'
+          "${vps_ssh[@]}" sudo env PEER_PUBLIC_KEY="$peer_PEER_PUBLIC_KEY" \
+            EXPECTED_HANDSHAKE="$server_handshake" TESTED_SHA="$TESTED_SHA" bash -se <<'VPS'
           set -euo pipefail
           [[ "$(stat -c '%a:%U:%F:%h' /var/tmp/zt-f3-restore.marker)" == "600:root:regular file:1" ]]
           echo 'predicate.marker_descriptor=PASS'
@@ -221,6 +324,8 @@ jobs:
           handshake="$(docker exec wg-easy wg show wg0 latest-handshakes | awk -v peer="$PEER_PUBLIC_KEY" '$1 == peer {print $2}')"
           now="$(date +%s)"
           [[ "$handshake" =~ ^[0-9]+$ && "$handshake" -gt 0 && "$handshake" -le "$now" && $((now - handshake)) -lt 180 ]]
+          [[ "$handshake" == "$EXPECTED_HANDSHAKE" ]]
+          echo 'predicate.server_handshake=PASS'
           echo 'predicate.prepared_peer_recent_handshake=PASS'
           if dpkg-query -W -f='${db:Status-Status}' age 2>/dev/null | grep -Fqx installed; then
             exit 1

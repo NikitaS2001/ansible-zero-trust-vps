@@ -16,6 +16,30 @@ pass() {
     echo "[PASS] $*"
 }
 
+validate_recent_matching_handshake_epochs() {
+    local now="$1" client_epoch="$2" server_epoch="$3"
+
+    [[ "${now}" =~ ^[1-9][0-9]*$ \
+        && "${client_epoch}" =~ ^[1-9][0-9]*$ \
+        && "${server_epoch}" =~ ^[1-9][0-9]*$ ]] || return 1
+    ((client_epoch <= now && server_epoch <= now)) || return 1
+    ((now - client_epoch < 180 && now - server_epoch < 180)) || return 1
+    [[ "${client_epoch}" == "${server_epoch}" ]]
+}
+
+validate_restored_handshake_epochs() {
+    local now="$1" boundary="$2" pre_client="$3" pre_server="$4"
+    local client_epoch="$5" server_epoch="$6"
+
+    [[ "${boundary}" =~ ^[1-9][0-9]*$ \
+        && "${pre_client}" =~ ^[1-9][0-9]*$ \
+        && "${pre_server}" =~ ^[1-9][0-9]*$ ]] || return 1
+    validate_recent_matching_handshake_epochs \
+        "${now}" "${client_epoch}" "${server_epoch}" || return 1
+    ((client_epoch > pre_client && server_epoch > pre_server)) || return 1
+    ((client_epoch >= boundary && server_epoch >= boundary))
+}
+
 run_remote() {
     local target="$1"; shift
     local port="$1"; shift
