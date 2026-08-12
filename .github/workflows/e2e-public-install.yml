@@ -19,6 +19,17 @@ name: e2e-public-install
         description: Run the in-guest WireGuard client handshake test on the VPS
         type: boolean
         default: true
+      external_client_test:
+        description: Run a disposable external QEMU WireGuard client
+        type: boolean
+        default: false
+      restore_test:
+        description: Run encrypted destructive backup and restore
+        type: boolean
+        default: false
+      evidence_nonce:
+        description: Unique release-candidate evidence correlation nonce
+        required: true
 
 permissions:
   contents: read
@@ -30,22 +41,213 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
         with:
+          ref: ${{ inputs.install_ref }}
           fetch-depth: 0
+
+      - name: Resolve checked-out source revision
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tested_sha="$(git rev-parse HEAD)"
+          [[ "$tested_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "checked-out revision is not a full lowercase SHA" >&2
+            exit 1
+          }
+          printf 'tested_sha=%s\n' "$tested_sha" >> "$GITHUB_OUTPUT"
 
       - name: Install test tooling
         run: |
-          sudo apt-get update && sudo apt-get install -y openssh-client openssl jq
+          sudo apt-get update
+          sudo apt-get install -y age dnsutils genisoimage jq netcat-openbsd openssh-client \
+            openssl qemu-system-x86 qemu-utils wireguard-tools
 
       - name: Run public installer E2E against the VPS
         env:
           VPS_IP: ${{ secrets.E2E_VPS_IP }}
           VPS_SSH_PORT: ${{ secrets.E2E_VPS_SSH_PORT }}
           VPS_SSH_KEY_PATH: ${{ runner.temp }}/e2e_key
+          VPS_KNOWN_HOSTS: ${{ runner.temp }}/known_hosts
           INSTALL_REF: ${{ inputs.install_ref }}
         run: |
-          echo "${{ secrets.E2E_VPS_SSH_KEY }}" | base64 -d > "$VPS_SSH_KEY_PATH"
+          umask 077
+          printf '%s' "${{ secrets.E2E_VPS_SSH_KEY }}" | base64 -d > "$VPS_SSH_KEY_PATH"
           chmod 0600 "$VPS_SSH_KEY_PATH"
+          printf '%s\n' "${{ secrets.E2E_VPS_KNOWN_HOST }}" > "$VPS_KNOWN_HOSTS"
+          chmod 0600 "$VPS_KNOWN_HOSTS"
+          echo "::add-mask::${{ secrets.E2E_VPS_SSH_KEY }}"
+          echo "::add-mask::${{ secrets.E2E_VPS_KNOWN_HOST }}"
+          echo "::add-mask::${{ secrets.E2E_VPS_IP }}"
+          admin_public_key="$(ssh-keygen -y -f "$VPS_SSH_KEY_PATH")"
+          admin_fingerprint="$(printf '%s\n' "$admin_public_key" | ssh-keygen -lf - | awk '{print $2}')"
+          echo "::add-mask::$admin_public_key"
+          echo "::add-mask::$admin_fingerprint"
+          echo "evidence_nonce=${{ inputs.evidence_nonce }}"
           run_args=""
           if [ "${{ inputs.reboot_test }}" = "true" ]; then run_args="$run_args --reboot-test"; fi
           if [ "${{ inputs.client_test }}" = "true" ]; then run_args="$run_args --client-test"; fi
-          VPS_SSH_KEY="$VPS_SSH_KEY_PATH" tests/e2e/run-public-install.sh $run_args
+          ZERO_TRUST_ADMIN_SSH_KEY="$VPS_SSH_KEY_PATH" \
+            VPS_SSH_KEY="$VPS_SSH_KEY_PATH" tests/e2e/run-public-install.sh $run_args
+
+      - name: Run external client E2E
+        if: ${{ inputs.external_client_test }}
+        env:
+          VPS_HOST: ${{ secrets.E2E_VPS_IP }}
+          VPS_SSH_PORT: '2222'
+          VPS_SSH_USER: sysadmin
+          VPS_SSH_KEY: ${{ runner.temp }}/e2e_key
+          VPS_KNOWN_HOSTS: ${{ runner.temp }}/known_hosts
+          F3_LITERAL_DNS: '1'
+        run: |
+          set -euo pipefail
+          client_state="$(mktemp -d "$RUNNER_TEMP/zt-external-client.XXXXXX")"
+          chmod 0700 "$client_state"
+          printf 'CLIENT_STATE=%s\n' "$client_state" >> "$GITHUB_ENV"
+          tests/e2e/external-client-qemu.sh --prepare-only --state-dir "$client_state"
+
+          [[ "$(stat -c '%a:%F:%h' "$client_state/connection.env")" == "600:regular file:1" ]]
+          [[ "$(stat -c '%a:%F:%h' "$client_state/peer.env")" == "600:regular file:1" ]]
+          [[ "$(wc -l < "$client_state/connection.env")" -eq 5 ]]
+          [[ "$(wc -l < "$client_state/peer.env")" -eq 4 ]]
+
+      - name: Run release-candidate restore drill
+        if: ${{ inputs.restore_test }}
+        env:
+          RESTORE_DRILL_RELEASE_CANDIDATE: '1'
+          RESTORE_DRILL_TESTED_SHA: ${{ steps.source.outputs.tested_sha }}
+          E2E_KNOWN_HOSTS: ${{ runner.temp }}/known_hosts
+        run: tests/e2e/restore-drill.sh "sysadmin@${{ secrets.E2E_VPS_IP }}" 2222 "${{ runner.temp }}/e2e_key"
+
+      - name: Verify release-candidate handoff from the prepared client
+        if: ${{ inputs.external_client_test && inputs.restore_test }}
+        env:
+          VPS_HOST: ${{ secrets.E2E_VPS_IP }}
+          VPS_SSH_PORT: '2222'
+          VPS_SSH_USER: sysadmin
+          VPS_SSH_KEY: ${{ runner.temp }}/e2e_key
+          VPS_KNOWN_HOSTS: ${{ runner.temp }}/known_hosts
+          TESTED_SHA: ${{ steps.source.outputs.tested_sha }}
+        run: |
+          set -euo pipefail
+          declare -A allowed=(
+            [CLIENT_SSH_HOST]=1 [CLIENT_SSH_PORT]=1 [CLIENT_SSH_USER]=1
+            [CLIENT_SSH_KEY]=1 [CLIENT_KNOWN_HOSTS]=1
+          )
+          declare -A seen=()
+          while IFS='=' read -r key value; do
+            [[ -n "${allowed[$key]:-}" && -z "${seen[$key]:-}" && -n "$value" ]] || exit 1
+            printf -v "$key" '%s' "$value"
+            seen[$key]=1
+          done < "$CLIENT_STATE/connection.env"
+          [[ "${#seen[@]}" -eq 5 ]]
+
+          declare -A peer_allowed=(
+            [PEER_PUBLIC_KEY]=1 [VPS_HOST]=1 [VPS_SSH_PORT]=1 [VPS_SSH_USER]=1
+          )
+          declare -A peer_seen=()
+          while IFS='=' read -r key value; do
+            [[ -n "${peer_allowed[$key]:-}" && -z "${peer_seen[$key]:-}" && -n "$value" ]] || exit 1
+            printf -v "peer_$key" '%s' "$value"
+            peer_seen[$key]=1
+          done < "$CLIENT_STATE/peer.env"
+          [[ "${#peer_seen[@]}" -eq 4 ]]
+          [[ "$peer_PEER_PUBLIC_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]]
+          [[ "$peer_VPS_HOST" == "$VPS_HOST" && "$peer_VPS_SSH_PORT" == "$VPS_SSH_PORT" ]]
+          [[ "$peer_VPS_SSH_USER" == "$VPS_SSH_USER" ]]
+
+          client_ssh=(ssh -F none -i "$CLIENT_SSH_KEY" -p "$CLIENT_SSH_PORT"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$CLIENT_KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null
+            "$CLIENT_SSH_USER@$CLIENT_SSH_HOST")
+          "${client_ssh[@]}" 'bash -se' <<'CLIENT'
+          for path in /cnf /cnf/ /cnf/probe; do
+            headers="$(mktemp)"
+            status="$(curl -ksS -D "$headers" --resolve wg.internal:443:10.8.0.1 \
+              "https://wg.internal${path}" -o /dev/null -w '%{http_code}')"
+            [[ "$status" == 404 ]]
+            policy_value="$(awk -F ': *' \
+              'tolower($1) == "x-zero-trust-policy" {gsub(/\r$/, "", $2); print $2}' \
+              "$headers")"
+            [[ "$policy_value" == cve-2026-63089 ]]
+            rm -f -- "$headers"
+          done
+          [[ "$(curl -ksS -o /dev/null -w '%{http_code}' \
+            --resolve wg.internal:443:10.8.0.1 https://wg.internal/api/session)" == 401 ]]
+          [[ "$(dig +short @10.66.0.2 wg.internal A)" == 10.8.0.1 ]]
+          CLIENT
+
+          vps_ssh=(ssh -F none -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$VPS_KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null
+            "$VPS_SSH_USER@$VPS_HOST")
+          "${vps_ssh[@]}" sudo env PEER_PUBLIC_KEY="$peer_PEER_PUBLIC_KEY" TESTED_SHA="$TESTED_SHA" bash -se <<'VPS'
+          set -euo pipefail
+          [[ "$(stat -c '%a:%U:%F:%h' /var/tmp/zt-f3-restore.marker)" == "600:root:regular file:1" ]]
+          echo 'predicate.marker_descriptor=PASS'
+          [[ "$(wc -l < /var/tmp/zt-f3-restore.marker)" -eq 5 ]]
+          echo 'predicate.marker_exact_five_lines=PASS'
+          grep -Fqx "tested_sha=$TESTED_SHA" /var/tmp/zt-f3-restore.marker
+          archive_sha="$(sed -n 's/^archive_sha256=//p' /var/tmp/zt-f3-restore.marker)"
+          [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$(sha256sum /var/tmp/zt-f3-restore.tar.gz.age | cut -d' ' -f1)" == "$archive_sha" ]]
+          echo 'predicate.archive_hash=PASS'
+          grep -Fqx 'archive_path=/var/tmp/zt-f3-restore.tar.gz.age' /var/tmp/zt-f3-restore.marker
+          grep -Fqx 'setup_step_before=0' /var/tmp/zt-f3-restore.marker
+          grep -Fqx 'setup_step_after=0' /var/tmp/zt-f3-restore.marker
+          echo 'predicate.marker_fixed_fields=PASS'
+          [[ ! -e /var/tmp/zt-f3-backup.sh && ! -e /var/tmp/zt-f3-restore.sh && ! -e /var/tmp/zt-restore-drill ]]
+          echo 'predicate.helpers_absent=PASS'
+          names="$(docker ps --format '{{.Names}}' | sort)"
+          [[ "$names" == $'adguard\ncaddy\nwg-easy' ]]
+          echo 'predicate.services_exact=PASS'
+          docker inspect wg-easy --format '{{json .HostConfig.PortBindings}}' | python3 -c '
+          import json, sys
+          bindings = json.load(sys.stdin)
+          tcp = [entry.get("HostIp") for port, entries in bindings.items()
+                 if port.endswith("/tcp") for entry in entries]
+          assert tcp and set(tcp) == {"127.0.0.1"}
+          '
+          echo 'predicate.wg_tcp_loopback=PASS'
+          unsafe_init="$(docker inspect wg-easy --format '{{range .Config.Env}}{{println .}}{{end}}' |
+            awk '/^INIT_/ && $0 != "INIT_ENABLED=false"')"
+          [[ -z "$unsafe_init" ]]
+          echo 'predicate.unsafe_init_absent=PASS'
+          python3 - <<'PY'
+          import sqlite3
+          with sqlite3.connect('/opt/zero-trust-vps/volumes/wg-easy/wg-easy.db') as db:
+              assert db.execute('SELECT setup_step FROM general_table').fetchall() == [(0,)]
+          PY
+          echo 'predicate.setup_step_zero=PASS'
+          handshake="$(docker exec wg-easy wg show wg0 latest-handshakes | awk -v peer="$PEER_PUBLIC_KEY" '$1 == peer {print $2}')"
+          now="$(date +%s)"
+          [[ "$handshake" =~ ^[0-9]+$ && "$handshake" -gt 0 && "$handshake" -le "$now" && $((now - handshake)) -lt 180 ]]
+          echo 'predicate.prepared_peer_recent_handshake=PASS'
+          if dpkg-query -W -f='${db:Status-Status}' age 2>/dev/null | grep -Fqx installed; then
+            exit 1
+          fi
+          ! command -v age >/dev/null 2>&1
+          ! command -v age-keygen >/dev/null 2>&1
+          echo 'predicate.age_state_restored=PASS'
+          echo 'lifecycle=PASS'
+          VPS
+
+      - name: Clean up external client and release-candidate state
+        if: ${{ always() && (inputs.external_client_test || inputs.restore_test) }}
+        env:
+          VPS_HOST: ${{ secrets.E2E_VPS_IP }}
+          VPS_SSH_PORT: '2222'
+          VPS_SSH_USER: sysadmin
+          VPS_SSH_KEY: ${{ runner.temp }}/e2e_key
+          VPS_KNOWN_HOSTS: ${{ runner.temp }}/known_hosts
+        run: |
+          set -euo pipefail
+          if [[ -n "${CLIENT_STATE:-}" && -d "$CLIENT_STATE" ]]; then
+            tests/e2e/external-client-qemu.sh --cleanup --state-dir "$CLIENT_STATE"
+          else
+            cleanup_command='sudo rm -f -- /var/tmp/zt-f3-backup.sh /var/tmp/zt-f3-restore.sh'
+            cleanup_command+=' /var/tmp/zt-f3-restore.tar.gz.age /var/tmp/zt-f3-restore.marker'
+            ssh -F none -i "$VPS_SSH_KEY" -p "$VPS_SSH_PORT" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$VPS_KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null \
+              "$VPS_SSH_USER@$VPS_HOST" "$cleanup_command"
+          fi

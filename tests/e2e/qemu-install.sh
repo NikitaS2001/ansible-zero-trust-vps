@@ -5,6 +5,7 @@
 # Usage:
 #   tests/e2e/qemu-install.sh [--reboot-test] [--client-test]
 #       [--idempotency-test] [--bootstrap-timeout-test]
+#       [--stopped-container-test] [--invalid-caddy-test]
 #
 # Env:
 #   QEMU_IMAGE       cloud image URL or local .img/.qcow2 path
@@ -42,36 +43,45 @@ DO_REBOOT=false
 DO_CLIENT_TEST=false
 DO_IDEMPOTENCY=false
 DO_BOOTSTRAP_TIMEOUT=false
+DO_STOPPED_CONTAINER=false
+DO_INVALID_CADDY=false
 for arg in "$@"; do
     case "${arg}" in
         --reboot-test) DO_REBOOT=true ;;
         --client-test) DO_CLIENT_TEST=true ;;
         --idempotency-test) DO_IDEMPOTENCY=true ;;
         --bootstrap-timeout-test) DO_BOOTSTRAP_TIMEOUT=true ;;
+        --stopped-container-test) DO_STOPPED_CONTAINER=true ;;
+        --invalid-caddy-test) DO_INVALID_CADDY=true; DO_IDEMPOTENCY=true ;;
         *) fail "Unknown argument: ${arg}" ;;
     esac
 done
-
-DO_TODO7_FIXTURE=false
-if [[ "${DO_BOOTSTRAP_TIMEOUT}" == "true" ]] || \
-    [[ "${DO_CLIENT_TEST}" == "true" && "${DO_IDEMPOTENCY}" == "true" &&
-       -n "${ZERO_TRUST_WG_PASSWORD:-}" ]]; then
-    DO_TODO7_FIXTURE=true
-fi
 
 for tool in qemu-system-x86_64 qemu-img genisoimage curl ssh-keygen openssl; do
     command -v "${tool}" >/dev/null || fail "required tool not found: ${tool}"
 done
 command -v ssh >/dev/null || fail "required tool not found: ssh"
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-qemu.XXXXXX")"
+if [[ -n "${QEMU_STATE_DIR:-}" ]]; then
+    mkdir -p -- "${QEMU_STATE_DIR}"
+    chmod 0700 "${QEMU_STATE_DIR}"
+    TMP_DIR="$(cd -- "${QEMU_STATE_DIR}" && pwd -P)"
+    [[ -z "$(find "${TMP_DIR}" -mindepth 1 -maxdepth 1 -print -quit)" ]] || \
+        fail "QEMU_STATE_DIR must be empty"
+else
+    TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-qemu.XXXXXX")"
+fi
+STATE_SENTINEL="${TMP_DIR}/.qemu-install-state"
+printf 'qemu-install-v1\n' >"${STATE_SENTINEL}"
 QEMU_PID=""
 cleanup() {
     if [[ -n "${QEMU_PID}" ]] && kill -0 "${QEMU_PID}" >/dev/null 2>&1; then
         kill "${QEMU_PID}" >/dev/null 2>&1 || true
         sleep 2
     fi
-    rm -rf "${TMP_DIR}"
+    [[ -f "${STATE_SENTINEL}" && "$(<"${STATE_SENTINEL}")" == qemu-install-v1 ]] || \
+        fail "refusing to remove an unrecognized QEMU state directory"
+    rm -rf -- "${TMP_DIR}"
 }
 trap cleanup EXIT
 
@@ -80,7 +90,7 @@ ssh-keygen -q -t ed25519 -N "" -f "${TMP_DIR}/id_ed25519" -C "e2e-ztvps"
 PUBKEY="$(cat "${TMP_DIR}/id_ed25519.pub")"
 ADMIN_PASS="$(openssl rand -hex 12)"
 ADGUARD_PASS="$(openssl rand -hex 12)"
-WG_PASS="${ZERO_TRUST_WG_PASSWORD:-$(openssl rand -hex 12)}"
+WG_PASS="${ZERO_TRUST_WG_PASSWORD:-Twelve\$COMPOSE_PROBE}"
 
 copy_repo_to_guest() {
     local target="$1" port="$2" key="$3"
@@ -88,10 +98,6 @@ copy_repo_to_guest() {
         tar --null -czf - --files-from - | \
         run_remote_stdin "${target}" "${port}" "${key}" \
         "sudo mkdir -p /tmp/ztrepo && sudo find /tmp/ztrepo -mindepth 1 -delete && sudo tar xzf - -C /tmp/ztrepo && sudo chown -R \$(id -u):\$(id -g) /tmp/ztrepo && cd /tmp/ztrepo && git init -q -b '${INSTALL_REF}' && git add -A && git -c user.name=e2e -c user.email=e2e.invalid commit -qm e2e-source"
-    if [[ "${DO_TODO7_FIXTURE}" == "true" ]]; then
-        run_remote "${target}" "${port}" "${key}" \
-            "python3 -c \"from pathlib import Path; path=Path('/tmp/ztrepo/roles/vps_orchestration/tasks/verify.yml'); marker='- name: \\\"Verify | WG | no active one-time links (CVE-2026-63089)\\\"\\n'; data=path.read_text(); count=data.count(marker); count == 1 or (_ for _ in ()).throw(RuntimeError('unexpected Todo8 task count')); path.write_text(data.replace(marker, marker + '  when: false\\n'))\" && cd /tmp/ztrepo && git add roles/vps_orchestration/tasks/verify.yml && git -c user.name=e2e -c user.email=e2e.invalid commit --amend --no-edit -q"
-    fi
 }
 
 run_public_installer() {
@@ -243,6 +249,14 @@ boot_vm "${TMP_DIR}" "${QEMU_IMAGE}" 20 2048 2 ztvps-e2e ztvps-e2e "" \
 GUEST="${QEMU_USER}@127.0.0.1"
 echo "[E2E] Waiting for cloud-init to finish (SSH on guest:22)..."
 require_ssh_ready "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" 60
+E2E_KNOWN_HOSTS="${TMP_DIR}/known_hosts"
+: >"${E2E_KNOWN_HOSTS}"
+chmod 0600 "${E2E_KNOWN_HOSTS}"
+record_ssh_host_key 127.0.0.1 "${QEMU_SSH_PORT}" "${E2E_KNOWN_HOSTS}"
+export E2E_KNOWN_HOSTS
+require_wrong_host_key_rejected "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519"
+require_wrong_scp_host_key_rejected "${GUEST}" "${QEMU_SSH_PORT}" \
+    "${TMP_DIR}/id_ed25519"
 
 # --- copy the repo into the guest -------------------------------------------
 echo "[E2E] Copying the repository into the guest..."
@@ -271,6 +285,7 @@ if [[ "${DO_BOOTSTRAP_TIMEOUT}" == "true" ]]; then
     fi
     grep -q "secret state was scrubbed and setup remains retryable" \
         "${bootstrap_failure_log}" || fail "redacted retryable cleanup failure was not reported"
+    record_ssh_host_key 127.0.0.1 "${QEMU_ADMIN_PORT}" "${E2E_KNOWN_HOSTS}"
     require_ssh_ready "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
     verify_bootstrap_secret_free \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
@@ -294,6 +309,12 @@ else
 fi
 
 echo "[E2E] Verifying the deployed stack on the hardened SSH port ${QEMU_ADMIN_PORT}"
+if ! ssh-keygen -F "[127.0.0.1]:${QEMU_ADMIN_PORT}" \
+    -f "${E2E_KNOWN_HOSTS}" >/dev/null; then
+    record_ssh_host_key 127.0.0.1 "${QEMU_ADMIN_PORT}" "${E2E_KNOWN_HOSTS}"
+fi
+require_wrong_host_key_rejected "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+    "${TMP_DIR}/id_ed25519"
 export E2E_SSH_PORT E2E_WG_PORT
 verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
 verify_wg_login "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
@@ -301,12 +322,34 @@ verify_bootstrap_secret_free \
     "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
 echo "[E2E] wg-easy login and secret scrub verified"
 
+if [[ "${DO_STOPPED_CONTAINER}" == "true" ]]; then
+    stopped_log="${TMP_DIR}/stopped-container.log"
+    if ! run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519" 'sudo docker stop --time 15 adguard >/dev/null'; then
+        fail "could not stop AdGuard for the negative health probe"
+    fi
+    if (verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519") >"${stopped_log}" 2>&1; then
+        fail "stopped AdGuard container was accepted as healthy"
+    fi
+    grep -q 'container adguard is not running and healthy' "${stopped_log}" || \
+        fail "stopped-container failure did not identify adguard"
+    run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
+        'sudo docker start adguard >/dev/null'
+    sleep 20
+    verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519"
+    echo "[E2E] Stopped container was identified and recovered"
+fi
+
 if [[ "${DO_REBOOT}" == "true" ]]; then
     echo "[E2E] Rebooting the VM and re-verifying..."
+    boot_id_before="$(run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519" 'cat /proc/sys/kernel/random/boot_id')"
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         'sudo systemctl reboot' || true
-    require_ssh_down "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
-    require_ssh_ready "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
+    require_rebooted "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${boot_id_before}" 60
     sleep 20
     verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
     echo "[E2E] Reboot survival verified"
@@ -378,6 +421,7 @@ if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
     caddy_managed_hash_before="$(run_remote "sysadmin@127.0.0.1" \
         "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         "sudo sha256sum /opt/zero-trust-vps/Caddyfile | cut -d' ' -f1")"
+    if [[ "${DO_INVALID_CADDY}" == "true" || "${DO_IDEMPOTENCY}" == "true" ]]; then
     echo "[E2E] Rejecting an invalid Caddyfile.d candidate without changing the live site..."
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         "printf '%s\\n' 'todo10.invalid {' | sudo tee /opt/zero-trust-vps/Caddyfile.d/todo10-invalid.conf >/dev/null"
@@ -400,6 +444,7 @@ if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
         fail "invalid Caddy candidate recreated Caddy"
     verify_caddy_site_reachable "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
         "${TMP_DIR}/id_ed25519" "${WG_INTERNAL_DOMAIN:-wg.internal}"
+    fi
 
     echo "[E2E] Rolling back the managed file and active config after an injected reload failure..."
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
@@ -464,6 +509,22 @@ if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
     verify_bootstrap_secret_free \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
     echo "[E2E] Nonzero setup state retried to durable completion"
+fi
+
+if [[ "${QEMU_HOLD_FOR_EXTERNAL_CLIENT:-0}" == 1 ]]; then
+    : "${QEMU_READY_FILE:?QEMU_READY_FILE is required for external-client hold mode}"
+    : "${QEMU_RELEASE_FILE:?QEMU_RELEASE_FILE is required for external-client hold mode}"
+    ready_tmp="$(mktemp "${TMP_DIR}/ready.tmp.XXXXXX")"
+    printf 'vps_fixture=ready\n' >"${ready_tmp}"
+    chmod 0600 "${ready_tmp}"
+    mv -f -- "${ready_tmp}" "${QEMU_READY_FILE}"
+    echo "[E2E] disposable VPS fixture ready for external-client lifecycle"
+    hold_deadline=$((SECONDS + ${QEMU_HOLD_TIMEOUT:-1800}))
+    while [[ ! -e "${QEMU_RELEASE_FILE}" ]]; do
+        kill -0 "${QEMU_PID}" >/dev/null 2>&1 || fail "VPS fixture VM exited while held"
+        ((SECONDS < hold_deadline)) || fail "timed out waiting for external-client cleanup"
+        sleep 2
+    done
 fi
 
 echo "[E2E] PASS: public installer E2E succeeded in qemu/KVM"

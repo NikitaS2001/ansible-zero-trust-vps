@@ -12,8 +12,8 @@
 #   INSTALL_REF   git tag or branch to install (e.g. v1.0.0)
 # Optional env:
 #   VPS_SSH_PORT (default 22), VPS_ROOT_USER (default root),
-#   ZERO_TRUST_* installer inputs (ZERO_TRUST_ADMIN_SSH_KEY = private key path
-#   to hand the admin user, so access survives the harness),
+#   ZERO_TRUST_* installer inputs (ZERO_TRUST_ADMIN_SSH_KEY is a controller-only
+#   private key path; only its derived public key is provisioned),
 #   E2E_SSH_PORT (default 2222), E2E_WG_PORT (default 51820)
 set -euo pipefail
 
@@ -30,6 +30,7 @@ source "${E2E_DIR}/common.sh"
 : "${VPS_IP:?VPS_IP is required}"
 : "${VPS_SSH_KEY:?VPS_SSH_KEY is required}"
 : "${INSTALL_REF:?INSTALL_REF is required}"
+: "${VPS_KNOWN_HOSTS:?VPS_KNOWN_HOSTS (pinned host-key file) is required}"
 
 VPS_SSH_PORT="${VPS_SSH_PORT:-22}"
 VPS_ROOT_USER="${VPS_ROOT_USER:-root}"
@@ -57,7 +58,10 @@ ssh-keygen -q -t ed25519 -N "" -f "${TMP_DIR}/id_ed25519" -C "e2e-ztvps"
 # survives the harness (TMP_DIR is destroyed on exit). When unset, the
 # ephemeral harness key is used for both the installer and post-install SSH.
 ADMIN_SSH_KEY="${ZERO_TRUST_ADMIN_SSH_KEY:-${TMP_DIR}/id_ed25519}"
-ADMIN_PUBKEY="$(cat "${ADMIN_SSH_KEY}.pub")"
+[[ -f "${ADMIN_SSH_KEY}" ]] || fail "admin SSH private key is not a regular file"
+ADMIN_PUBKEY="$(ssh-keygen -y -f "${ADMIN_SSH_KEY}")"
+ADMIN_FINGERPRINT="$(printf '%s\n' "${ADMIN_PUBKEY}" | ssh-keygen -lf - | awk '{print $2}')"
+[[ "${ADMIN_FINGERPRINT}" == SHA256:* ]] || fail "could not derive admin public-key fingerprint"
 
 ADMIN_USER="${ZERO_TRUST_ADMIN_USER:-sysadmin}"
 ADMIN_PASS="${ZERO_TRUST_ADMIN_PASSWORD:-$(openssl rand -hex 12)}"
@@ -67,13 +71,23 @@ SSH_PORT_IN="${ZERO_TRUST_SSH_PORT:-${E2E_SSH_PORT}}"
 WG_PORT_IN="${ZERO_TRUST_WG_PORT:-${E2E_WG_PORT}}"
 INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-${WG_INTERNAL_DOMAIN} ${ADGUARD_INTERNAL_DOMAIN}}"
 
+KNOWN_HOSTS="${VPS_KNOWN_HOSTS}"
+[[ -s "${KNOWN_HOSTS}" ]] || fail "VPS_KNOWN_HOSTS must contain a pinned host key"
+chmod 0600 "${KNOWN_HOSTS}"
+E2E_KNOWN_HOSTS="${KNOWN_HOSTS}"
+export E2E_KNOWN_HOSTS
 echo "[E2E] Waiting for root SSH on ${ROOT_TARGET}:${VPS_SSH_PORT}"
 require_ssh_ready "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" 30
+run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
+    "${KNOWN_HOSTS}" true
+require_wrong_host_key_rejected "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}"
+require_wrong_scp_host_key_rejected "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}"
 
 # The documented one-liner pipes install.sh through curl into sudo bash on the
 # VPS; minimal Debian images ship neither curl nor sudo by default.
 echo "[E2E] Ensuring curl and sudo are available on the VPS..."
-run_remote "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
+run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
+    "${KNOWN_HOSTS}" \
     '(command -v curl >/dev/null 2>&1 && command -v sudo >/dev/null 2>&1) || (apt-get update -qq >/dev/null && apt-get install -y -qq curl sudo >/dev/null)' \
     || fail "could not install curl/sudo on the VPS"
 
@@ -99,19 +113,38 @@ sudo env \\
     bash
 INNER_EOF
 )
-run_remote_stdin "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" 'bash -s' <<<"${REMOTE_INSTALL}"
+run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
+    "${KNOWN_HOSTS}" 'bash -s' <<<"${REMOTE_INSTALL}"
 
 echo "[E2E] Verifying the deployed stack on the hardened SSH port ${SSH_PORT_IN}"
+if ! ssh-keygen -F "[${VPS_IP}]:${SSH_PORT_IN}" -f "${KNOWN_HOSTS}" >/dev/null; then
+    record_ssh_host_key "${VPS_IP}" "${SSH_PORT_IN}" "${KNOWN_HOSTS}"
+fi
+run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
+    "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" \
+    "grep -Fqx '${ADMIN_PUBKEY}' ~/.ssh/authorized_keys"
+require_wrong_host_key_rejected "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
 export E2E_SSH_PORT="${SSH_PORT_IN}" E2E_WG_PORT="${WG_PORT_IN}"
-verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
+E2E_KNOWN_HOSTS="${KNOWN_HOSTS}" verify_deployment \
+    "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
+if command -v nc >/dev/null && nc -z -w 5 "${VPS_IP}" 443 >/dev/null 2>&1; then
+    fail "public TCP/443 is reachable"
+fi
+pass "public TCP/443 is closed"
 
 if [[ "${DO_REBOOT}" == "true" ]]; then
     echo "[E2E] Rebooting ${VPS_IP} and re-verifying..."
-    run_remote "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" 'sudo systemctl reboot' || true
-    require_ssh_down "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" 30
-    require_ssh_ready "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" 60
+    boot_id_before="$(E2E_KNOWN_HOSTS="${KNOWN_HOSTS}" run_remote \
+        "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" \
+        'cat /proc/sys/kernel/random/boot_id')"
+    run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
+        "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" 'sudo systemctl reboot' || true
+    E2E_KNOWN_HOSTS="${KNOWN_HOSTS}" require_rebooted \
+        "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" \
+        "${boot_id_before}" 60
     sleep 20
-    verify_deployment "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
+    E2E_KNOWN_HOSTS="${KNOWN_HOSTS}" verify_deployment \
+        "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
     echo "[E2E] Reboot survival verified"
 fi
 

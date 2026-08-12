@@ -104,7 +104,7 @@ trap cleanup EXIT
 ssh-keygen -q -t ed25519 -N "" -f "${TMP_DIR}/id_ed25519" -C "e2e-ztvps-remote"
 PUBKEY="$(cat "${TMP_DIR}/id_ed25519.pub")"
 ADGUARD_PASS="$(openssl rand -hex 12)"
-WG_PASS="$(openssl rand -hex 12)"
+WG_PASS="${ZERO_TRUST_WG_PASSWORD:-Twelve\$COMPOSE_PROBE}"
 ADGUARD_HASH="$(python3 - <<PY
 from passlib.hash import bcrypt
 print(bcrypt.using(ident='2y', rounds=10).hash('${ADGUARD_PASS}'))
@@ -137,6 +137,12 @@ chmod 0600 "${TMP_DIR}/known_hosts"
 record_ssh_host_key "127.0.0.1" "${QEMU_SSH_PORT}" "${TMP_DIR}/known_hosts"
 run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
     "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" 'true'
+E2E_KNOWN_HOSTS="${TMP_DIR}/known_hosts"
+export E2E_KNOWN_HOSTS
+require_wrong_host_key_rejected "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+    "${TMP_DIR}/id_ed25519"
+require_wrong_scp_host_key_rejected "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+    "${TMP_DIR}/id_ed25519"
 pass "pre-cutover authenticated root SSH"
 
 # --- controller side: inventory + group_vars + vault --------------------------
@@ -153,6 +159,7 @@ all:
           ansible_port: ${QEMU_SSH_PORT}
           ansible_user: root
           ansible_ssh_private_key_file: ${TMP_DIR}/id_ed25519
+          ansible_ssh_common_args: "-F none -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${TMP_DIR}/known_hosts -o GlobalKnownHostsFile=/dev/null"
           ansible_python_interpreter: /usr/bin/python3
 EOF
 }
@@ -169,7 +176,7 @@ all:
           ansible_port: 22
           ansible_user: root
           ansible_ssh_private_key_file: ${TMP_DIR}/id_ed25519
-          ansible_ssh_common_args: "-o ProxyCommand='nc 127.0.0.1 ${QEMU_SSH_PORT}'"
+          ansible_ssh_common_args: "-F none -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${TMP_DIR}/known_hosts -o GlobalKnownHostsFile=/dev/null -o HostKeyAlias='[127.0.0.1]:${QEMU_SSH_PORT}' -o ProxyCommand='nc 127.0.0.1 ${QEMU_SSH_PORT}'"
           ansible_python_interpreter: /usr/bin/python3
 EOF
 }
@@ -240,7 +247,7 @@ run_playbook() {
     local output_file="$1"
     local playbook="$2"
     shift 2
-    ANSIBLE_HOST_KEY_CHECKING=False \
+    ANSIBLE_HOST_KEY_CHECKING=True \
         ansible-playbook -i "${ROOT_DIR}/inventory/hosts.yml" \
         --vault-password-file "${TMP_DIR}/vault_pass" "${playbook}" \
         "$@" >"${output_file}" 2>&1
@@ -326,13 +333,14 @@ all:
           ansible_port: ${QEMU_CLEANUP_PORT}
           ansible_user: sysadmin
           ansible_ssh_private_key_file: ${TMP_DIR}/id_ed25519
+          ansible_ssh_common_args: "-F none -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=${TMP_DIR}/known_hosts -o GlobalKnownHostsFile=/dev/null"
           ansible_python_interpreter: /usr/bin/python3
 EOF
 }
 
 run_tagged_cleanup() {
     local output_file="$1"
-    ANSIBLE_HOST_KEY_CHECKING=False \
+    ANSIBLE_HOST_KEY_CHECKING=True \
         ansible-playbook -i "${ROOT_DIR}/inventory/hosts.yml" \
         --vault-password-file "${TMP_DIR}/vault_pass" \
         "${TMP_DIR}/ssh-cleanup.yml" --tags ssh_ufw_cleanup -v \
@@ -434,13 +442,14 @@ EOF
 if [[ "${DO_SSH_ROLLBACK}" == "true" ]]; then
     run_rollback_probe
     if [[ "${DO_UFW_BACKEND_FAILURE}" == "true" ]]; then
+        rollback_boot_id="$(run_remote_authenticated "root@127.0.0.1" \
+            "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
+            "${TMP_DIR}/known_hosts" 'cat /proc/sys/kernel/random/boot_id')"
         run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
             "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
             'systemctl reboot' >/dev/null 2>&1 || true
-        require_ssh_down "root@127.0.0.1" "${QEMU_SSH_PORT}" \
-            "${TMP_DIR}/id_ed25519" 60
-        require_ssh_ready "root@127.0.0.1" "${QEMU_SSH_PORT}" \
-            "${TMP_DIR}/id_ed25519" 60
+        require_rebooted "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+            "${TMP_DIR}/id_ed25519" "${rollback_boot_id}" 60
         pass "rollback state rebooted with original authenticated SSH reachable"
     fi
     write_direct_inventory
@@ -456,23 +465,35 @@ elif [[ "${DO_SSH_ROLLBACK}" != "true" ]]; then
     fi
 fi
 
+if [[ "${DO_SSH_CUTOVER}" == "true" ]]; then
+    record_ssh_host_key 127.0.0.1 "${QEMU_CLEANUP_PORT}" "${TMP_DIR}/known_hosts"
+    write_cleanup_inventory
+    if ! run_playbook "${TMP_DIR}/full-after-cutover.log" "${ROOT_DIR}/site.yml"; then
+        fail "remote-mode playbook failed after authenticated SSH cutover"
+    fi
+fi
+
 if [[ "${DO_UFW_BACKEND_FAILURE}" == "true" ]]; then
     run_ufw_backend_probes
 fi
 
-if [[ "${DO_SSH_CUTOVER}" != "true" && "${DO_SSH_ROLLBACK}" != "true" && \
-      "${DO_UFW_BACKEND_FAILURE}" != "true" ]]; then
+if [[ "${DO_SSH_ROLLBACK}" != "true" && "${DO_UFW_BACKEND_FAILURE}" != "true" ]]; then
     echo "[E2E] Verifying the deployed stack on the hardened SSH port ${QEMU_ADMIN_PORT}"
+    record_ssh_host_key 127.0.0.1 "${QEMU_ADMIN_PORT}" "${TMP_DIR}/known_hosts"
+    require_wrong_host_key_rejected "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519"
     export E2E_SSH_PORT E2E_WG_PORT
     verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
 fi
 
 if [[ "${DO_REBOOT}" == "true" ]]; then
     echo "[E2E] Rebooting the VM and re-verifying..."
+    boot_id_before="$(run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519" 'cat /proc/sys/kernel/random/boot_id')"
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         'sudo systemctl reboot' || true
-    require_ssh_down "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
-    require_ssh_ready "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
+    require_rebooted "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${boot_id_before}" 60
     sleep 20
     verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
     echo "[E2E] Reboot survival verified"

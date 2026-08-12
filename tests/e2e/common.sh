@@ -20,6 +20,11 @@ run_remote() {
     local target="$1"; shift
     local port="$1"; shift
     local key="$1"; shift
+    if [[ -n "${E2E_KNOWN_HOSTS:-}" ]]; then
+        run_remote_authenticated "${target}" "${port}" "${key}" \
+            "${E2E_KNOWN_HOSTS}" "$@"
+        return
+    fi
     ssh -p "${port}" -i "${key}" \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         -o ConnectTimeout=10 -o BatchMode=yes \
@@ -30,6 +35,11 @@ run_remote_stdin() {
     local target="$1"; shift
     local port="$1"; shift
     local key="$1"; shift
+    if [[ -n "${E2E_KNOWN_HOSTS:-}" ]]; then
+        run_remote_authenticated "${target}" "${port}" "${key}" \
+            "${E2E_KNOWN_HOSTS}" "$@"
+        return
+    fi
     ssh -p "${port}" -i "${key}" \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         -o ConnectTimeout=10 -o BatchMode=yes \
@@ -65,8 +75,56 @@ run_remote_authenticated() {
         -o StrictHostKeyChecking=yes \
         -o UserKnownHostsFile="${known_hosts}" \
         -o GlobalKnownHostsFile=/dev/null \
-        -o ConnectTimeout=10 \
         "${target}" "$@"
+}
+
+copy_remote_authenticated() {
+    local host="$1" port="$2" key="$3" known_hosts="$4" source="$5" destination="$6"
+    scp -F none -i "${key}" -P "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        "${source}" "${host}:${destination}"
+}
+
+require_wrong_host_key_rejected() {
+    local target="$1" port="$2" key="$3"
+    local probe_dir bad_hosts host
+    probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-hostkey.XXXXXX")"
+    bad_hosts="${probe_dir}/known_hosts"
+    host="${target#*@}"
+    ssh-keygen -q -t ed25519 -N '' -f "${probe_dir}/host" -C host-key-negative
+    printf '[%s]:%s %s\n' "${host}" "${port}" \
+        "$(cut -d' ' -f1,2 "${probe_dir}/host.pub")" >"${bad_hosts}"
+    chmod 0600 "${bad_hosts}"
+    if run_remote_authenticated "${target}" "${port}" "${key}" "${bad_hosts}" \
+        true >/dev/null 2>&1; then
+        rm -rf -- "${probe_dir}"
+        fail "SSH accepted a mismatched pinned host key"
+    fi
+    rm -rf -- "${probe_dir}"
+    pass "SSH rejected a mismatched pinned host key"
+}
+
+require_wrong_scp_host_key_rejected() {
+    local target="$1" port="$2" key="$3"
+    local probe_dir bad_hosts host
+    probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-scp-hostkey.XXXXXX")"
+    bad_hosts="${probe_dir}/known_hosts"
+    host="${target#*@}"
+    ssh-keygen -q -t ed25519 -N '' -f "${probe_dir}/host" -C scp-host-key-negative
+    printf '[%s]:%s %s\n' "${host}" "${port}" \
+        "$(cut -d' ' -f1,2 "${probe_dir}/host.pub")" >"${bad_hosts}"
+    printf 'host-key-negative\n' >"${probe_dir}/payload"
+    chmod 0600 "${bad_hosts}" "${probe_dir}/payload"
+    if copy_remote_authenticated "${target}" "${port}" "${key}" "${bad_hosts}" \
+        "${probe_dir}/payload" /tmp/ztvps-scp-host-key-negative; then
+        rm -rf -- "${probe_dir}"
+        fail "SCP accepted a mismatched pinned host key"
+    fi
+    rm -rf -- "${probe_dir}"
+    pass "SCP rejected a mismatched pinned host key"
 }
 
 open_authenticated_ssh_control() {
@@ -114,10 +172,15 @@ require_authenticated_ssh_closed() {
 require_ssh_down() {
     local target="$1"; local port="$2"; local key="$3"; local retries="${4:-30}"
     local i=0
-    while ssh -p "${port}" -i "${key}" \
-        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=3 -o BatchMode=yes \
-        "${target}" 'true' >/dev/null 2>&1; do
+    while if [[ -n "${E2E_KNOWN_HOSTS:-}" ]]; then
+        run_remote_authenticated "${target}" "${port}" "${key}" \
+            "${E2E_KNOWN_HOSTS}" true >/dev/null 2>&1
+    else
+        ssh -p "${port}" -i "${key}" \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=3 -o BatchMode=yes \
+            "${target}" true >/dev/null 2>&1
+    fi; do
         i=$((i + 1))
         if [[ "${i}" -ge "${retries}" ]]; then
             fail "SSH on ${target}:${port} did not go down (expected after reboot)"
@@ -129,14 +192,36 @@ require_ssh_down() {
 require_ssh_ready() {
     local target="$1"; local port="$2"; local key="$3"; local retries="${4:-30}"
     local i=0
-    while ! ssh -p "${port}" -i "${key}" \
-        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=5 -o BatchMode=yes \
-        "${target}" 'true' >/dev/null 2>&1; do
+    while ! if [[ -n "${E2E_KNOWN_HOSTS:-}" ]]; then
+        run_remote_authenticated "${target}" "${port}" "${key}" \
+            "${E2E_KNOWN_HOSTS}" true >/dev/null 2>&1
+    else
+        ssh -p "${port}" -i "${key}" \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=5 -o BatchMode=yes \
+            "${target}" true >/dev/null 2>&1
+    fi; do
         i=$((i + 1))
         if [[ "${i}" -ge "${retries}" ]]; then
             fail "SSH did not become ready on ${target}:${port}"
         fi
+        sleep 5
+    done
+}
+
+require_rebooted() {
+    local target="$1" port="$2" key="$3" previous_boot_id="$4" retries="${5:-60}"
+    local current_boot_id i=0
+    while true; do
+        current_boot_id="$(run_remote "${target}" "${port}" "${key}" \
+            'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
+        if [[ "${current_boot_id}" =~ ^[0-9a-f-]{36}$ && \
+              "${current_boot_id}" != "${previous_boot_id}" ]]; then
+            return 0
+        fi
+        i=$((i + 1))
+        [[ "${i}" -lt "${retries}" ]] || \
+            fail "guest did not return with a new boot identity"
         sleep 5
     done
 }
