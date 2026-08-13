@@ -8,6 +8,24 @@
 # tests/e2e/external-client-qemu.sh (manual) for that path.
 set -euo pipefail
 
+usage() {
+    cat <<'EOF'
+Usage: synthetic-check.sh
+
+Run the live zero-trust stack health check on the VPS.
+EOF
+}
+
+case "${1:-}" in
+    -h|--help)
+        [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+        usage
+        exit 0
+        ;;
+    '') ;;
+    *) usage >&2; exit 2 ;;
+esac
+
 WG_INTERNAL_DOMAIN="${WG_INTERNAL_DOMAIN:-wg.internal}"
 ADGUARD_INTERNAL_DOMAIN="${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}"
 CADDY_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' caddy 2>/dev/null || true)"

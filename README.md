@@ -172,12 +172,18 @@ files under `/opt/zero-trust-vps/`:
    ```
 Then apply:
 ```bash
-cd /opt/zero-trust-vps
-sudo docker compose up -d
-sudo docker restart caddy   # deterministic reload of the new site block
+# Re-run the public installer, or run the remote ansible-playbook command.
+# The deployment owns validation and activation; do not restart Caddy directly.
 ```
 Open `https://myservice.internal` (trust the root CA first). A complete
 working example (Vaultwarden) is in `examples/`.
+
+On every deployment, the role copies the managed Caddyfile and all
+`Caddyfile.d` sites into a private candidate tree, validates the complete tree,
+atomically installs the managed file, and reloads the running Caddy process.
+If reload fails, it rolls back the prior active file and reloads that known-good
+configuration. An invalid user site therefore fails without replacing the
+active configuration.
 
 **Backup contract:** keep user services and their volumes under
 `/opt/zero-trust-vps` (the project root) so `scripts/backup.sh` captures them
@@ -189,6 +195,15 @@ desired, `wg_internal_domain` / `adguard_internal_domain`) in
 `group_vars/all/vars.yml` before deploying. Recommended suffixes: `.internal`
 (ICANN-reserved) or `.home.arpa` (RFC 8375). Avoid `.local` (conflicts with
 mDNS) and unreserved suffixes such as `.lan` or `.home`.
+
+For suffix-only configuration, omit the two hostname overrides:
+
+```yaml
+internal_domain_suffix: home.arpa
+```
+
+The resolved endpoints are `wg.home.arpa` and `adguard.home.arpa`; installer
+summaries and E2E checks use those concrete names.
 
 ## Security Model
 
@@ -202,41 +217,51 @@ mDNS) and unreserved suffixes such as `.lan` or `.home`.
 - Do not add the VPN subnet to `fail2ban` ignore lists: a compromised VPN
   client must not bypass SSH brute-force protection.
 - wg-easy disables IPv6 to avoid startup failures on providers without it.
-- **Known CVE (accepted risk, tracked):** wg-easy `15.3.0` is in the affected
-  range of CVE-2026-63089 (a weak one-time-link token can leak a client
-  `PrivateKey`/`PresharedKey`). The panel is only reachable over the VPN or an
-  SSH tunnel and the one-time-link feature is not used, which materially
-  reduces exploitability. Upgrade `wg_easy_version` as soon as a stable fixed
-  release ships (do not use `15.4.0-beta`); the `verify` role checks that the
-  panel is not published on a public interface and that no one-time links are
-  active.
+- **CVE route control:** stable wg-easy `15.3.0` remains affected by
+  CVE-2026-63089 and is not claimed as patched. At the VPN-facing Caddy site,
+  `/cnf`, `/cnf/`, and `/cnf/*` return HTTP `404` with
+  `X-Zero-Trust-Policy: cve-2026-63089`; normal UI and API routes continue to
+  work and do not carry that policy header. The role also verifies that the
+  panel is not publicly published and no one-time-link rows are active. Keep
+  `15.3.0` until a stable fixed release is deliberately qualified; do not
+  substitute a beta build.
 
 ## Operations and Recovery
 
 ### Backup and Restore
 
-`scripts/backup.sh` snapshots the stack on the VPS: it stops the containers,
-tars the project runtime state (`volumes/*`, `docker-compose.yml`,
-`docker-compose.override.yml`, `Caddyfile`, `Caddyfile.d`), restarts the
-containers, and rotates old archives (keep last 14 by default). Restore with
-`scripts/restore.sh`, then re-run the playbook and
-`scripts/synthetic-check.sh` to verify.
-
-Encryption: export `AGE_KEY` (an age public key) before backup to get an
-age-encrypted archive:
+`scripts/backup.sh` snapshots the stack on the VPS. Encrypted backup is the
+default: before it stops the containers, the script requires both `AGE_KEY`
+as a public age recipient and the `age` executable. It then archives the
+project runtime state (`volumes/*`, `docker-compose.yml`,
+`docker-compose.override.yml`, `Caddyfile`, and `Caddyfile.d`), restarts the
+containers, atomically publishes a `.age` file with mode `0600`, and rotates
+old archives (keep last 14 by default). Plaintext requires the explicit
+`--allow-plaintext` flag and still publishes the archive with mode `0600`.
 
 ```bash
 age-keygen -o ~/.config/zt/age-identity.txt      # one-time; keep this safe
-AGE_KEY="$(age-keygen -y ~/.config/zt/age-identity.txt)" sudo scripts/backup.sh
-# restore:
+sudo env AGE_KEY="..." scripts/backup.sh
+# Explicit plaintext escape hatch:
+sudo scripts/backup.sh --allow-plaintext
+# Restore an encrypted backup with the private age identity:
 sudo scripts/restore.sh /opt/zt-backups/zt-....tar.gz.age ~/.config/zt/age-identity.txt
 ```
 
-Schedule it nightly (cron):
+Use the public recipient printed by
+`age-keygen -y ~/.config/zt/age-identity.txt` in place of `...`; keep the
+private identity off-host. Schedule the encrypted form nightly (cron):
 
 ```
-0 3 * * * root AGE_KEY=age1... /opt/zero-trust-vps-installer/repo/scripts/backup.sh >> /var/log/zt-backup.log 2>&1
+0 3 * * * root env AGE_KEY=age1... /opt/zero-trust-vps-installer/repo/scripts/backup.sh >> /var/log/zt-backup.log 2>&1
 ```
+
+Restore validates archive paths and member types before extraction, stages a
+complete candidate beside the live project, stops the current stack only
+after validation, and activates the candidate atomically. It recomputes the
+Compose file set and starts the restored stack, then waits for service
+readiness. If activation or startup fails, it rolls back to the prior project
+tree and reruns Compose/readiness for that prior state.
 
 Copy the archive off-host (rsync/scp/restic to a separate location) — an
 on-host backup does not survive disk loss. For very large volumes, prefer
@@ -257,29 +282,6 @@ sudo ss -ltnp | grep ssh
 sudo systemctl status ssh
 ```
 
-### Backups
-
-Back up `/opt/zero-trust-vps/volumes`, including `wg-easy/` client/server keys,
-`adguard/` configuration and filters, and `caddy/data/` with the internal root
-CA. Losing Caddy data invalidates imported certificates; losing wg-easy means
-re-issuing all clients. Archive the whole directory and test a restore:
-
-```bash
-sudo sh -c '
-set -eu
-umask 077
-tmp="$(mktemp /root/zero-trust-vps-volumes.tgz.XXXXXX)"
-trap "unlink \"$tmp\"" EXIT HUP INT TERM
-tar -czf "$tmp" -C /opt/zero-trust-vps volumes
-mv -f "$tmp" /root/zero-trust-vps-volumes.tgz
-trap - EXIT HUP INT TERM
-'
-```
-
-Keep `/root/zero-trust-vps-volumes.tgz` access-controlled (root-only, mode
-`0600`); encrypt it before any off-host transfer and use protected storage.
-No backup automation is implemented; keep and test your own restore process.
-
 ### Troubleshooting
 
 - **TTY or supported OS:** the public installer needs an interactive `/dev/tty`
@@ -298,8 +300,8 @@ No backup automation is implemented; keep and test your own restore process.
   ```
 
 If reset is necessary, it irreversibly loses wg-easy keys and requires
-recreating clients. First create and keep the protected
-`/root/zero-trust-vps-volumes.tgz` archive described above, then:
+recreating clients. First create and retain an encrypted backup with
+`scripts/backup.sh`, then:
 
 ```bash
 sudo docker compose -f /opt/zero-trust-vps/docker-compose.yml down

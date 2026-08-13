@@ -33,6 +33,9 @@ host.
   the trusted root CA). This avoids touching the host network.
 - `--idempotency-test` re-runs the installer on the same VM and re-verifies
   the stack, checking that a second run completes cleanly.
+- Failure-mode coverage uses `--bootstrap-timeout-test`,
+  `--stopped-container-test`, and `--invalid-caddy-test`. Each case must fail
+  at the intended boundary, preserve recoverable state, and clean up.
 
 ## Remote deployment mode (controller -> VM)
 
@@ -42,6 +45,23 @@ vault files and `ansible-playbook` over SSH from this host (the controller).
 It covers the code paths the public installer does not: SSH-based connection,
 UFW enablement during hardening, vault decryption and the remote-only verify
 tasks (SSH reachable on the new port, external 443 closed).
+Use `--ssh-rollback-test --ufw-backend-failure-test` for the remote negative
+cases; both must retain the prior authenticated SSH path.
+
+## Release readiness matrix
+
+Release readiness requires, in order, public QEMU coverage, remote QEMU
+coverage, the named negative cases, a fresh disposable real VPS installation,
+an external client over the public WireGuard endpoint, and an encrypted
+backup/restore drill. Local checks and QEMU runs do not replace disposable
+real-VPS evidence; they exercise different boundaries. The live workflow must
+run reboot, in-guest client, external-client, and restore inputs against the
+same tested commit.
+
+The provider firewall remains the operator's responsibility: automation
+verifies host UFW and reachable ports but cannot create or audit provider-side
+rules. Missing live secrets or access blocks release readiness; it is not a
+skipped or passing live gate.
 
 ## VPS preflight
 

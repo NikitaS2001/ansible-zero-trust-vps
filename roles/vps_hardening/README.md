@@ -73,7 +73,7 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
         admin_user: sysadmin
         admin_group: sudo
         admin_shell: /bin/bash
-        vault_admin_ssh_pubkey: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+        vault_admin_ssh_pubkey: "ssh-ed25519 AAAA... operator@example"
         ssh_allow_tcp_forwarding: "yes"
         fail2ban_ignore_ips:
           - "127.0.0.1/8"
@@ -96,6 +96,20 @@ AdGuard admin UI (once `vps_orchestration` has also run):
 ssh -p 2222 -L 3000:127.0.0.1:3000 sysadmin@<vps-ip>
 # Open http://127.0.0.1:3000 in your browser
 ```
+
+## Firewall and release boundary
+
+UFW is managed by this role, but the provider firewall remains the operator's
+responsibility. Allow the current SSH port, hardened SSH port, and WireGuard
+UDP port at the provider before deployment; keep the existing authenticated
+session until a new key-authenticated login succeeds. The SSH tasks validate
+the candidate daemon configuration and restore the prior configuration when
+the new login cannot be proven.
+
+Local syntax checks and QEMU coverage do not prove provider routing or live
+access. Release readiness therefore requires a fresh disposable VPS and an
+external client; missing provider access or live secrets is a blocking result,
+not a skipped pass.
 
 ### Check Mode Support
 Check mode is **not** reliably supported: several tasks use `command`/template

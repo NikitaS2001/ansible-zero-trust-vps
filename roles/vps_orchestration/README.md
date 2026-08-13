@@ -13,7 +13,7 @@ zero-trust VPN gateway:
 - Installs Docker Engine and Docker Compose from the official APT repository
 - Creates the Docker bridge network on a fixed subnet
 - Deploys wg-easy (WireGuard web UI) for VPN client management
-- Deploys AdGuard Home for DNS blocking and `*.internal` hostname resolution
+- Deploys AdGuard Home for DNS blocking and the configured internal suffix
 - Deploys Caddy as a TLS-terminating reverse proxy for internal hostnames
 - Patches UFW to work correctly with Docker published ports
 
@@ -79,7 +79,7 @@ zero-trust VPN gateway:
 |---|---|---|---|---|
 | wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` | 51821 (UI), 51820 (WireGuard UDP) | 51820/udp | WireGuard VPN with password-protected web UI |
 | AdGuard Home | `adguard/adguardhome:v0.107.78` | 3000 (UI), 53 (DNS) | none | DNS sinkhole and `.internal` resolver |
-| Caddy | `caddy:2.11.3` | 80, 443 | none | TLS reverse proxy for internal hostnames |
+| Caddy | `caddy:2.11.4` | 80, 443 | none | TLS reverse proxy for internal hostnames |
 
 Caddy and AdGuard are not published on the public interface. They are accessed
 via the Docker network or through SSH tunnels during initial setup.
@@ -104,25 +104,27 @@ via the Docker network or through SSH tunnels during initial setup.
         adguard_internal_domain: adguard.internal
         wg_easy_bootstrap_ui_port: 51821
         adguard_bootstrap_ui_port: 3000
-        root_ca_path_on_host: "{{ project_root }}/volumes/caddy/data/caddy/pki/authorities/local/root.crt"
+        root_ca_path_on_host: /opt/zero-trust-vps/volumes/caddy/data/caddy/pki/authorities/local/root.crt
         fetched_certs_dir: fetched_certs
-        vault_adguard_password_hash: "{{ adguard_password_hash }}"
+        vault_adguard_password_hash: "$2y$..."
 ```
 
 ## Certificate Fetching
 
-After the role runs, the root CA certificate used for `.internal` hostnames
-is copied from the Caddy container volume to `{{ fetched_certs_dir }}/<hostname>/root.crt`.
+After the role runs, the root CA certificate used for internal hostnames is
+copied from the Caddy container volume to
+`fetched_certs/<inventory-host>/root.crt` by default.
 Import this certificate into your client OS or browser to trust HTTPS endpoints
-on `.internal` domains.
+on the configured suffix.
 
 ## Security Notes
 
 ### File Permissions on Generated Configs
 
 The role writes `AdGuardHome.yaml` from an Ansible template with mode `0600`,
-because it contains the AdGuard admin password hash. wg-easy persists its own
-WireGuard state under `{{ project_root }}/volumes/wg-easy`; review that
+because it contains the AdGuard admin password hash. With the default project
+root, wg-easy persists its own WireGuard state under
+`/opt/zero-trust-vps/volumes/wg-easy`; review that
 directory after first setup if you need stricter host-level permissions.
 
 ### Configuration Lifecycle
@@ -139,6 +141,12 @@ There are two different contracts, know which one applies:
   playbook does not re-apply wg-easy settings. The `INIT_*` block is stripped
   from the Compose file in the same run that creates the server, so the panel
   password is not left on disk.
+- **Caddy extensions are transactionally activated.** The role builds a
+  private candidate from the managed file and every `Caddyfile.d` user site,
+  validates the complete tree with Caddy `2.11.4`, atomically installs the
+  managed file, and reloads the running process only when the tree changed.
+  If reload fails, it rolls back the prior active file and reloads the
+  known-good configuration; invalid candidates never replace the active file.
 
 ### Automated wg-easy Initial Setup
 
@@ -148,7 +156,7 @@ default Allowed IPs) into the Compose file. wg-easy consumes them during the
 first container start and ignores them afterwards, so the panel is
 password-protected without the interactive setup wizard. The `INIT_*` block is
 gated on the wg-easy v15 SQLite database
-(`{{ project_root }}/volumes/wg-easy/wg-easy.db`), which is the authoritative
+(`/opt/zero-trust-vps/volumes/wg-easy/wg-easy.db` by default), which is the authoritative
 initialized-state sentinel (the old `wg0.conf` sentinel did not match the v15
 lifecycle where the DB is the source of truth). On the first deploy the role
 re-renders the Compose file without the block **and** runs a second
@@ -157,6 +165,30 @@ the file and from the running container's `Config.Env`. Existing deployments
 still carrying `INIT_PASSWORD` in the container environment are healed on the
 next playbook run (the role detects it via `docker inspect` and recreates the
 container).
+
+### CVE-2026-63089 route boundary
+
+The stable `ghcr.io/wg-easy/wg-easy:15.3.0` image remains affected and is not
+claimed patched. Caddy returns HTTP `404` plus
+`X-Zero-Trust-Policy: cve-2026-63089` for `/cnf`, `/cnf/`, and `/cnf/*` at the
+wg-easy site. Normal UI and API routes continue to work without the policy
+header. Caddy is container-network-only and is never published on host 443.
+
+### Suffix-only configuration
+
+Setting only `internal_domain_suffix: home.arpa` derives the concrete
+`wg.home.arpa` and `adguard.home.arpa` endpoints. The role renders and tests
+those resolved names; user-facing examples must not contain unresolved Jinja
+domain expressions.
+
+### Recovery contract
+
+Backups are encrypted by default and require a public `AGE_KEY` recipient plus
+the `age` executable before containers stop. `scripts/backup.sh` publishes a
+mode-`0600` `.age` file; plaintext requires `--allow-plaintext`. Restore first
+validates and stages the full archive, then atomically activates it, recomputes
+Compose inputs, and waits for readiness. Startup failure rolls the disk state
+back and restarts the prior stack.
 
 ### Secrets Handling in Installer Mode
 
