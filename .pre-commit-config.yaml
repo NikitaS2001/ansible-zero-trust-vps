@@ -23,6 +23,84 @@ repos:
         args: [install.sh, scripts/verify-ssot.sh]
         pass_filenames: false
 
+  - repo: local
+    hooks:
+      - id: bash-syntax-contract
+        name: Bash syntax contract
+        entry: bash -c 'bash -n install.sh scripts/*.sh tests/validation/*.sh tests/e2e/*.sh'
+        language: system
+        pass_filenames: false
+      - id: shellcheck-contract
+        name: Shellcheck contract
+        entry: bash -c 'shellcheck install.sh scripts/*.sh tests/validation/*.sh tests/e2e/*.sh'
+        language: system
+        pass_filenames: false
+      - id: yamllint-contract
+        name: Yamllint contract
+        entry: yamllint .github/workflows/security.yml .pre-commit-config.yaml
+        language: system
+        pass_filenames: false
+      - id: ssot-contract
+        name: SSOT contract
+        entry: scripts/verify-ssot.sh
+        language: system
+        pass_filenames: false
+      - id: validation-ansible-runtime
+        name: Validation ansible runtime
+        entry: tests/validation/ansible-runtime.sh
+        language: system
+        pass_filenames: false
+      - id: validation-backup-sandbox
+        name: Validation backup sandbox
+        entry: tests/validation/backup-sandbox.sh
+        language: system
+        pass_filenames: false
+      - id: validation-release-contract
+        name: Validation release contract
+        entry: tests/validation/release-contract.sh
+        language: system
+        pass_filenames: false
+      - id: validation-installer-contract
+        name: Validation installer contract
+        entry: tests/validation/installer-contract.sh
+        language: system
+        pass_filenames: false
+      - id: validation-restore-sandbox
+        name: Validation restore sandbox
+        entry: tests/validation/restore-sandbox.sh
+        language: system
+        pass_filenames: false
+      - id: validation-compose-render
+        name: Validation compose render
+        entry: tests/validation/compose-render.sh
+        language: system
+        pass_filenames: false
+      - id: validation-workflow-self-test
+        name: Validation workflow self test
+        entry: tests/validation/workflow-contract.sh --self-test
+        language: system
+        pass_filenames: false
+      - id: validation-output-manifest
+        name: Validation output manifest self test
+        entry: tests/validation/output-manifest.sh --self-test
+        language: system
+        pass_filenames: false
+      - id: validation-evidence-hygiene
+        name: Validation evidence hygiene self test
+        entry: tests/validation/evidence-hygiene.sh --self-test
+        language: system
+        pass_filenames: false
+      - id: validation-github-terminal-audit
+        name: Validation GitHub terminal audit self test
+        entry: tests/validation/github-terminal-audit.sh --self-test
+        language: system
+        pass_filenames: false
+      - id: workflow-contract
+        name: Workflow contract
+        entry: tests/validation/workflow-contract.sh .github/workflows/security.yml
+        language: system
+        pass_filenames: false
+
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.18.2
     hooks:

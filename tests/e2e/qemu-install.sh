@@ -123,6 +123,7 @@ run_public_installer() {
 
 verify_wg_login() {
     local target="$1" port="$2" key="$3" response
+    # shellcheck disable=SC2016
     response="$(printf '%s\n' "${WG_PASS}" | \
         run_remote_stdin "${target}" "${port}" "${key}" \
         'IFS= read -r wg_password; curl -fsS -X POST -H "Content-Type: application/json" --data "{\"username\":\"admin\",\"password\":\"${wg_password}\",\"remember\":false}" http://127.0.0.1:51821/api/session')"
@@ -131,6 +132,7 @@ verify_wg_login() {
 
 verify_bootstrap_secret_free() {
     local target="$1" port="$2" key="$3"
+    # shellcheck disable=SC2016
     run_remote "${target}" "${port}" "${key}" \
         'sudo sh -eu -c '\''
             if grep -Eq "^[[:space:]]+INIT_[A-Z_]+:" /opt/zero-trust-vps/docker-compose.yml; then exit 1; fi

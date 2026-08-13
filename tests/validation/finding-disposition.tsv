@@ -1,0 +1,17 @@
+ID	Source finding	Severity	Decision	Todo	Regression	Final evidence
+R01	invalid internal-domain `when` parser	critical	include	1	ansible runtime matching/mismatch	task-1 log
+R02	unusable fatal libsql/CVE probe	critical	include/remove	8	Caddy route/API client flow	task-8 log
+R03	wg-easy first-start race	critical	include	7	slow bootstrap/retry/idempotency	task-7 logs
+R04	Compose dollar/credential corruption	critical	include	7	punctuation render/authentication	task-7 logs
+R05	AdGuard/wg-easy health false results	high	include	9	stopped/missing/recovery probes	task-9 log
+R06	documented scripts not executable	high	include	12	Git mode/direct invocation	task-12 log
+R07	plaintext/unsafe/incorrect backup output	high	include	2	encrypted/plaintext/failure/race	task-2 log
+R08	unsafe extraction/stale restore Compose args	high	include	6	malicious/round-trip/rollback	task-6 logs
+R09	release pin/tag false positives	high	include	3	pin position/tag mutations	task-3 log
+R10	inherited installer secrets reach children	high	include	4	guarded-main child probe	task-4 log
+R11	CVE route remains reachable	medium	include	8	three blocked paths + normal API	task-8 log
+R12	Caddy extension changes not safely reloaded	medium	include	10	candidate/reload/rollback	task-10 log
+R13	suffix rerun/summary hard-codes `.internal`	medium	include	4,10	`home.arpa` install/rerun	task-4/task-10 logs
+R14	UFW cleanup suppresses backend failures	medium	include	5	absent-rule/backend/SSH rollback	task-5 log
+R15	restore drill omitted from CI ShellCheck	medium	include	12	literal validation manifest	task-12 log
+R16	production-profile broad FQCN churn	low	exclude	-	existing safety-profile lint only	F2 scope audit
