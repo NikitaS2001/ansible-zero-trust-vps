@@ -35,11 +35,16 @@ wg_allowed_ips:
 adguard_version: "v0.107.78"
 
 # Caddy
-caddy_version: "2.11.3"
+caddy_version: "2.11.4"
 
-# Internal domains
-wg_internal_domain: "wg.internal"
-adguard_internal_domain: "adguard.internal"
+# Internal domains. The suffix is used for the AdGuard wildcard rewrite
+# (*.<suffix> -> Caddy) and for the derived default domains below (both can be
+# overridden explicitly). Keep the suffix reserved/private: .internal is
+# ICANN-reserved and .home.arpa is RFC 8375; avoid .local (mDNS conflict) and
+# unreserved suffixes such as .lan or .home.
+internal_domain_suffix: "internal"
+wg_internal_domain: "wg.{{ internal_domain_suffix }}"
+adguard_internal_domain: "adguard.{{ internal_domain_suffix }}"
 
 # Initial setup admin UI access through SSH local forwarding
 wg_easy_bootstrap_ui_port: 51821

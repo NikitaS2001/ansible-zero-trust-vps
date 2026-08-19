@@ -57,10 +57,11 @@
     - name: "SSH | Verify | Wait for sshd on new port"
       wait_for:
         port: "{{ ssh_port }}"
-        host: "{{ ansible_host }}"
+        host: "{{ hostvars[inventory_hostname].ansible_host }}"
         timeout: 30
       delegate_to: localhost
-      when: ansible_connection != "local"
+      become: false
+      when: (hostvars[inventory_hostname].ansible_connection | default("ssh")) != "local"
       tags: [ssh]
   rescue:
     - name: "SSH | Rescue | Restore previous sshd_config"
@@ -73,8 +74,20 @@
       notify: restart sshd
       tags: [ssh]
 
-    - name: "SSH | Rescue | Restart sshd after rollback"
+    - name: "SSH | Rescue | Check whether original SSH listener survived"
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ ansible_port | int }}"
+        state: started
+        timeout: 1
+      register: vps_hardening_original_ssh_listener
+      changed_when: false
+      failed_when: false
+      tags: [ssh]
+
+    - name: "SSH | Rescue | Restart sshd when original listener is absent"
       meta: flush_handlers
+      when: (vps_hardening_original_ssh_listener.state | default("")) != "started"
       tags: [ssh]
 
     - name: "SSH | Rescue | Fail after restoring previous sshd_config"
@@ -83,6 +96,22 @@
           Hardened SSH config was applied but the new SSH port was unreachable.
           The previous sshd_config was restored when a backup was available.
       tags: [ssh]
+
+# Cutover succeeded: drop the temporary allow rule for the old connection
+# port that ufw.yml added, so the firewall converges instead of keeping an
+# orphaned open port. On rollback (the rescue above) this task is skipped and
+# the old-port rule stays, preserving access.
+- name: "SSH | Cleanup | Remove temporary old-port UFW allow after cutover"
+  community.general.ufw:
+    rule: allow
+    port: "{{ ansible_port | int }}"
+    proto: tcp
+    delete: yes
+  when:
+    - ansible_connection | default("") != "local"
+    - ansible_port is defined
+    - (ansible_port | int) != (ssh_port | int)
+  tags: [ssh, ssh_ufw_cleanup]
 
 - name: "SSH | Update | Set ansible connection for remainder"  # noqa: var-naming[no-role-prefix]
   set_fact:

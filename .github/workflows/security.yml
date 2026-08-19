@@ -6,6 +6,8 @@ name: security
   push:
     branches:
       - main
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
@@ -46,21 +48,24 @@ jobs:
         run: yamllint .
 
       - name: Run shellcheck
-        run: |
-          shellcheck \
-            install.sh \
-            scripts/verify-ssot.sh \
-            tests/e2e/common.sh \
-            tests/e2e/qemu-install.sh \
-            tests/e2e/qemu-remote-install.sh \
-            tests/e2e/client-in-guest.sh \
-            tests/e2e/external-client-qemu.sh \
-            tests/e2e/vps-preflight.sh \
-            tests/e2e/run-public-install.sh
+        run: shellcheck install.sh scripts/*.sh tests/validation/*.sh tests/e2e/*.sh
+
+      - name: Run Bash syntax checks
+        run: bash -n install.sh scripts/*.sh tests/validation/*.sh tests/e2e/*.sh
+
+      - name: Run validation manifest
+        run: tests/validation/workflow-contract.sh .github/workflows/security.yml
 
       - name: Run SSOT verification
-        if: github.event_name == 'pull_request'
         run: scripts/verify-ssot.sh
+
+      - name: Run release contract (structural on PR, strict on tags)
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            scripts/release-contract.sh --tag
+          else
+            scripts/release-contract.sh --pr
+          fi
 
       - name: Run gitleaks
         uses: gitleaks/gitleaks-action@v3

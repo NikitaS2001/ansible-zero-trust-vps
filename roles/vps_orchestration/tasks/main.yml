@@ -19,6 +19,53 @@
     - vps_orchestration_ipv6_probe.rc != 0
   tags: [compose]
 
+- name: "VPS Orchestration | Preflight | wg-easy panel password meets v15 minimum"
+  assert:
+    that: wg_easy_admin_password | default('') | length == 0 or wg_easy_admin_password | default('') | length >= 12
+    msg: >
+      wg_easy_admin_password must be empty (manual wizard setup) or at least
+      12 characters; wg-easy v15 rejects shorter passwords at login.
+  tags: [compose]
+
+- name: "VPS Orchestration | Preflight | wg_public_host is set when the panel password is set"
+  fail:
+    msg: >-
+      wg_public_host must be non-empty when wg_easy_admin_password is set;
+      otherwise the INIT_HOST value renders empty and client configs break.
+  when:
+    - wg_easy_admin_password | default('') | length > 0
+    - wg_public_host | default('') | length == 0
+  tags: [compose]
+
+- name: "VPS Orchestration | Preflight | Internal domains match the configured suffix"
+  fail:
+    msg: >
+      {{ wg_internal_domain }} / {{ adguard_internal_domain }} must end with
+      .{{ internal_domain_suffix }} so the AdGuard wildcard rewrite covers them.
+  when: >-
+    not wg_internal_domain.endswith('.' ~ internal_domain_suffix)
+    or not adguard_internal_domain.endswith('.' ~ internal_domain_suffix)
+  tags: [compose, orchestration_domain_preflight]
+
+- name: "VPS Orchestration | Preflight | Probe Docker/WireGuard subnet overlap"
+  command: >
+    python3 -c "import ipaddress,sys; a=ipaddress.ip_network(sys.argv[1]);
+    b=ipaddress.ip_network(sys.argv[2]); sys.exit(1 if a.overlaps(b) else 0)"
+    "{{ docker_network_subnet }}" "{{ wg_vpn_subnet }}"
+  register: vps_orchestration_subnet_overlap
+  changed_when: false
+  failed_when: false
+  tags: [compose]
+
+- name: "VPS Orchestration | Preflight | Fail when Docker and WireGuard subnets overlap"
+  fail:
+    msg: >-
+      docker_network_subnet ({{ docker_network_subnet }}) overlaps the
+      WireGuard subnet ({{ wg_vpn_subnet }}); overlapping ranges would confuse
+      client DNS and routing.
+  when: vps_orchestration_subnet_overlap.rc == 1
+  tags: [compose]
+
 - name: "VPS Orchestration | Main | Include Docker setup"
   include_tasks: docker.yml
   tags: [docker]

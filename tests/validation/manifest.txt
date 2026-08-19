@@ -1,0 +1,10 @@
+ansible-runtime.sh|
+backup-sandbox.sh|
+release-contract.sh|
+installer-contract.sh|
+restore-sandbox.sh|
+compose-render.sh|
+workflow-contract.sh|--self-test
+output-manifest.sh|--self-test
+evidence-hygiene.sh|--self-test
+github-terminal-audit.sh|--self-test

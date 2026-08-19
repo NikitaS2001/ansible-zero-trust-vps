@@ -30,9 +30,13 @@ adguard_container_ip: "10.66.0.2"
 caddy_container_ip: "10.66.0.3"
 wg_easy_container_ip: "10.66.0.4"
 
-# Internal domains
-wg_internal_domain: "wg.internal"
-adguard_internal_domain: "adguard.internal"
+# Internal domains. The suffix drives the AdGuard wildcard rewrite
+# (*.<suffix> -> Caddy) and the derived defaults below (both overridable).
+# Recommended: keep .internal (ICANN-reserved) or use .home.arpa (RFC 8375);
+# avoid .local (mDNS) and unreserved suffixes such as .lan/.home.
+internal_domain_suffix: "internal"
+wg_internal_domain: "wg.{{ internal_domain_suffix }}"
+adguard_internal_domain: "adguard.{{ internal_domain_suffix }}"
 
 # Initial setup admin UI access through SSH local forwarding
 wg_easy_bootstrap_ui_port: 51821

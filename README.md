@@ -59,7 +59,9 @@ ansible-playbook --ask-vault-pass site.yml -u root
 ```
 
 Before a subsequent rerun, update `inventory/hosts.yml` after the initial root
-deployment:
+deployment. Re-runs also reset `admin_user` groups to `admin_group` plus
+`docker` and, by default, replace that account's `authorized_keys` with
+`vault_admin_ssh_pubkey`:
 
 ```yaml
 ansible_user: "<admin_user>"
@@ -90,7 +92,7 @@ flowchart LR
 | --- | --- | --- |
 | wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` | WireGuard UDP; panel on localhost |
 | AdGuard Home | `adguard/adguardhome:v0.107.78` | localhost admin panel |
-| Caddy | `caddy:2.11.3` | VPN-only container TCP/443; not published on host |
+| Caddy | `caddy:2.11.4` | VPN-only container TCP/443; not published on host |
 
 ## Requirements
 
@@ -113,7 +115,7 @@ the complete defaults and the [hardening](roles/vps_hardening/README.md) and
 | Connection | `ansible_host`, `ssh_port`, `wg_port`, `admin_user` |
 | wg-easy | `wg_public_host`, `wg_easy_admin_user`, `wg_easy_admin_password`, `wg_allowed_ips`, `wg_enable_ipv6`, `wg_client_dns` |
 | Docker network | `docker_network_subnet`, `adguard_container_ip`, `caddy_container_ip`, `wg_easy_container_ip` |
-| Internal names | `wg_internal_domain`, `adguard_internal_domain` |
+| Internal names | `wg_internal_domain`, `adguard_internal_domain`, `internal_domain_suffix` |
 | Vault values | `vault_adguard_password_hash`, `vault_admin_ssh_pubkey` |
 
 Encrypt only the two vault files, `vault_services.yml` and `vault_ssh.yml`.
@@ -145,6 +147,66 @@ For the optional AdGuard bootstrap panel, use:
 ssh -p <ssh_port> -L 3000:127.0.0.1:3000 <admin_user>@<ansible_host>
 ```
 
+## Add Your Own Service Behind an Internal Domain
+
+The stack is a platform: after installation you can add services and expose
+them under internal domains (default `*.internal`, or your configured
+`internal_domain_suffix`), reachable only through the VPN. DNS is already
+handled — AdGuard rewrites `*.<suffix>` to Caddy — so a new service needs two
+files under `/opt/zero-trust-vps/`:
+
+1. **Compose override** — `docker-compose.override.yml` adds the container to
+   the shared `vpn_net` network (the role never overwrites this file):
+   ```yaml
+   services:
+     myservice:
+       image: your/image:tag
+       restart: unless-stopped
+       networks: { vpn_net: {} }
+       volumes: [ "./volumes/myservice:/data" ]
+   ```
+2. **Caddy site block** — `Caddyfile.d/myservice.conf`:
+   ```
+   myservice.internal {
+       tls internal
+       reverse_proxy myservice:80
+   }
+   ```
+Then apply:
+```bash
+# Re-run the public installer, or run the remote ansible-playbook command.
+# The deployment owns validation and activation; do not restart Caddy directly.
+```
+Open `https://myservice.internal` (trust the root CA first). A complete
+working example (Vaultwarden) is in `examples/`.
+
+On every deployment, the role copies the managed Caddyfile and all
+`Caddyfile.d` sites into a private candidate tree, validates the complete tree,
+atomically installs the managed file, and reloads the running Caddy process.
+If reload fails, it rolls back the prior active file and reloads that known-good
+configuration. An invalid user site therefore fails without replacing the
+active configuration.
+
+**Backup contract:** keep user services and their volumes under
+`/opt/zero-trust-vps` (the project root) so `scripts/backup.sh` captures them
+together with the base stack. Anything outside the project root is not backed
+up.
+
+**Choosing a different local domain:** set `internal_domain_suffix` (and, if
+desired, `wg_internal_domain` / `adguard_internal_domain`) in
+`group_vars/all/vars.yml` before deploying. Recommended suffixes: `.internal`
+(ICANN-reserved) or `.home.arpa` (RFC 8375). Avoid `.local` (conflicts with
+mDNS) and unreserved suffixes such as `.lan` or `.home`.
+
+For suffix-only configuration, omit the two hostname overrides:
+
+```yaml
+internal_domain_suffix: home.arpa
+```
+
+The resolved endpoints are `wg.home.arpa` and `adguard.home.arpa`; installer
+summaries and E2E checks use those concrete names.
+
 ## Security Model
 
 - `admin_user` has passwordless sudo and the `docker` group: both are
@@ -157,8 +219,56 @@ ssh -p <ssh_port> -L 3000:127.0.0.1:3000 <admin_user>@<ansible_host>
 - Do not add the VPN subnet to `fail2ban` ignore lists: a compromised VPN
   client must not bypass SSH brute-force protection.
 - wg-easy disables IPv6 to avoid startup failures on providers without it.
+- **CVE route control:** stable wg-easy `15.3.0` remains affected by
+  CVE-2026-63089 and is not claimed as patched. At the VPN-facing Caddy site,
+  `/cnf`, `/cnf/`, and `/cnf/*` return HTTP `404` with
+  `X-Zero-Trust-Policy: cve-2026-63089`; normal UI and API routes continue to
+  work and do not carry that policy header. The role also verifies that the
+  panel is not publicly published and no one-time-link rows are active. Keep
+  `15.3.0` until a stable fixed release is deliberately qualified; do not
+  substitute a beta build.
 
 ## Operations and Recovery
+
+### Backup and Restore
+
+`scripts/backup.sh` snapshots the stack on the VPS. Encrypted backup is the
+default: before it stops the containers, the script requires both `AGE_KEY`
+as a public age recipient and the `age` executable. It then archives the
+project runtime state (`volumes/*`, `docker-compose.yml`,
+`docker-compose.override.yml`, `Caddyfile`, and `Caddyfile.d`), restarts the
+containers, atomically publishes a `.age` file with mode `0600`, and rotates
+old archives (keep last 14 by default). Plaintext requires the explicit
+`--allow-plaintext` flag and still publishes the archive with mode `0600`.
+
+```bash
+age-keygen -o ~/.config/zt/age-identity.txt      # one-time; keep this safe
+sudo env AGE_KEY="..." scripts/backup.sh
+# Explicit plaintext escape hatch:
+sudo scripts/backup.sh --allow-plaintext
+# Restore an encrypted backup with the private age identity:
+sudo scripts/restore.sh /opt/zt-backups/zt-....tar.gz.age ~/.config/zt/age-identity.txt
+```
+
+Use the public recipient printed by
+`age-keygen -y ~/.config/zt/age-identity.txt` in place of `...`; keep the
+private identity off-host. Schedule the encrypted form nightly (cron):
+
+```
+0 3 * * * root env AGE_KEY=age1... /opt/zero-trust-vps-installer/repo/scripts/backup.sh >> /var/log/zt-backup.log 2>&1
+```
+
+Restore validates archive paths and member types before extraction, stages a
+complete candidate beside the live project, stops the current stack only
+after validation, and activates the candidate atomically. It recomputes the
+Compose file set and starts the restored stack, then waits for service
+readiness. If activation or startup fails, it rolls back to the prior project
+tree and reruns Compose/readiness for that prior state.
+
+Copy the archive off-host (rsync/scp/restic to a separate location) — an
+on-host backup does not survive disk loss. For very large volumes, prefer
+restic over tar. The backup/restore round-trip is exercised by
+`tests/e2e/restore-drill.sh`.
 
 ### SSH Lockout Recovery
 
@@ -173,29 +283,6 @@ sudo ufw status verbose
 sudo ss -ltnp | grep ssh
 sudo systemctl status ssh
 ```
-
-### Backups
-
-Back up `/opt/zero-trust-vps/volumes`, including `wg-easy/` client/server keys,
-`adguard/` configuration and filters, and `caddy/data/` with the internal root
-CA. Losing Caddy data invalidates imported certificates; losing wg-easy means
-re-issuing all clients. Archive the whole directory and test a restore:
-
-```bash
-sudo sh -c '
-set -eu
-umask 077
-tmp="$(mktemp /root/zero-trust-vps-volumes.tgz.XXXXXX)"
-trap "unlink \"$tmp\"" EXIT HUP INT TERM
-tar -czf "$tmp" -C /opt/zero-trust-vps volumes
-mv -f "$tmp" /root/zero-trust-vps-volumes.tgz
-trap - EXIT HUP INT TERM
-'
-```
-
-Keep `/root/zero-trust-vps-volumes.tgz` access-controlled (root-only, mode
-`0600`); encrypt it before any off-host transfer and use protected storage.
-No backup automation is implemented; keep and test your own restore process.
 
 ### Troubleshooting
 
@@ -215,8 +302,8 @@ No backup automation is implemented; keep and test your own restore process.
   ```
 
 If reset is necessary, it irreversibly loses wg-easy keys and requires
-recreating clients. First create and keep the protected
-`/root/zero-trust-vps-volumes.tgz` archive described above, then:
+recreating clients. First create and retain an encrypted backup with
+`scripts/backup.sh`, then:
 
 ```bash
 sudo docker compose -f /opt/zero-trust-vps/docker-compose.yml down
@@ -224,6 +311,27 @@ sudo rm -rf /opt/zero-trust-vps/volumes/wg-easy
 ```
 
 Rerun the installer or playbook afterward.
+
+## Releases
+
+Installable artifacts are immutable git tags (`vX.Y.Z`). The installer deployed
+from a tag must deploy exactly that tag — `scripts/release-contract.sh`
+enforces this (`--tag` on tag pushes in CI, `--pr` structural checks on every
+pull request). The release step is explicit and mechanical:
+
+1. Bump the default `ZERO_TRUST_RELEASE_REF` in `install.sh` to the new tag.
+2. Update the README quickstart URL to the same tag.
+3. Run `scripts/release-contract.sh --pr` locally; create an **annotated and
+   signed** tag (`git tag -s -a vX.Y.Z -m ...`) on the release commit.
+4. Push the tag; CI runs `--tag` and prints the artifact SHA256 checksums —
+   publish them in the release notes so users can verify `install.sh` before
+   running `curl | sudo bash`.
+
+Mutable refs (`main`, branches) are for testing unreleased changes only, via
+the documented `ZERO_TRUST_RELEASE_REF` override. Known limitation (accepted
+risk): `install.sh` itself does not cryptographically verify the fetched ref
+signature before executing it; the SHA256 checksums published in the release
+notes are the manual verification path.
 
 ## Development and Testing
 
@@ -237,9 +345,11 @@ bash scripts/verify-ssot.sh
 ```
 
 CI runs syntax checks, Ansible/YAML/Shell lint, SSOT validation on pull
-requests, and gitleaks. The [E2E matrix](tests/e2e/README.md) covers public,
-remote, reboot, idempotency, client, and real-VPS tests; the real-VPS workflow
-is manual `workflow_dispatch`. Run remote QEMU coverage explicitly with:
+requests, and gitleaks. The [E2E matrix](tests/e2e/README.md) uses disposable
+local and remote QEMU for software merge readiness; GitHub Actions stores no
+VPS credential and live external host availability is out of scope. QEMU does
+not prove provider-firewall behavior, which remains an operator responsibility.
+Run remote QEMU coverage explicitly with:
 
 ```bash
 bash tests/e2e/qemu-remote-install.sh

@@ -31,25 +31,29 @@ services:
       # INSECURE=true serves the wg-easy UI over HTTP on 127.0.0.1. It is
       # reachable only via an SSH tunnel or through Caddy TLS over the VPN,
       # and the panel itself is password-protected by the INIT_* setup.
-      - INSECURE=true
+      INSECURE: "true"
 {% if (wg_enable_ipv6 | default(false) | bool) %}
       # IPv6 mode: wg-easy allocates IPv6 subnets for clients and NATs their
       # traffic; requires a host with global IPv6 connectivity.
-      - DISABLE_IPV6=false
+      DISABLE_IPV6: "false"
 {% else %}
-      - DISABLE_IPV6=true
+      DISABLE_IPV6: "true"
 {% endif %}
-{% if (not wg_easy_initialized | default(false) | bool) and (wg_easy_admin_password | length > 0) %}
+{% if (wg_easy_include_init | default(false) | bool) and (wg_easy_admin_password | length > 0) %}
       # First-start only: wg-easy consumes the INIT_* variables during its
       # initial setup and ignores them afterwards. They are rendered only until
       # the WireGuard config exists so the panel password is not persisted here.
-      - INIT_ENABLED=true
-      - INIT_USERNAME={{ wg_easy_admin_user }}
-      - INIT_PASSWORD={{ wg_easy_admin_password }}
-      - INIT_HOST={{ wg_public_host }}
-      - INIT_PORT={{ wg_port }}
-      - INIT_DNS={{ wg_client_dns }}
-      - INIT_ALLOWED_IPS={% if (wg_enable_ipv6 | default(false) | bool) %}{{ (wg_allowed_ips + ['::/0']) | join(',') }}{% else %}{{ wg_allowed_ips | join(',') }}{% endif %}
+      INIT_ENABLED: "true"
+      INIT_USERNAME: {{ wg_easy_admin_user | string | to_json }}
+      INIT_PASSWORD: {{ (wg_easy_admin_password | replace('$', '$$')) | to_json }}
+      INIT_HOST: {{ wg_public_host | string | to_json }}
+      INIT_PORT: {{ wg_port | string | to_json }}
+      INIT_DNS: {{ wg_client_dns | string | to_json }}
+{% if (wg_enable_ipv6 | default(false) | bool) %}
+      INIT_ALLOWED_IPS: {{ (wg_allowed_ips + ['::/0']) | join(',') | to_json }}
+{% else %}
+      INIT_ALLOWED_IPS: {{ wg_allowed_ips | join(',') | to_json }}
+{% endif %}
 {% endif %}
     volumes:
       - "{{ project_root }}/volumes/wg-easy:/etc/wireguard"
@@ -57,6 +61,8 @@ services:
     ports:
       - "{{ wg_port }}:{{ wg_container_port }}/udp"
       - "127.0.0.1:{{ wg_easy_bootstrap_ui_port }}:51821/tcp"
+    healthcheck:
+      disable: true
     networks:
       vpn_net:
         ipv4_address: "{{ wg_easy_container_ip }}"
@@ -73,6 +79,12 @@ services:
     volumes:
       - "{{ project_root }}/volumes/adguard/work:/opt/adguardhome/work"
       - "{{ project_root }}/volumes/adguard/conf:/opt/adguardhome/conf"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   caddy:
     image: caddy:{{ caddy_version }}
@@ -85,3 +97,11 @@ services:
       - "{{ project_root }}/volumes/caddy/data:/data"
       - "{{ project_root }}/volumes/caddy/config:/config"
       - "{{ project_root }}/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - "{{ project_root }}/Caddyfile.d:/etc/caddy/Caddyfile.d:ro"
+    healthcheck:
+      # Caddy's local admin endpoint is enabled by default on 127.0.0.1:2019.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

@@ -28,7 +28,12 @@ SSH_PUBKEY=""
 WG_PASSWORD=""
 WG_HOST=""
 WG_ENABLE_IPV6=""
+INTERNAL_DOMAIN_SUFFIX=""
 NONINTERACTIVE=""
+INHERITED_ADMIN_PASSWORD=""
+INHERITED_ADGUARD_PASSWORD=""
+INHERITED_WG_PASSWORD=""
+INHERITED_SSH_PUBKEY=""
 
 cleanup_on_failure() {
     local exit_code=$?
@@ -80,6 +85,9 @@ Non-interactive mode for automated testing:
   ZERO_TRUST_ADGUARD_PASSWORD  AdGuard admin password (required, min 8 chars)
   ZERO_TRUST_WG_PASSWORD       WireGuard panel password (required, min 8 chars)
   ZERO_TRUST_INTERNAL_DOMAINS  Two internal hostnames, space separated
+  ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX  Local DNS suffix for the internal domains
+                               (optional, default internal; recommended
+                               .internal or .home.arpa)
   ZERO_TRUST_SSH_PUBKEY        SSH public key for the admin user (required)
   ZERO_TRUST_WG_HOST           Public hostname/IP for clients (optional,
                                auto-detected when omitted)
@@ -259,6 +267,26 @@ validate_internal_domains() {
     ADGUARD_INTERNAL_DOMAIN="${internal_domains[1]}"
 }
 
+validate_internal_domain_suffix() {
+    local suffix="$1"
+    local domains="$2"
+
+    if [[ -z "${suffix}" ]]; then
+        return 0
+    fi
+    validate_hostname "${suffix}" || error "Invalid internal domain suffix: ${suffix}"
+    if [[ -n "${domains}" ]]; then
+        local -a internal_domains
+        read -r -a internal_domains <<<"${domains}"
+        local d
+        for d in "${internal_domains[@]}"; do
+            if [[ "${d}" != *".${suffix}" ]]; then
+                error "Internal domain '${d}' does not end with the configured suffix '.${suffix}'."
+            fi
+        done
+    fi
+}
+
 validate_ssh_pubkey() {
     local value="$1"
     local key_type
@@ -363,7 +391,9 @@ checkout_release() {
 
 install_collections() {
     info "Installing Ansible collections from requirements.yml..."
-    "${VENV_DIR}/bin/ansible-galaxy" collection install -r "${REPO_DIR}/requirements.yml"
+    # --force: requirements.yml pins exact versions, and without --force an
+    # already-installed older satisfying version would be kept forever.
+    "${VENV_DIR}/bin/ansible-galaxy" collection install -r "${REPO_DIR}/requirements.yml" --force
 }
 
 collect_configuration() {
@@ -380,6 +410,7 @@ collect_configuration() {
     prompt_required_secret ADGUARD_PASSWORD "AdGuard admin password (min 8 chars)"
     prompt_required_secret WG_PASSWORD "WireGuard panel password (min 12 chars)"
     prompt_optional INTERNAL_DOMAINS "Internal domains, separated by space"
+    prompt_optional INTERNAL_DOMAIN_SUFFIX "Internal domain suffix (Enter for role default: internal)"
     prompt_optional WG_HOST "WireGuard public hostname or IP (Enter to auto-detect)"
     prompt_yesno WG_ENABLE_IPV6 "Enable IPv6 in the VPN stack"
     prompt_required_line SSH_PUBKEY "SSH public key"
@@ -392,6 +423,7 @@ collect_configuration() {
     validate_port "WireGuard port" "${WG_PORT}"
     validate_optional_admin_user "${ADMIN_USER}"
     validate_internal_domains "${INTERNAL_DOMAINS}"
+    validate_internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${INTERNAL_DOMAINS}"
     validate_ssh_pubkey "${SSH_PUBKEY}"
     if [[ -n "${WG_HOST}" ]] && ! validate_hostname "${WG_HOST}"; then
         error "Invalid public hostname or IP for WireGuard clients: ${WG_HOST}"
@@ -435,11 +467,12 @@ collect_configuration_noninteractive() {
     SSH_PORT="${ZERO_TRUST_SSH_PORT:-}"
     WG_PORT="${ZERO_TRUST_WG_PORT:-}"
     ADMIN_USER="${ZERO_TRUST_ADMIN_USER:-}"
-    ADMIN_PASSWORD="${ZERO_TRUST_ADMIN_PASSWORD:-}"
-    ADGUARD_PASSWORD="${ZERO_TRUST_ADGUARD_PASSWORD:-}"
-    WG_PASSWORD="${ZERO_TRUST_WG_PASSWORD:-}"
+    ADMIN_PASSWORD="${INHERITED_ADMIN_PASSWORD}"
+    ADGUARD_PASSWORD="${INHERITED_ADGUARD_PASSWORD}"
+    WG_PASSWORD="${INHERITED_WG_PASSWORD}"
     INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-}"
-    SSH_PUBKEY="${ZERO_TRUST_SSH_PUBKEY:-}"
+    INTERNAL_DOMAIN_SUFFIX="${ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX:-}"
+    SSH_PUBKEY="${INHERITED_SSH_PUBKEY}"
     WG_HOST="${ZERO_TRUST_WG_HOST:-}"
     WG_ENABLE_IPV6="${ZERO_TRUST_WG_ENABLE_IPV6:-}"
 
@@ -464,6 +497,7 @@ collect_configuration_noninteractive() {
     validate_port "WireGuard port" "${WG_PORT}"
     validate_optional_admin_user "${ADMIN_USER}"
     validate_internal_domains "${INTERNAL_DOMAINS}"
+    validate_internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${INTERNAL_DOMAINS}"
     validate_ssh_pubkey "${SSH_PUBKEY}"
     if [[ -n "${WG_HOST}" ]] && ! validate_hostname "${WG_HOST}"; then
         error "Invalid public hostname or IP for WireGuard clients: ${WG_HOST}"
@@ -515,6 +549,11 @@ prepare_extra_vars_file() {
     write_extra_var wg_public_host "${WG_HOST}"
     write_extra_var vault_admin_ssh_pubkey "${SSH_PUBKEY}"
 
+    # The secrets were just written to the 0600 extra-vars file; drop them from
+    # the environment so child processes (ansible-pull, git) cannot see them.
+    unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
+    unset INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY
+
     if [[ -n "${SSH_PORT}" ]]; then
         write_extra_var ssh_port "${SSH_PORT}"
     fi
@@ -536,6 +575,9 @@ prepare_extra_vars_file() {
     fi
     if [[ -n "${ADGUARD_INTERNAL_DOMAIN}" ]]; then
         write_extra_var adguard_internal_domain "${ADGUARD_INTERNAL_DOMAIN}"
+    fi
+    if [[ -n "${INTERNAL_DOMAIN_SUFFIX}" ]]; then
+        write_extra_var internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}"
     fi
 }
 
@@ -560,8 +602,9 @@ run_ansible_pull() {
 print_summary() {
     local summary_ssh_port="${SSH_PORT:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" ssh_port)}"
     local summary_admin_user="${ADMIN_USER:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" admin_user)}"
-    local summary_wg_domain="${WG_INTERNAL_DOMAIN:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" wg_internal_domain)}"
-    local summary_adguard_domain="${ADGUARD_INTERNAL_DOMAIN:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" adguard_internal_domain)}"
+    local summary_domain_suffix="${INTERNAL_DOMAIN_SUFFIX:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" internal_domain_suffix)}"
+    local summary_wg_domain="${WG_INTERNAL_DOMAIN:-wg.${summary_domain_suffix}}"
+    local summary_adguard_domain="${ADGUARD_INTERNAL_DOMAIN:-adguard.${summary_domain_suffix}}"
     local summary_wg_ui_port
     local summary_adguard_ui_port
     local summary_wg_port="${WG_PORT:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" wg_port)}"
@@ -600,6 +643,15 @@ EOF
 }
 
 main() {
+    export -n ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY 2>/dev/null || true
+    export -n INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY 2>/dev/null || true
+    INHERITED_ADMIN_PASSWORD="${ZERO_TRUST_ADMIN_PASSWORD:-}"
+    INHERITED_ADGUARD_PASSWORD="${ZERO_TRUST_ADGUARD_PASSWORD:-}"
+    INHERITED_WG_PASSWORD="${ZERO_TRUST_WG_PASSWORD:-}"
+    INHERITED_SSH_PUBKEY="${ZERO_TRUST_SSH_PUBKEY:-}"
+    export -n ZERO_TRUST_ADMIN_PASSWORD ZERO_TRUST_ADGUARD_PASSWORD ZERO_TRUST_WG_PASSWORD ZERO_TRUST_SSH_PUBKEY 2>/dev/null || true
+    unset ZERO_TRUST_ADMIN_PASSWORD ZERO_TRUST_ADGUARD_PASSWORD ZERO_TRUST_WG_PASSWORD ZERO_TRUST_SSH_PUBKEY
+
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
         usage
         exit 0
@@ -633,4 +685,8 @@ main() {
     print_summary
 }
 
-main "$@"
+# curl | bash leaves BASH_SOURCE unset; ${parameter:-$0} still invokes main.
+# Sourcing the file keeps BASH_SOURCE different from $0, so tests can stub main.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+    main "$@"
+fi

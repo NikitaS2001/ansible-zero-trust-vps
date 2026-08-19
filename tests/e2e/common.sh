@@ -2,6 +2,11 @@
 # Shared helpers for tests/e2e/*.sh
 set -euo pipefail
 
+# Internal domain names, overridable via the environment for deployments that
+# use a custom internal_domain_suffix.
+WG_INTERNAL_DOMAIN="${WG_INTERNAL_DOMAIN:-wg.internal}"
+ADGUARD_INTERNAL_DOMAIN="${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}"
+
 fail() {
     echo "[FAIL] $*" >&2
     exit 1
@@ -11,10 +16,39 @@ pass() {
     echo "[PASS] $*"
 }
 
+validate_recent_matching_handshake_epochs() {
+    local now="$1" client_epoch="$2" server_epoch="$3"
+
+    [[ "${now}" =~ ^[1-9][0-9]*$ \
+        && "${client_epoch}" =~ ^[1-9][0-9]*$ \
+        && "${server_epoch}" =~ ^[1-9][0-9]*$ ]] || return 1
+    ((client_epoch <= now && server_epoch <= now)) || return 1
+    ((now - client_epoch < 180 && now - server_epoch < 180)) || return 1
+    [[ "${client_epoch}" == "${server_epoch}" ]]
+}
+
+validate_restored_handshake_epochs() {
+    local now="$1" boundary="$2" pre_client="$3" pre_server="$4"
+    local client_epoch="$5" server_epoch="$6"
+
+    [[ "${boundary}" =~ ^[1-9][0-9]*$ \
+        && "${pre_client}" =~ ^[1-9][0-9]*$ \
+        && "${pre_server}" =~ ^[1-9][0-9]*$ ]] || return 1
+    validate_recent_matching_handshake_epochs \
+        "${now}" "${client_epoch}" "${server_epoch}" || return 1
+    ((client_epoch > pre_client && server_epoch > pre_server)) || return 1
+    ((client_epoch >= boundary && server_epoch >= boundary))
+}
+
 run_remote() {
     local target="$1"; shift
     local port="$1"; shift
     local key="$1"; shift
+    if [[ -n "${E2E_KNOWN_HOSTS:-}" ]]; then
+        run_remote_authenticated "${target}" "${port}" "${key}" \
+            "${E2E_KNOWN_HOSTS}" "$@"
+        return
+    fi
     ssh -p "${port}" -i "${key}" \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         -o ConnectTimeout=10 -o BatchMode=yes \
@@ -25,19 +59,152 @@ run_remote_stdin() {
     local target="$1"; shift
     local port="$1"; shift
     local key="$1"; shift
+    if [[ -n "${E2E_KNOWN_HOSTS:-}" ]]; then
+        run_remote_authenticated "${target}" "${port}" "${key}" \
+            "${E2E_KNOWN_HOSTS}" "$@"
+        return
+    fi
     ssh -p "${port}" -i "${key}" \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         -o ConnectTimeout=10 -o BatchMode=yes \
         "${target}" "$@"
 }
 
+record_ssh_host_key() {
+    local host="$1" port="$2" known_hosts="$3"
+    local scan_file
+    scan_file="$(mktemp "${known_hosts}.scan.XXXXXX")"
+    chmod 0600 "${scan_file}"
+    if ! ssh-keyscan -T 5 -p "${port}" -t ed25519 "${host}" \
+        >"${scan_file}" 2>/dev/null; then
+        rm -f "${scan_file}"
+        fail "could not record SSH host key for ${host}:${port}"
+    fi
+    if [[ "$(sed '/^[[:space:]]*#/d;/^[[:space:]]*$/d' "${scan_file}" | wc -l)" -ne 1 ]]; then
+        rm -f "${scan_file}"
+        fail "expected exactly one ED25519 host key for ${host}:${port}"
+    fi
+    cat "${scan_file}" >>"${known_hosts}"
+    rm -f "${scan_file}"
+    chmod 0600 "${known_hosts}"
+}
+
+# Authenticated SSH used by cutover/rollback probes. Keep this option vector in
+# lock-step with the production verification contract.
+run_remote_authenticated() {
+    local target="$1" port="$2" key="$3" known_hosts="$4"
+    shift 4
+    ssh -F none -i "${key}" -p "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        "${target}" "$@"
+}
+
+copy_remote_authenticated() {
+    local host="$1" port="$2" key="$3" known_hosts="$4" source="$5" destination="$6"
+    scp -F none -i "${key}" -P "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        "${source}" "${host}:${destination}"
+}
+
+require_wrong_host_key_rejected() {
+    local target="$1" port="$2" key="$3"
+    local probe_dir bad_hosts host
+    probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-hostkey.XXXXXX")"
+    bad_hosts="${probe_dir}/known_hosts"
+    host="${target#*@}"
+    ssh-keygen -q -t ed25519 -N '' -f "${probe_dir}/host" -C host-key-negative
+    printf '[%s]:%s %s\n' "${host}" "${port}" \
+        "$(cut -d' ' -f1,2 "${probe_dir}/host.pub")" >"${bad_hosts}"
+    chmod 0600 "${bad_hosts}"
+    if run_remote_authenticated "${target}" "${port}" "${key}" "${bad_hosts}" \
+        true >/dev/null 2>&1; then
+        rm -rf -- "${probe_dir}"
+        fail "SSH accepted a mismatched pinned host key"
+    fi
+    rm -rf -- "${probe_dir}"
+    pass "SSH rejected a mismatched pinned host key"
+}
+
+require_wrong_scp_host_key_rejected() {
+    local target="$1" port="$2" key="$3"
+    local probe_dir bad_hosts host
+    probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/ztvps-scp-hostkey.XXXXXX")"
+    bad_hosts="${probe_dir}/known_hosts"
+    host="${target#*@}"
+    ssh-keygen -q -t ed25519 -N '' -f "${probe_dir}/host" -C scp-host-key-negative
+    printf '[%s]:%s %s\n' "${host}" "${port}" \
+        "$(cut -d' ' -f1,2 "${probe_dir}/host.pub")" >"${bad_hosts}"
+    printf 'host-key-negative\n' >"${probe_dir}/payload"
+    chmod 0600 "${bad_hosts}" "${probe_dir}/payload"
+    if copy_remote_authenticated "${target}" "${port}" "${key}" "${bad_hosts}" \
+        "${probe_dir}/payload" /tmp/ztvps-scp-host-key-negative; then
+        rm -rf -- "${probe_dir}"
+        fail "SCP accepted a mismatched pinned host key"
+    fi
+    rm -rf -- "${probe_dir}"
+    pass "SCP rejected a mismatched pinned host key"
+}
+
+open_authenticated_ssh_control() {
+    local target="$1" port="$2" key="$3" known_hosts="$4" control_socket="$5"
+    ssh -F none -i "${key}" -p "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        -o ConnectTimeout=10 \
+        -o ControlMaster=yes -o ControlPath="${control_socket}" \
+        -o ControlPersist=600 -fN "${target}"
+}
+
+run_remote_over_control() {
+    local target="$1" port="$2" key="$3" known_hosts="$4" control_socket="$5"
+    shift 5
+    ssh -F none -i "${key}" -p "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        -o ControlPath="${control_socket}" \
+        "${target}" "$@"
+}
+
+close_authenticated_ssh_control() {
+    local target="$1" port="$2" key="$3" known_hosts="$4" control_socket="$5"
+    ssh -F none -i "${key}" -p "${port}" \
+        -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="${known_hosts}" \
+        -o GlobalKnownHostsFile=/dev/null \
+        -o ControlPath="${control_socket}" -O exit "${target}" >/dev/null
+}
+
+require_authenticated_ssh_closed() {
+    local target="$1" port="$2" key="$3" known_hosts="$4"
+    if run_remote_authenticated "${target}" "${port}" "${key}" "${known_hosts}" \
+        'true' >/dev/null 2>&1; then
+        fail "authenticated SSH unexpectedly remained open on ${target}:${port}"
+    fi
+}
+
 require_ssh_down() {
     local target="$1"; local port="$2"; local key="$3"; local retries="${4:-30}"
     local i=0
-    while ssh -p "${port}" -i "${key}" \
-        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=3 -o BatchMode=yes \
-        "${target}" 'true' >/dev/null 2>&1; do
+    while if [[ -n "${E2E_KNOWN_HOSTS:-}" ]]; then
+        run_remote_authenticated "${target}" "${port}" "${key}" \
+            "${E2E_KNOWN_HOSTS}" true >/dev/null 2>&1
+    else
+        ssh -p "${port}" -i "${key}" \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=3 -o BatchMode=yes \
+            "${target}" true >/dev/null 2>&1
+    fi; do
         i=$((i + 1))
         if [[ "${i}" -ge "${retries}" ]]; then
             fail "SSH on ${target}:${port} did not go down (expected after reboot)"
@@ -49,14 +216,36 @@ require_ssh_down() {
 require_ssh_ready() {
     local target="$1"; local port="$2"; local key="$3"; local retries="${4:-30}"
     local i=0
-    while ! ssh -p "${port}" -i "${key}" \
-        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=5 -o BatchMode=yes \
-        "${target}" 'true' >/dev/null 2>&1; do
+    while ! if [[ -n "${E2E_KNOWN_HOSTS:-}" ]]; then
+        run_remote_authenticated "${target}" "${port}" "${key}" \
+            "${E2E_KNOWN_HOSTS}" true >/dev/null 2>&1
+    else
+        ssh -p "${port}" -i "${key}" \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=5 -o BatchMode=yes \
+            "${target}" true >/dev/null 2>&1
+    fi; do
         i=$((i + 1))
         if [[ "${i}" -ge "${retries}" ]]; then
             fail "SSH did not become ready on ${target}:${port}"
         fi
+        sleep 5
+    done
+}
+
+require_rebooted() {
+    local target="$1" port="$2" key="$3" previous_boot_id="$4" retries="${5:-60}"
+    local current_boot_id i=0
+    while true; do
+        current_boot_id="$(run_remote "${target}" "${port}" "${key}" \
+            'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
+        if [[ "${current_boot_id}" =~ ^[0-9a-f-]{36}$ && \
+              "${current_boot_id}" != "${previous_boot_id}" ]]; then
+            return 0
+        fi
+        i=$((i + 1))
+        [[ "${i}" -lt "${retries}" ]] || \
+            fail "guest did not return with a new boot identity"
         sleep 5
     done
 }
@@ -82,12 +271,16 @@ verify_deployment() {
     grep -q "${wg_port}/udp" <<<"${out}" || fail "WireGuard port ${wg_port}/udp missing from UFW"
     pass "UFW rules"
 
-    echo "[check] wg-easy, adguard and caddy containers are running"
-    out="$(run_remote "${target}" "${port}" "${key}" 'sudo docker ps --format "{{.Names}} {{.Status}}"')"
-    for c in wg-easy adguard caddy; do
-        grep -q "^${c} " <<<"${out}" || fail "container ${c} is not running"
+    echo "[check] container running state and optional health are ready"
+    out="$(run_remote "${target}" "${port}" "${key}" \
+        'sudo docker inspect --format "{{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" wg-easy adguard caddy')"
+    grep -Eq '^/wg-easy running (none|healthy)$' <<<"${out}" || \
+        fail "wg-easy is not running and ready: ${out}"
+    for c in adguard caddy; do
+        grep -q "^/${c} running healthy$" <<<"${out}" || \
+            fail "container ${c} is not running and healthy: ${out}"
     done
-    pass "containers up"
+    pass "container state and health"
 
     echo "[check] WireGuard interface is up inside wg-easy"
     run_remote "${target}" "${port}" "${key}" 'sudo docker exec wg-easy wg show' >/dev/null
