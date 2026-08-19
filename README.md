@@ -318,8 +318,7 @@ enforces this (`--tag` on tag pushes in CI, `--pr` structural checks on every
 pull request). The release step is explicit and mechanical:
 
 1. Bump the default `ZERO_TRUST_RELEASE_REF` in `install.sh` to the new tag.
-2. Update the README quickstart URL and the `e2e-public-install.yml`
-   `install_ref` default to the same tag.
+2. Update the README quickstart URL to the same tag.
 3. Run `scripts/release-contract.sh --pr` locally; create an **annotated and
    signed** tag (`git tag -s -a vX.Y.Z -m ...`) on the release commit.
 4. Push the tag; CI runs `--tag` and prints the artifact SHA256 checksums —

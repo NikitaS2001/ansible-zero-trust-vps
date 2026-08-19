@@ -115,6 +115,8 @@ verify_doc_contract() {
         || fail "README.md must show the resolved wg.home.arpa name"
     grep -Fq 'adguard.home.arpa' "${docs_root}/README.md" \
         || fail "README.md must show the resolved adguard.home.arpa name"
+    ! grep -Fq 'e2e-public-install.yml' "${docs_root}/README.md" \
+        || fail "README.md must not reference the retired external-VPS workflow"
     ! grep -ERq '(wg|adguard)\.\{\{|\*\.\{\{' \
         "${docs_root}/README.md" "${docs_root}/roles/vps_hardening/README.md" \
         "${docs_root}/roles/vps_orchestration/README.md" "${docs_root}/tests/e2e/README.md" \
@@ -309,6 +311,15 @@ run_doc_contract_self_test() {
         fail "doc-contract accepted GitHub VPS credentials"
     fi
     pass "doc-contract rejects GitHub VPS credentials inner_rc=1"
+
+    mutation_root="${WORK_DIR}/mutation-retired-workflow-link"
+    copy_doc_fixture "${mutation_root}"
+    sed -i '/^2\. Update the README quickstart URL/a 2a. Update e2e-public-install.yml install_ref to the same tag.' \
+        "${mutation_root}/README.md"
+    if (verify_doc_contract "${mutation_root}") >/dev/null 2>&1; then
+        fail "doc-contract accepted a retired workflow link"
+    fi
+    pass "doc-contract rejects retired workflow links inner_rc=1"
 }
 
 if [[ ${1:-} == --self-test-doc-contract ]]; then
