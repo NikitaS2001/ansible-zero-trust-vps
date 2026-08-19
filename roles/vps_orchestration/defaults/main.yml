@@ -9,7 +9,7 @@ caddy_container_ip: "10.66.0.3"
 wg_easy_container_ip: "10.66.0.4"
 
 # WireGuard
-wg_easy_version: "15.3.0"
+wg_easy_version: "15.4.0"
 wg_vpn_subnet: "10.8.0.0/24"
 wg_server_ip: "10.8.0.1"
 wg_client_dns: "10.66.0.2"

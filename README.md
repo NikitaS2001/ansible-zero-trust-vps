@@ -90,7 +90,7 @@ flowchart LR
 
 | Service | Image | Exposure |
 | --- | --- | --- |
-| wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` | WireGuard UDP; panel on localhost |
+| wg-easy | `ghcr.io/wg-easy/wg-easy:15.4.0` | WireGuard UDP; panel on localhost |
 | AdGuard Home | `adguard/adguardhome:v0.107.78` | localhost admin panel |
 | Caddy | `caddy:2.11.4` | VPN-only container TCP/443; not published on host |
 
@@ -182,10 +182,12 @@ working example (Vaultwarden) is in `examples/`.
 
 On every deployment, the role copies the managed Caddyfile and all
 `Caddyfile.d` sites into a private candidate tree, validates the complete tree,
-atomically installs the managed file, and reloads the running Caddy process.
-If reload fails, it rolls back the prior active file and reloads that known-good
-configuration. An invalid user site therefore fails without replacing the
-active configuration.
+then atomically stages and installs the managed file in place onto the existing
+bind-mount inode, and reloads the running Caddy process. If reload fails, it
+rolls back the prior active file onto that same inode and reloads that
+known-good configuration. An invalid user site therefore fails without replacing
+the active configuration. `mv` onto the live Caddyfile would leave a running
+container on the old inode.
 
 **Backup contract:** keep user services and their volumes under
 `/opt/zero-trust-vps` (the project root) so `scripts/backup.sh` captures them
@@ -219,14 +221,13 @@ summaries and E2E checks use those concrete names.
 - Do not add the VPN subnet to `fail2ban` ignore lists: a compromised VPN
   client must not bypass SSH brute-force protection.
 - wg-easy disables IPv6 to avoid startup failures on providers without it.
-- **CVE route control:** stable wg-easy `15.3.0` remains affected by
-  CVE-2026-63089 and is not claimed as patched. At the VPN-facing Caddy site,
-  `/cnf`, `/cnf/`, and `/cnf/*` return HTTP `404` with
-  `X-Zero-Trust-Policy: cve-2026-63089`; normal UI and API routes continue to
-  work and do not carry that policy header. The role also verifies that the
-  panel is not publicly published and no one-time-link rows are active. Keep
-  `15.3.0` until a stable fixed release is deliberately qualified; do not
-  substitute a beta build.
+- **CVE route control:** wg-easy `15.4.0` includes the upstream CVE-2026-63089 fix
+  (security PRs #2661, #2668, and #2669). At the VPN-facing Caddy site,
+  `/cnf`, `/cnf/`, and `/cnf/*` still return HTTP `404` with
+  `X-Zero-Trust-Policy: cve-2026-63089` as defense in depth; normal UI and API
+  routes continue to work and do not carry that policy header. The role also
+  verifies that the panel is bound to localhost only. Do not substitute
+  `:latest`.
 
 ## Operations and Recovery
 
