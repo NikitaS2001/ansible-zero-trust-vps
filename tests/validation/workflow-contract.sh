@@ -5,6 +5,8 @@ umask 077
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
+REPOSITORY_ROOT=${WORKFLOW_CONTRACT_ROOT:-$(cd -- "${SCRIPT_DIR}/../.." && pwd -P)}
+readonly REPOSITORY_ROOT
 readonly DEFAULT_MANIFEST="${SCRIPT_DIR}/manifest.txt"
 readonly -a EXPECTED_MANIFEST=(
     'ansible-runtime.sh|'
@@ -64,6 +66,10 @@ validate_manifest() {
         ((index += 1))
     done <"${manifest_path}"
     (( index == ${#EXPECTED_MANIFEST[@]} )) || fail 'manifest is incomplete'
+}
+
+validate_no_live_vps_workflow() {
+    [[ ! -e "${REPOSITORY_ROOT}/.github/workflows/e2e-public-install.yml" && ! -L "${REPOSITORY_ROOT}/.github/workflows/e2e-public-install.yml" ]] || fail 'live VPS workflow remains'
 }
 
 validate_workflow() {
@@ -163,6 +169,7 @@ run_contract() {
     local workflow_path="$1"
     local manifest_path="${WORKFLOW_CONTRACT_MANIFEST:-${DEFAULT_MANIFEST}}"
 
+    validate_no_live_vps_workflow
     validate_manifest "${manifest_path}"
     validate_workflow "${workflow_path}"
     run_manifest "${manifest_path}"
@@ -206,6 +213,11 @@ self_test() {
     workflow_path="${fixture_dir}/security.yml"
     write_valid_fixture "${manifest_path}" "${workflow_path}"
     validate_workflow "${workflow_path}"
+
+    mkdir -p "${fixture_dir}/.github/workflows"
+    printf '%s\n' 'name: e2e-public-install' 'env:' "  E2E_VPS_TOKEN: \${{ secrets.E2E_VPS_TOKEN }}" >"${fixture_dir}/.github/workflows/e2e-public-install.yml"
+    expect_rejection 'live VPS workflow ingress' env WORKFLOW_CONTRACT_ROOT="${fixture_dir}" WORKFLOW_CONTRACT_MANIFEST="${manifest_path}" "$0" "${workflow_path}"
+    find "${fixture_dir}/.github" -depth -delete
 
     sed -i 's#tests/validation/workflow-contract.sh .github/workflows/security.yml#true#' "${workflow_path}"
     expect_rejection 'missing invocation' env WORKFLOW_CONTRACT_MANIFEST="${manifest_path}" "$0" "${workflow_path}"

@@ -5,17 +5,6 @@ umask 077
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 readonly SCRIPT_DIR
-readonly TASK_NAMES=(
-  metadata.env output-before.manifest task-1-ansible-runtime.log task-2-backup-sandbox.log
-  task-3-release-contract.log task-4-installer-contract.log task-5-ssh-ufw-qemu.log
-  task-6-restore-sandbox.log task-6-restore-drill.log task-7-compose-render.log
-  task-7-bootstrap-qemu.log task-8-cve-route.log task-9-health.log task-10-domain-caddy.log
-  task-11-local-qemu.log task-11-remote-qemu.log task-11-negative.log task-12-local.log
-  task-12-workflow.json task-13-doc-contract.log push-authorization.json git-transition.json dispatch.json
-  task-14-workflow.json task-14-workflow.log task-14-vps.log task-14-release-candidate.md pr.json
-  output-after.manifest
-)
-readonly FINAL_NAMES=(F1-report.txt F2-report.txt F3-report.txt F3-cleanup.log F4-report.txt F4-pages.manifest)
 readonly META_KEYS=(tested_sha original_root task_root base_sha started_at_utc completed_at_utc)
 
 fail() { printf 'FAIL evidence-hygiene:%s\n' "$1" >&2; return 1; }
@@ -37,13 +26,21 @@ check_descriptor() {
 }
 
 check_manifest() {
-  local manifest=$1; shift
-  local -a expected=("$@") actual=()
-  local line kind mode links got
-  [[ ! -L $manifest && -f $manifest ]] || { fail manifest-descriptor; return; }
-  got=$(stat -c '%F:%a:%h' -- "$manifest") || { fail manifest-descriptor; return; }
-  IFS=: read -r kind mode links <<<"$got"
-  [[ $kind == 'regular file' && $mode == 644 && $links == 1 ]] || { fail manifest-descriptor; return; }
+  local manifest=$1 reference=$2 line kind mode links got path
+  local -a expected=() actual=()
+  local -A seen=()
+  for path in "$manifest" "$reference"; do
+    [[ ! -L $path && -f $path ]] || { fail manifest-descriptor; return; }
+    got=$(stat -c '%F:%a:%h' -- "$path") || { fail manifest-descriptor; return; }
+    IFS=: read -r kind mode links <<<"$got"
+    [[ $kind == 'regular file' && $mode == 644 && $links == 1 ]] || { fail manifest-descriptor; return; }
+  done
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { fail manifest-schema; return; }
+    [[ -z ${seen[$line]+x} ]] || { fail manifest-completeness; return; }
+    seen[$line]=1
+    expected+=("$line")
+  done < "$reference"
   while IFS= read -r line || [[ -n $line ]]; do
     [[ $line =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { fail manifest-schema; return; }
     actual+=("$line")
@@ -100,24 +97,28 @@ contains_secret_pattern() {
 }
 
 check_tree() {
-  local dir=$1 phase=$2 sha=$3 name path
+  local dir=$1 phase=$2 sha=$3 manifest_dir=$4 manifest name path
   [[ ! -L $dir && -d $dir ]] || { fail attempt-descriptor; return; }
-  local -a allowed=("${TASK_NAMES[@]}")
-  [[ $phase == final ]] && allowed+=("${FINAL_NAMES[@]}")
+  local -a manifests=("$manifest_dir/evidence-manifest.txt")
+  [[ $phase == final ]] && manifests+=("$manifest_dir/final-evidence-manifest.txt")
   local -A permitted=()
-  for name in "${allowed[@]}"; do permitted[$name]=1; done
+  for manifest in "${manifests[@]}"; do
+    while IFS= read -r name || [[ -n $name ]]; do permitted[$name]=1; done < "$manifest"
+  done
   while IFS= read -r -d '' path; do
     name=${path##*/}
     [[ -n ${permitted[$name]+x} ]] || { fail unsafe-artifact; return; }
   done < <(find -P "$dir" -mindepth 1 -maxdepth 1 -print0)
-  for name in "${allowed[@]}"; do
-    path="$dir/$name"
-    check_descriptor "$path" || return
-    contains_secret_pattern "$path" && { fail secret-pattern; return; }
-    case $name in
-      metadata.env|output-before.manifest|output-after.manifest|push-authorization.json) ;;
-      *) check_sha_receipt "$path" "$sha" || return ;;
-    esac
+  for manifest in "${manifests[@]}"; do
+    while IFS= read -r name || [[ -n $name ]]; do
+      path="$dir/$name"
+      check_descriptor "$path" || return
+      contains_secret_pattern "$path" && { fail secret-pattern; return; }
+      case $name in
+        metadata.env|output-before.manifest|output-after.manifest|push-authorization.json) ;;
+        *) check_sha_receipt "$path" "$sha" || return ;;
+      esac
+    done < "$manifest"
   done
   cmp -s "$dir/output-before.manifest" "$dir/output-after.manifest" || { fail output-drift; return; }
   check_metadata "$dir/metadata.env" "$sha"
@@ -126,23 +127,21 @@ check_tree() {
 validate() {
   local attempt=$1 sha=$2 manifest_dir=$3 phase=$4
   is_sha "$sha" || { fail argument; return; }
-  check_manifest "$manifest_dir/evidence-manifest.txt" "${TASK_NAMES[@]}" || return
-  check_manifest "$manifest_dir/final-evidence-manifest.txt" "${FINAL_NAMES[@]}" || return
-  check_tree "$attempt" "$phase" "$sha"
+  check_manifest "$manifest_dir/evidence-manifest.txt" "$SCRIPT_DIR/evidence-manifest.txt" || return
+  check_manifest "$manifest_dir/final-evidence-manifest.txt" "$SCRIPT_DIR/final-evidence-manifest.txt" || return
+  check_tree "$attempt" "$phase" "$sha" "$manifest_dir"
 }
 
 write_contract_manifests() {
-  local destination=$1 name
-  : > "$destination/evidence-manifest.txt"
-  for name in "${TASK_NAMES[@]}"; do printf '%s\n' "$name" >> "$destination/evidence-manifest.txt"; done
-  : > "$destination/final-evidence-manifest.txt"
-  for name in "${FINAL_NAMES[@]}"; do printf '%s\n' "$name" >> "$destination/final-evidence-manifest.txt"; done
+  local destination=$1
+  cp -- "$SCRIPT_DIR/evidence-manifest.txt" "$SCRIPT_DIR/final-evidence-manifest.txt" "$destination"
   chmod 644 "$destination/evidence-manifest.txt" "$destination/final-evidence-manifest.txt"
 }
 
 write_positive_tree() {
-  local destination=$1 sha=$2 name
-  for name in "${TASK_NAMES[@]}" "${FINAL_NAMES[@]}"; do
+  local destination=$1 sha=$2 manifest name
+  for manifest in "$SCRIPT_DIR/evidence-manifest.txt" "$SCRIPT_DIR/final-evidence-manifest.txt"; do
+    while IFS= read -r name || [[ -n $name ]]; do
     if [[ $name == metadata.env ]]; then
       printf 'tested_sha=%s\noriginal_root=/safe/original\ntask_root=/safe/task\nbase_sha=%040d\nstarted_at_utc=2026-08-13T00:00:00Z\ncompleted_at_utc=2026-08-13T00:00:01Z\n' "$sha" 0 > "$destination/$name"
     elif [[ $name == output-before.manifest || $name == output-after.manifest ]]; then
@@ -153,6 +152,7 @@ write_positive_tree() {
       printf 'tested_sha=%s\nsanitized=true\n' "$sha" > "$destination/$name"
     fi
     chmod 600 "$destination/$name"
+    done < "$manifest"
   done
 }
 
@@ -168,7 +168,8 @@ expect_reject() {
 }
 
 self_test() {
-  local sha=0123456789abcdef0123456789abcdef01234567 pause=${EVIDENCE_HYGIENE_SELF_TEST_PAUSE_SECONDS:-0}
+  local sha=0123456789abcdef0123456789abcdef01234567 pause=${EVIDENCE_HYGIENE_SELF_TEST_PAUSE_SECONDS:-0} name
+  local -a retired_live_names=(dispatch.json task-14-workflow.json task-14-workflow.log task-14-vps.log task-14-release-candidate.md)
   [[ $pause =~ ^[0-9]+$ && $pause -le 5 ]] || { fail argument; return; }
   SELF_TEST_TEMP=$(mktemp -d "${TMPDIR:-/tmp}/evidence-hygiene.XXXXXX")
   trap 'rm -rf -- "${SELF_TEST_TEMP:-}"' EXIT HUP INT TERM
@@ -178,6 +179,20 @@ self_test() {
   sleep "$pause"
   validate "$SELF_TEST_TEMP/attempt" "$sha" "$SELF_TEST_TEMP/manifests" final
   printf 'PASS positive\n'
+
+  [[ $(grep -Fxc -- task-14-local-release.log "$SCRIPT_DIR/evidence-manifest.txt") == 1 ]] || { fail local-release-manifest; return; }
+  for name in "${retired_live_names[@]}"; do
+    ! grep -Fqx -- "$name" "$SCRIPT_DIR/evidence-manifest.txt" || { fail retired-live-manifest; return; }
+    printf 'tested_sha=%s\nsanitized=true\n' "$sha" > "$SELF_TEST_TEMP/attempt/$name"; chmod 600 "$SELF_TEST_TEMP/attempt/$name"
+    expect_reject "retired-$name" unsafe-artifact validate "$SELF_TEST_TEMP/attempt" "$sha" "$SELF_TEST_TEMP/manifests" final
+    rm -f -- "$SELF_TEST_TEMP/attempt/$name"
+  done
+  printf 'PASS local-release-manifest\n'
+
+  printf '%s\n' 'unsafe/manifest-entry' >> "$SELF_TEST_TEMP/manifests/evidence-manifest.txt"
+  expect_reject malformed-manifest manifest-schema validate "$SELF_TEST_TEMP/attempt" "$sha" "$SELF_TEST_TEMP/manifests" final
+  write_contract_manifests "$SELF_TEST_TEMP/manifests"
+  printf 'PASS manifest-schema\n'
 
   printf 'mutation\0' >> "$SELF_TEST_TEMP/attempt/output-after.manifest"
   expect_reject output-drift output-drift validate "$SELF_TEST_TEMP/attempt" "$sha" "$SELF_TEST_TEMP/manifests" final

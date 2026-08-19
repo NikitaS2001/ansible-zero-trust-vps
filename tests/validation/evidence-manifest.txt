@@ -20,10 +20,6 @@ task-12-workflow.json
 task-13-doc-contract.log
 push-authorization.json
 git-transition.json
-dispatch.json
-task-14-workflow.json
-task-14-workflow.log
-task-14-vps.log
-task-14-release-candidate.md
+task-14-local-release.log
 pr.json
 output-after.manifest

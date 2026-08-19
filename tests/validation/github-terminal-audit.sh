@@ -5,7 +5,6 @@ umask 077
 
 readonly max_pages=100
 readonly required_one='security / lint-and-scan'
-readonly required_two='e2e-public-install / public-install'
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 validation_dir=${GITHUB_AUDIT_VALIDATION_DIR:-"$root/tests/validation"}
 repo='' pr='' tested_sha='' base_sha='' attempt_dir='' tmp='' pages=0
@@ -80,7 +79,7 @@ fetch() {
 }
 terminal() {
   jq -s -e 'all(.[]; .state=="APPROVED" or .state=="COMMENTED" or .state=="DISMISSED" or .state=="CHANGES_REQUESTED") and (sort_by(.login,.submittedAt)|group_by(.login)|all(.[]; .[-1].state!="CHANGES_REQUESTED"))' "$tmp/reviews" >/dev/null 2>&1 || reject changes-requested
-  jq -s -e --arg a "$required_one" --arg b "$required_two" 'all(.[]; if .__typename=="CheckRun" then .status=="COMPLETED" and (.conclusion=="SUCCESS" or .conclusion=="NEUTRAL" or .conclusion=="SKIPPED") elif .__typename=="StatusContext" then .state=="SUCCESS" else false end) and ([.[]|select(.__typename=="CheckRun" and .name==$a)]|length==1) and ([.[]|select(.__typename=="CheckRun" and .name==$b)]|length==1)' "$tmp/checks" >/dev/null 2>&1 || reject terminal-checks
+  jq -s -e --arg required "$required_one" 'all(.[]; if .__typename=="CheckRun" then .status=="COMPLETED" and (.conclusion=="SUCCESS" or .conclusion=="NEUTRAL" or .conclusion=="SKIPPED") elif .__typename=="StatusContext" then .state=="SUCCESS" else false end) and ([.[]|select(.__typename=="CheckRun" and .name==$required)]|length==1)' "$tmp/checks" >/dev/null 2>&1 || reject terminal-checks
 }
 publish() {
   local file kind expected
@@ -106,29 +105,29 @@ self_test() {
   printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":true}],"pageInfo":{"hasNextPage":true,"endCursor":"t2"}}}}}}' >"$tmp/t-null.json"
   printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":true}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' >"$tmp/t-t2.json"
   printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviews":{"nodes":[{"state":"APPROVED","submittedAt":"2026-01-01T00:00:00Z","author":{"login":"reviewer"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}' >"$tmp/r-null.json"
-  jq -n --arg sha "$sha" '{data:{repository:{pullRequest:{commits:{nodes:[{commit:{oid:$sha,statusCheckRollup:{contexts:{nodes:[{__typename:"CheckRun",name:"security / lint-and-scan",status:"COMPLETED",conclusion:"SUCCESS"}],pageInfo:{hasNextPage:true,endCursor:"c2"}}}}}]}}}}}' >"$tmp/c-null.json"
-  jq -n --arg sha "$sha" '{data:{repository:{pullRequest:{commits:{nodes:[{commit:{oid:$sha,statusCheckRollup:{contexts:{nodes:[{__typename:"CheckRun",name:"e2e-public-install / public-install",status:"COMPLETED",conclusion:"SUCCESS"}],pageInfo:{hasNextPage:false,endCursor:null}}}}}]}}}}}' >"$tmp/c-c2.json"
+  jq -n --arg sha "$sha" '{data:{repository:{pullRequest:{commits:{nodes:[{commit:{oid:$sha,statusCheckRollup:{contexts:{nodes:[{__typename:"CheckRun",name:"security / lint-and-scan",status:"COMPLETED",conclusion:"SUCCESS"}],pageInfo:{hasNextPage:false,endCursor:null}}}}}]}}}}}' >"$tmp/c-null.json"
   case ${AUDIT_CASE:-good} in
-    pending) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0].status="IN_PROGRESS"' "$tmp/c-c2.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-c2.json";;
-    failed) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0].conclusion="FAILURE"' "$tmp/c-c2.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-c2.json";;
+    pending) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0].status="IN_PROGRESS"' "$tmp/c-null.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-null.json";;
+    failed) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0].conclusion="FAILURE"' "$tmp/c-null.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-null.json";;
     unresolved) jq '.data.repository.pullRequest.reviewThreads.nodes[0].isResolved=false' "$tmp/t-t2.json" >"$tmp/x"; mv "$tmp/x" "$tmp/t-t2.json";;
     malformed) printf '%s\n' '{"errors":[{}]}' >"$tmp/r-null.json";;
     cycle) printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"isResolved":true}],"pageInfo":{"hasNextPage":true,"endCursor":"loop"}}}}}}' >"$tmp/t-null.json"; cp "$tmp/t-null.json" "$tmp/t-loop.json";;
     changes) jq '.data.repository.pullRequest.reviews.nodes[0].state="CHANGES_REQUESTED"' "$tmp/r-null.json" >"$tmp/x"; mv "$tmp/x" "$tmp/r-null.json";;
-    wrong-sha) jq '.data.repository.pullRequest.commits.nodes[0].commit.oid="2222222222222222222222222222222222222222"' "$tmp/c-c2.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-c2.json";;
-    duplicate-required) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes += [.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0]]' "$tmp/c-c2.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-c2.json";;
-    missing-required) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes=[]' "$tmp/c-c2.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-c2.json";;
+    wrong-sha) jq '.data.repository.pullRequest.commits.nodes[0].commit.oid="2222222222222222222222222222222222222222"' "$tmp/c-null.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-null.json";;
+    duplicate-required) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes += [.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0]]' "$tmp/c-null.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-null.json";;
+    missing-required) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes=[]' "$tmp/c-null.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-null.json";;
+    old-required) jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0].name="e2e-public-install / public-install"' "$tmp/c-null.json" >"$tmp/x"; mv "$tmp/x" "$tmp/c-null.json";;
   esac
   gh() { local q='' c=null x; for x in "$@"; do case "$x" in query=*) q=${x#query=};; cursor=*) c=${x#cursor=};; cursor:=null) c=null;; esac; done; case "$q" in *reviewThreads*) cat "$tmp/t-$c.json";; *"reviews(first:100"*) cat "$tmp/r-$c.json";; *statusCheckRollup*) cat "$tmp/c-$c.json";; esac; }
   pages=0; fetch threads "$threads_query"; fetch reviews "$reviews_query"; fetch checks "$checks_query"; terminal
-  [[ "$pages" == 5 ]] || return 1; printf '%s\n' 'SELFTEST pagination=PASS'
-  jq -e '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0].status != "COMPLETED"' "$tmp/c-c2.json" >/dev/null && return 1; printf '%s\n' 'SELFTEST pending-check=PASS'
+  [[ "$pages" == 4 ]] || return 1; printf '%s\n' 'SELFTEST pagination=PASS'
+  jq -e '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0].status != "COMPLETED"' "$tmp/c-null.json" >/dev/null && return 1; printf '%s\n' 'SELFTEST pending-check=PASS'
   jq -e '.data.repository.pullRequest.reviewThreads.nodes[0].isResolved == false' "$tmp/t-t2.json" >/dev/null && return 1; printf '%s\n' 'SELFTEST unresolved-review=PASS'
   if [[ ${AUDIT_CASE:-good} == good ]]; then
     local bad marker
-    for bad in pending failed unresolved malformed cycle changes wrong-sha duplicate-required missing-required; do
+    for bad in pending failed unresolved malformed cycle changes wrong-sha duplicate-required missing-required old-required; do
       AUDIT_CASE="$bad" "$0" --self-test >/dev/null 2>&1 && return 1
-      case "$bad" in pending) marker='pending-check';; failed) marker='failed-check';; unresolved) marker='unresolved-review';; malformed) marker='malformed-error';; cycle) marker='cursor-loop';; changes) marker='changes-requested';; wrong-sha) marker='wrong-sha';; duplicate-required) marker='duplicate-required-check';; missing-required) marker='missing-required-check';; esac
+      case "$bad" in pending) marker='pending-check';; failed) marker='failed-check';; unresolved) marker='unresolved-review';; malformed) marker='malformed-error';; cycle) marker='cursor-loop';; changes) marker='changes-requested';; wrong-sha) marker='wrong-sha';; duplicate-required) marker='duplicate-required-check';; missing-required) marker='missing-required-check';; old-required) marker='old-required-check';; esac
       printf 'SELFTEST %s=PASS\n' "$marker"
     done
     if (receipt "$tmp/missing-receipt"); then return 1; fi; printf '%s\n' 'SELFTEST missing-receipt=PASS'
