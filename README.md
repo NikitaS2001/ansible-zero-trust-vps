@@ -178,7 +178,12 @@ Then apply:
 # The deployment owns validation and activation; do not restart Caddy directly.
 ```
 Open `https://myservice.internal` (trust the root CA first). A complete
-working example (Vaultwarden) is in `examples/`.
+working example (Vaultwarden) is in `examples/`: start the container with
+`docker compose up -d <service>`, then re-run the installer or playbook so
+Caddy validates and reloads the site; do not restart Caddy directly. The
+example pins a release tag and sets `DOMAIN` to the HTTPS name clients use
+(see the [Vaultwarden configuration overview](https://github.com/dani-garcia/vaultwarden/wiki/Configuration-overview));
+it opens as `https://vw.internal`.
 
 On every deployment, the role copies the managed Caddyfile and all
 `Caddyfile.d` sites into a private candidate tree, validates the complete tree,
