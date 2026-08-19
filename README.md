@@ -59,7 +59,9 @@ ansible-playbook --ask-vault-pass site.yml -u root
 ```
 
 Before a subsequent rerun, update `inventory/hosts.yml` after the initial root
-deployment:
+deployment. Re-runs also reset `admin_user` groups to `admin_group` plus
+`docker` and, by default, replace that account's `authorized_keys` with
+`vault_admin_ssh_pubkey`:
 
 ```yaml
 ansible_user: "<admin_user>"

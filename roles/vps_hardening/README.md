@@ -9,7 +9,11 @@ kernel-level network hardening via sysctl.
 This role brings a Debian/Ubuntu VPS to a secure baseline:
 
 - Installs and enables UFW with default-deny incoming policy
-- Creates a non-root sudo user with SSH public-key authentication
+- Creates a non-root sudo user with SSH public-key authentication.
+  Re-runs set `admin_user` groups to `admin_group` plus `docker` (`append: no`)
+  and, by default, replace `authorized_keys` with `vault_admin_ssh_pubkey`.
+  Extra groups or keys on a live account disappear unless
+  `vps_hardening_authorized_keys_exclusive` is `false`.
 - Hardens the SSH daemon (non-standard port, key auth only, forwarding limited
   to the configured localhost UI ports)
 - Applies kernel network sysctl settings (IP forwarding, rpfilter, etc.)
@@ -26,6 +30,7 @@ This role brings a Debian/Ubuntu VPS to a secure baseline:
 | `admin_shell` | `/bin/bash` | Login shell for `admin_user` |
 | `admin_password_hash` | `""` | Precomputed admin password hash (optional; key auth is primary) |
 | `vault_admin_ssh_pubkey` | `""` | SSH public key content for `admin_user` (required for key auth) |
+| `vps_hardening_authorized_keys_exclusive` | `true` | Replace `authorized_keys` with only this managed key; extra keys are removed |
 | `ssh_service_name` | `ssh` | Name of the SSH service to restart |
 | `ssh_socket_name` | `ssh.socket` | Name of the systemd SSH socket unit when socket activation is present |
 | `ssh_allow_tcp_forwarding` | `"yes"` | Allow SSH TCP forwarding (`"yes"` or `"no"`) |

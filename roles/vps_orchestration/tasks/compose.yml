@@ -158,7 +158,7 @@
           - none
           - --volume
           - "{{ vps_orchestration_caddy_validation_tree.path }}:/etc/caddy:ro"
-          - caddy:2.11.4
+          - caddy:{{ caddy_version }}
           - caddy
           - validate
           - --config
