@@ -15,7 +15,7 @@ Use this mode from an interactive SSH session on a fresh single VPS. Run the
 tagged installer on the VPS, not from your laptop:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.2.0/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.2.1/install.sh | sudo bash
 ```
 
 It asks for the SSH port, WireGuard port, Admin username, Admin password,
