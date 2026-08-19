@@ -123,10 +123,11 @@ run_public_installer() {
 
 verify_wg_login() {
     local target="$1" port="$2" key="$3" response
+    # wg-easy 15.4 moved password login from POST /api/session to POST /api/auth/password
     # shellcheck disable=SC2016
     response="$(printf '%s\n' "${WG_PASS}" | \
         run_remote_stdin "${target}" "${port}" "${key}" \
-        'IFS= read -r wg_password; curl -fsS -X POST -H "Content-Type: application/json" --data "{\"username\":\"admin\",\"password\":\"${wg_password}\",\"remember\":false}" http://127.0.0.1:51821/api/session')"
+        'IFS= read -r wg_password; curl -fsS -X POST -H "Content-Type: application/json" --data "{\"username\":\"admin\",\"password\":\"${wg_password}\",\"remember\":false}" http://127.0.0.1:51821/api/auth/password')"
     grep -q '"status":"success"' <<<"${response}" || fail "wg-easy login failed"
 }
 

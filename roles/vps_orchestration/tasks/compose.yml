@@ -226,11 +226,36 @@
             mode: '0600'
           when: vps_orchestration_caddy_live.stat.exists
 
-        - name: "Compose | Activate | Install validated Caddyfile atomically"
+        # The live Caddyfile is a Docker *file* bind-mount. `mv` replaces the
+        # inode, so a running Caddy keeps serving the old fd while
+        # `.Caddyfile.active.sha256` tracks the new path. Truncate-and-write
+        # keeps the mounted inode; first install (no live file) still creates it.
+        - name: "Compose | Activate | Install validated Caddyfile in place"
           command:
             argv:
-              - mv
-              - --force
+              - python3
+              - -c
+              - |
+                import os
+                import sys
+
+                source, destination = sys.argv[1], sys.argv[2]
+                with open(source, "rb") as handle:
+                    data = handle.read()
+                fd = os.open(
+                    destination,
+                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                    0o600,
+                )
+                try:
+                    view = memoryview(data)
+                    while view:
+                        written = os.write(fd, view)
+                        view = view[written:]
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.chmod(destination, 0o600)
               - "{{ vps_orchestration_caddy_candidate.path }}"
               - "{{ project_root }}/Caddyfile"
 
@@ -257,11 +282,32 @@
             mode: '0600'
 
       rescue:
-        - name: "Compose | Rollback | Restore prior managed file atomically"
+        - name: "Compose | Rollback | Restore prior managed file in place"
           command:
             argv:
-              - mv
-              - --force
+              - python3
+              - -c
+              - |
+                import os
+                import sys
+
+                source, destination = sys.argv[1], sys.argv[2]
+                with open(source, "rb") as handle:
+                    data = handle.read()
+                fd = os.open(
+                    destination,
+                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                    0o600,
+                )
+                try:
+                    view = memoryview(data)
+                    while view:
+                        written = os.write(fd, view)
+                        view = view[written:]
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                os.chmod(destination, 0o600)
               - "{{ vps_orchestration_caddy_previous.path }}"
               - "{{ project_root }}/Caddyfile"
           when: vps_orchestration_caddy_live.stat.exists
@@ -325,7 +371,8 @@
   block:
     - name: "Compose | Bootstrap | Authenticate initial wg-easy setup"
       uri:
-        url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/api/session"
+        # wg-easy 15.4 moved password login from POST /api/session to POST /api/auth/password
+        url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/api/auth/password"
         method: POST
         body_format: json
         body:
@@ -364,7 +411,8 @@
 
     - name: "Compose | Bootstrap | Authenticate re-secured wg-easy setup"
       uri:
-        url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/api/session"
+        # wg-easy 15.4 moved password login from POST /api/session to POST /api/auth/password
+        url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/api/auth/password"
         method: POST
         body_format: json
         body:

@@ -76,11 +76,15 @@ verify_doc_contract() {
     grep -Eiq '\.age.*0600|0600.*\.age' "${docs_root}/README.md" \
         || fail "README.md must document encrypted .age output mode 0600"
 
-    grep -Fq "wg-easy \`${wg_version}\` remains affected by CVE-2026-63089" \
+    grep -Fq "wg-easy \`${wg_version}\` includes the upstream CVE-2026-63089 fix" \
         <<<"${readme_flat}" \
-        || fail "README.md must state stable wg-easy 15.3.0 remains affected"
-    grep -Fq 'is not claimed as patched' "${docs_root}/README.md" \
-        || fail "README.md must not claim the stable wg-easy release is patched"
+        || fail "README.md must state wg-easy includes the upstream CVE-2026-63089 fix"
+    grep -Eiq 'defense in depth' <<<"${readme_flat}" \
+        || fail "README.md must keep the Caddy /cnf* deny as defense in depth"
+    ! grep -Fq 'is not claimed as patched' "${docs_root}/README.md" \
+        || fail "README.md must not claim the pinned wg-easy release is unpatched"
+    ! grep -Fq 'no one-time-link rows are active' "${docs_root}/README.md" \
+        || fail "README.md must not claim a removed one-time-link verify"
     for route in '/cnf`' '/cnf/`' '/cnf/*`'; do
         grep -Fq "${route}" "${docs_root}/README.md" \
             || fail "README.md must document the complete CVE route boundary"
@@ -190,7 +194,8 @@ run_doc_contract_self_test() {
 
     mutation_root="${WORK_DIR}/mutation-wg-version"
     copy_doc_fixture "${mutation_root}"
-    sed -i 's/wg-easy:15\.3\.0/wg-easy:15.2.0/g' \
+    old_wg_version="$(read_yaml_value roles/vps_orchestration/defaults/main.yml wg_easy_version)"
+    sed -i "s/wg-easy:${old_wg_version}/wg-easy:15.2.0/g" \
         "${mutation_root}/README.md" \
         "${mutation_root}/roles/vps_orchestration/README.md"
     if (verify_doc_contract "${mutation_root}") >/dev/null 2>&1; then
@@ -244,11 +249,12 @@ run_doc_contract_self_test() {
 
     mutation_root="${WORK_DIR}/mutation-cve-claim"
     copy_doc_fixture "${mutation_root}"
-    sed -i 's/is not claimed as patched/is patched upstream/' "${mutation_root}/README.md"
+    sed -i 's/includes the upstream CVE-2026-63089 fix/remains affected by CVE-2026-63089/' \
+        "${mutation_root}/README.md"
     if (verify_doc_contract "${mutation_root}") >/dev/null 2>&1; then
-        fail "doc-contract accepted a patched-upstream claim"
+        fail "doc-contract accepted unpatched-CVE wording"
     fi
-    pass "doc-contract rejects patched-upstream CVE wording inner_rc=1"
+    pass "doc-contract rejects unpatched-CVE wording inner_rc=1"
 
     mutation_root="${WORK_DIR}/mutation-restore"
     copy_doc_fixture "${mutation_root}"
@@ -350,11 +356,11 @@ host_count="$(grep -Ec '^[[:space:]]+hosts:[[:space:]]+vps$' site.yml)"
 ! grep -Eq '^[[:space:]]+hosts:[[:space:]]+all$' site.yml || fail "site.yml must not contain 'hosts: all'"
 pass "site.yml targets the vps group consistently"
 
-grep -q 'ghcr.io/wg-easy/wg-easy:15.3.0' README.md \
-    || fail "README.md must document wg-easy 15.3.0"
-grep -q 'ghcr.io/wg-easy/wg-easy:15.3.0' roles/vps_orchestration/README.md \
-    || fail "roles/vps_orchestration/README.md must document wg-easy 15.3.0"
-pass "README files agree on wg-easy 15.3.0"
+grep -q 'ghcr.io/wg-easy/wg-easy:15.4.0' README.md \
+    || fail "README.md must document wg-easy 15.4.0"
+grep -q 'ghcr.io/wg-easy/wg-easy:15.4.0' roles/vps_orchestration/README.md \
+    || fail "roles/vps_orchestration/README.md must document wg-easy 15.4.0"
+pass "README files agree on wg-easy 15.4.0"
 
 grep -q 'image: ghcr.io/wg-easy/wg-easy:{{ wg_easy_version }}' roles/vps_orchestration/templates/docker-compose.yml.j2 \
     || fail "wg-easy image tag must be variable-driven"
@@ -471,6 +477,7 @@ assert_role_defaults_cover_installer_values() {
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_package_upgrade_mode safe
     assert_yaml_scalar_default roles/vps_hardening/defaults/main.yml vps_hardening_enable_ufw_on_local_connection false
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml project_root /opt/zero-trust-vps
+    assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml wg_easy_version 15.4.0
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml docker_network_subnet 10.66.0.0/24
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml adguard_container_ip 10.66.0.2
     assert_yaml_scalar_default roles/vps_orchestration/defaults/main.yml caddy_container_ip 10.66.0.3

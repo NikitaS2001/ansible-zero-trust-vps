@@ -26,7 +26,7 @@ zero-trust VPN gateway:
 | `adguard_container_ip` | `10.66.0.2` | Fixed IP for the AdGuard container |
 | `caddy_container_ip` | `10.66.0.3` | Fixed IP for the Caddy container |
 | `wg_easy_container_ip` | `10.66.0.4` | Fixed IP for the wg-easy container |
-| `wg_easy_version` | `15.3.0` | wg-easy Docker image tag |
+| `wg_easy_version` | `15.4.0` | wg-easy Docker image tag |
 | `wg_vpn_subnet` | `10.8.0.0/24` | WireGuard client subnet |
 | `wg_server_ip` | `10.8.0.1` | WireGuard server VPN IP |
 | `wg_client_dns` | `10.66.0.2` | DNS server IP for WireGuard clients |
@@ -77,7 +77,7 @@ zero-trust VPN gateway:
 
 | Service | Image | Internal Port | External Port | Purpose |
 |---|---|---|---|---|
-| wg-easy | `ghcr.io/wg-easy/wg-easy:15.3.0` | 51821 (UI), 51820 (WireGuard UDP) | 51820/udp | WireGuard VPN with password-protected web UI |
+| wg-easy | `ghcr.io/wg-easy/wg-easy:15.4.0` | 51821 (UI), 51820 (WireGuard UDP) | 51820/udp | WireGuard VPN with password-protected web UI |
 | AdGuard Home | `adguard/adguardhome:v0.107.78` | 3000 (UI), 53 (DNS) | none | DNS sinkhole and `.internal` resolver |
 | Caddy | `caddy:2.11.4` | 80, 443 | none | TLS reverse proxy for internal hostnames |
 
@@ -97,7 +97,7 @@ via the Docker network or through SSH tunnels during initial setup.
         adguard_container_ip: "10.66.0.2"
         caddy_container_ip: "10.66.0.3"
         wg_easy_container_ip: "10.66.0.4"
-        wg_easy_version: "15.3.0"
+        wg_easy_version: "15.4.0"
         wg_port: 51820
         wg_container_port: 51820
         wg_internal_domain: wg.internal
@@ -143,10 +143,11 @@ There are two different contracts, know which one applies:
   password is not left on disk.
 - **Caddy extensions are transactionally activated.** The role builds a
   private candidate from the managed file and every `Caddyfile.d` user site,
-  validates the complete tree with Caddy `2.11.4`, atomically installs the
-  managed file, and reloads the running process only when the tree changed.
-  If reload fails, it rolls back the prior active file and reloads the
-  known-good configuration; invalid candidates never replace the active file.
+  validates the complete tree with Caddy `2.11.4`, atomically stages and
+  installs the managed file in place onto the bind-mount inode, and reloads
+  the running process only when the tree changed. If reload fails, it rolls back
+  the prior active file onto that same inode and reloads the known-good
+  configuration; invalid candidates never replace the active file.
 
 ### Automated wg-easy Initial Setup
 
@@ -168,11 +169,12 @@ container).
 
 ### CVE-2026-63089 route boundary
 
-The stable `ghcr.io/wg-easy/wg-easy:15.3.0` image remains affected and is not
-claimed patched. Caddy returns HTTP `404` plus
+`ghcr.io/wg-easy/wg-easy:15.4.0` includes the upstream CVE-2026-63089 fix
+(security PRs #2661, #2668, and #2669). Caddy still returns HTTP `404` plus
 `X-Zero-Trust-Policy: cve-2026-63089` for `/cnf`, `/cnf/`, and `/cnf/*` at the
-wg-easy site. Normal UI and API routes continue to work without the policy
-header. Caddy is container-network-only and is never published on host 443.
+wg-easy site as defense in depth. Normal UI and API routes continue to work
+without the policy header. Caddy is container-network-only and is never
+published on host 443. The role verifies the panel is bound to localhost only.
 
 ### Suffix-only configuration
 
