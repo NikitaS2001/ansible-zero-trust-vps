@@ -25,8 +25,15 @@ render_case() {
   local override_path="${FIXTURE_ROOT}/${case_name}.override.yml"
   local config_path="${FIXTURE_ROOT}/${case_name}.config.json"
 
+  local project_root="${FIXTURE_ROOT}/${case_name}-project"
+  mkdir -p "${project_root}/volumes/wg-easy" "${project_root}/Caddyfile.d"
+  : >"${project_root}/Caddyfile"
+  chmod 700 "${project_root}" "${project_root}/volumes" \
+    "${project_root}/volumes/wg-easy" "${project_root}/Caddyfile.d"
+  chmod 600 "${project_root}/Caddyfile"
+
   CASE_NAME="${case_name}" VARS_PATH="${vars_path}" EXPECTED_PATH="${expected_path}" \
-    python3 - <<'PY'
+    PROJECT_ROOT="${project_root}" python3 - <<'PY'
 import json
 import os
 from pathlib import Path
@@ -45,7 +52,7 @@ variables = {
     "caddy_container_ip": "10.66.0.3",
     "caddy_version": "2.11.4",
     "docker_network_subnet": "10.66.0.0/24",
-    "project_root": "/opt/zero-trust-vps",
+    "project_root": os.environ["PROJECT_ROOT"],
     "wg_allowed_ips": ["10.8.0.0/24", "10.66.0.2/32"],
     "wg_client_dns": "10.66.0.2",
     "wg_container_port": 51820,
@@ -54,7 +61,7 @@ variables = {
     "wg_easy_bootstrap_ui_port": 51821,
     "wg_easy_container_ip": "10.66.0.4",
     "wg_easy_include_init": os.environ["CASE_NAME"] in {"dollar", "scalars"},
-    "wg_easy_version": "15.3.0",
+    "wg_easy_version": "15.4.0",
     "wg_enable_ipv6": False,
     "wg_port": 51820,
     "wg_public_host": "vpn.example.test",
@@ -213,6 +220,10 @@ printf '%s\n' 'state_absent=true' 'state_nonzero=true' 'state_zero=true' \
 COMPOSE_TASK_PATH="${TASK_PATH}" \
 VERIFY_TASK_PATH="${REPO_ROOT}/roles/vps_orchestration/tasks/verify.yml" python3 - <<'PY'
 import os
+import shutil
+import stat
+import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -249,5 +260,71 @@ if not required_names.issubset(tasks):
 for name in required_names:
     if tasks[name].get("no_log") in (None, False):
         raise SystemExit(1)
+
+# Caddyfile is a Docker file bind-mount: replacing it with mv leaves the
+# container on the old inode while .Caddyfile.active.sha256 tracks the new path.
+inplace_names = (
+    "Compose | Activate | Install validated Caddyfile in place",
+    "Compose | Rollback | Restore prior managed file in place",
+)
+for name in inplace_names:
+    if name not in tasks:
+        raise SystemExit(1)
+    argv = tasks[name].get("command", {}).get("argv") or []
+    if len(argv) < 4 or argv[0] != "python3" or "-c" not in argv:
+        raise SystemExit(1)
+    script = argv[argv.index("-c") + 1]
+    if "O_TRUNC" not in script or "O_WRONLY" not in script:
+        raise SystemExit(1)
+    if "os.rename" in script or "os.replace" in script:
+        raise SystemExit(1)
+
+script = tasks[inplace_names[0]]["command"]["argv"][
+    tasks[inplace_names[0]]["command"]["argv"].index("-c") + 1
+]
+root = tempfile.mkdtemp(prefix="caddy-inode.")
+try:
+    live = os.path.join(root, "Caddyfile")
+    candidate = os.path.join(root, "candidate")
+    previous = os.path.join(root, "previous")
+    with open(live, "w", encoding="utf-8") as handle:
+        handle.write("old-config\n")
+    with open(candidate, "w", encoding="utf-8") as handle:
+        handle.write("new-config\n")
+    with open(previous, "w", encoding="utf-8") as handle:
+        handle.write("old-config\n")
+    inode = os.stat(live).st_ino
+    held_fd = os.open(live, os.O_RDONLY)
+    subprocess.check_call(["python3", "-c", script, candidate, live])
+    if os.stat(live).st_ino != inode:
+        raise SystemExit(1)
+    if os.read(held_fd, 64) != b"new-config\n":
+        raise SystemExit(1)
+    if stat.S_IMODE(os.stat(live).st_mode) != 0o600:
+        raise SystemExit(1)
+    os.lseek(held_fd, 0, os.SEEK_SET)
+    subprocess.check_call(["python3", "-c", script, previous, live])
+    if os.stat(live).st_ino != inode:
+        raise SystemExit(1)
+    if os.read(held_fd, 64) != b"old-config\n":
+        raise SystemExit(1)
+    os.close(held_fd)
+
+    # Contrast: mv/replace creates a new inode and leaves the held fd stale.
+    with open(live, "w", encoding="utf-8") as handle:
+        handle.write("old-config\n")
+    with open(candidate, "w", encoding="utf-8") as handle:
+        handle.write("new-config\n")
+    stale_inode = os.stat(live).st_ino
+    stale_fd = os.open(live, os.O_RDONLY)
+    os.replace(candidate, live)
+    if os.stat(live).st_ino == stale_inode:
+        raise SystemExit(1)
+    if os.read(stale_fd, 64) != b"old-config\n":
+        raise SystemExit(1)
+    os.close(stale_fd)
+finally:
+    shutil.rmtree(root, ignore_errors=True)
 PY
-printf '%s\n' 'credential_tasks_no_log=true' 'cleanup_registered=true'
+printf '%s\n' 'credential_tasks_no_log=true' 'cleanup_registered=true' \
+  'caddy_bind_mount_inode=true'
