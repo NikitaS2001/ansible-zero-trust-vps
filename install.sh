@@ -685,6 +685,8 @@ main() {
     print_summary
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+# curl | bash leaves BASH_SOURCE unset; ${parameter:-$0} still invokes main.
+# Sourcing the file keeps BASH_SOURCE different from $0, so tests can stub main.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
     main "$@"
 fi

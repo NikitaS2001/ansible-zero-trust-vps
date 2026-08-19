@@ -115,6 +115,23 @@ run_suffix_internal() {
     run_suffix_summary internal internal
 }
 
+run_piped_entry_guard() {
+    local output
+
+    # shellcheck disable=SC2016  # match the literal install.sh entry guard
+    grep -Fq 'BASH_SOURCE[0]:-$0' "${ROOT_DIR}/install.sh" \
+        || fail 'install.sh must invoke main when BASH_SOURCE is unset (curl | bash)'
+
+    output="$(
+        {
+            printf '%s\n' 'set -euo pipefail' 'main() { printf "main-ran\n"; }'
+            tail -n 4 "${ROOT_DIR}/install.sh"
+        } | bash
+    )"
+    [[ "${output}" == 'main-ran' ]] || fail "piped install.sh entry guard did not invoke main: ${output}"
+    printf '[PASS] piped-entry-guard: curl | bash reaches main under set -u\n'
+}
+
 run_env_clean() (
     local fixture_dir
     fixture_dir="$(command mktemp -d)"
@@ -160,6 +177,7 @@ case "${1:-}" in
     --case)
         case "${2:-}" in
             child-leak-sentinel) run_child_leak_sentinel ;;
+            piped-entry-guard) run_piped_entry_guard ;;
             env-clean) run_env_clean ;;
             suffix-home-arpa) run_suffix_home_arpa ;;
             suffix-internal) run_suffix_internal ;;
@@ -172,7 +190,8 @@ case "${1:-}" in
         run_suffix_home_arpa
         run_suffix_home_arpa
         run_child_leak_sentinel
+        run_piped_entry_guard
         printf '[PASS] installer contract aggregate\n'
         ;;
-    *) fail 'usage: installer-contract.sh [--case env-clean|suffix-internal|suffix-home-arpa|child-leak-sentinel]' ;;
+    *) fail 'usage: installer-contract.sh [--case env-clean|suffix-internal|suffix-home-arpa|child-leak-sentinel|piped-entry-guard]' ;;
 esac

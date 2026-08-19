@@ -536,6 +536,9 @@ assert_extension_pattern_intact() {
 }
 
 [[ -x install.sh ]] || fail "install.sh must exist and be executable"
+# shellcheck disable=SC2016  # match the literal install.sh entry guard
+grep -Fq 'BASH_SOURCE[0]:-$0' install.sh \
+    || fail "install.sh must invoke main when piped to bash (unset BASH_SOURCE)"
 install_release_ref="$(read_install_release_ref)"
 grep -Fq "/${install_release_ref}/install.sh" README.md \
     || fail "README.md must document the tagged public install.sh quickstart"
