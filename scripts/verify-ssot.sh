@@ -120,18 +120,23 @@ verify_doc_contract() {
         "${docs_root}/roles/vps_orchestration/README.md" "${docs_root}/tests/e2e/README.md" \
         || fail "documentation examples must not expose unresolved Jinja domains"
 
-    grep -Eiq 'public QEMU.*remote QEMU.*negative.*disposable real VPS.*external client.*restore' \
+    ! grep -Fqi 'Release readiness requires, in order, public QEMU coverage, remote QEMU coverage, the named negative cases, a fresh disposable real VPS installation' \
         <<<"${e2e_flat}" \
-        || fail "E2E README must document the complete live release matrix"
-    grep -Eiq 'local.*QEMU.*do not replace.*disposable real-VPS|local.*QEMU.*do not replace.*disposable real VPS' \
+        || fail "documentation must not make a real VPS or external client a merge-readiness requirement"
+    ! grep -Fqi 'Missing live secrets or access blocks release readiness' \
         <<<"${e2e_flat}" \
-        || fail "E2E README must not treat local or QEMU evidence as real-VPS evidence"
+        || fail "documentation must not make live secrets or access a merge-readiness requirement"
+    grep -Fqi 'Merge readiness requires disposable local public-QEMU coverage, disposable remote-QEMU coverage, the named negative cases, and the encrypted backup/restore drill.' \
+        <<<"${e2e_flat}" \
+        || fail "E2E README must require the disposable local and remote QEMU matrix"
+    grep -Fqi 'GitHub Actions stores no VPS credential, and live external host availability is out of scope for merge readiness.' \
+        <<<"${e2e_flat}" \
+        || fail "E2E README must keep GitHub VPS-credential-free and external host availability out of scope"
+    grep -Fqi 'QEMU does not prove provider-firewall behavior' <<<"${e2e_flat}" \
+        || fail "E2E README must not claim QEMU proves provider-firewall behavior"
     grep -Fqi "provider firewall remains the operator's responsibility" \
         "${docs_root}/tests/e2e/README.md" \
         || fail "E2E README must assign provider-firewall responsibility to the operator"
-    grep -Eiq 'missing live secrets or access blocks release readiness' \
-        <<<"${e2e_flat}" \
-        || fail "E2E README must block readiness when live secrets or access are absent"
 }
 
 copy_doc_fixture() {
@@ -280,29 +285,30 @@ run_doc_contract_self_test() {
 
     mutation_root="${WORK_DIR}/mutation-live-matrix"
     copy_doc_fixture "${mutation_root}"
-    sed -i 's/disposable real VPS/local simulation/' "${mutation_root}/tests/e2e/README.md"
+    sed -i 's/disposable local public-QEMU coverage/optional local coverage/' \
+        "${mutation_root}/tests/e2e/README.md"
     if (verify_doc_contract "${mutation_root}") >/dev/null 2>&1; then
-        fail "doc-contract accepted a missing live release boundary"
+        fail "doc-contract accepted a missing required QEMU matrix"
     fi
-    pass "doc-contract rejects missing live disposable VPS coverage inner_rc=1"
+    pass "doc-contract rejects missing required QEMU matrix inner_rc=1"
 
     mutation_root="${WORK_DIR}/mutation-provider-firewall"
     copy_doc_fixture "${mutation_root}"
-    sed -i "s/provider firewall remains the operator's responsibility/provider firewall is automated/" \
+    sed -i 's/QEMU does not/QEMU does/' \
         "${mutation_root}/tests/e2e/README.md"
     if (verify_doc_contract "${mutation_root}") >/dev/null 2>&1; then
-        fail "doc-contract accepted automated provider-firewall wording"
+        fail "doc-contract accepted QEMU provider-firewall proof wording"
     fi
-    pass "doc-contract rejects missing provider firewall responsibility inner_rc=1"
+    pass "doc-contract rejects QEMU provider-firewall proof wording inner_rc=1"
 
     mutation_root="${WORK_DIR}/mutation-live-secrets"
     copy_doc_fixture "${mutation_root}"
-    sed -i 's/Missing live secrets or access blocks release readiness/Missing live secrets may be skipped/' \
+    sed -i 's/GitHub Actions stores no VPS credential/GitHub Actions may store VPS credentials/' \
         "${mutation_root}/tests/e2e/README.md"
     if (verify_doc_contract "${mutation_root}") >/dev/null 2>&1; then
-        fail "doc-contract accepted optional live secrets"
+        fail "doc-contract accepted GitHub VPS credentials"
     fi
-    pass "doc-contract rejects optional live secrets and access inner_rc=1"
+    pass "doc-contract rejects GitHub VPS credentials inner_rc=1"
 }
 
 if [[ ${1:-} == --self-test-doc-contract ]]; then
@@ -320,6 +326,9 @@ python3 -c 'import yaml' >/dev/null 2>&1 || fail "required Python module not fou
 pass "required tools are available"
 verify_doc_contract "${ROOT_DIR}"
 pass "operational documentation matches enforced defaults and runtime contracts"
+! rg -ni 'secrets\.[^}]*vps|E2E_VPS_' .github/workflows >/dev/null \
+    || fail "GitHub Actions must store no VPS credential"
+pass "GitHub Actions stores no VPS credential"
 
 mkdir -p "${LOCAL_TEMP}" "${REMOTE_TEMP}" "${PULL_CHECKOUT}"
 export ANSIBLE_LOCAL_TEMP="${ANSIBLE_LOCAL_TEMP:-${LOCAL_TEMP}}"

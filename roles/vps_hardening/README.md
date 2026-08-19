@@ -106,10 +106,11 @@ session until a new key-authenticated login succeeds. The SSH tasks validate
 the candidate daemon configuration and restore the prior configuration when
 the new login cannot be proven.
 
-Local syntax checks and QEMU coverage do not prove provider routing or live
-access. Release readiness therefore requires a fresh disposable VPS and an
-external client; missing provider access or live secrets is a blocking result,
-not a skipped pass.
+Disposable local and remote QEMU coverage establishes software merge readiness.
+It does not prove provider-firewall behavior, provider routing, or a live host
+lifecycle. Those remain operator responsibilities for an actual deployment;
+GitHub Actions stores no VPS credential and live external host availability is
+out of scope for merge readiness.
 
 ### Check Mode Support
 Check mode is **not** reliably supported: several tasks use `command`/template

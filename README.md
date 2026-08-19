@@ -344,9 +344,11 @@ bash scripts/verify-ssot.sh
 ```
 
 CI runs syntax checks, Ansible/YAML/Shell lint, SSOT validation on pull
-requests, and gitleaks. The [E2E matrix](tests/e2e/README.md) covers public,
-remote, reboot, idempotency, client, and real-VPS tests; the real-VPS workflow
-is manual `workflow_dispatch`. Run remote QEMU coverage explicitly with:
+requests, and gitleaks. The [E2E matrix](tests/e2e/README.md) uses disposable
+local and remote QEMU for software merge readiness; GitHub Actions stores no
+VPS credential and live external host availability is out of scope. QEMU does
+not prove provider-firewall behavior, which remains an operator responsibility.
+Run remote QEMU coverage explicitly with:
 
 ```bash
 bash tests/e2e/qemu-remote-install.sh
