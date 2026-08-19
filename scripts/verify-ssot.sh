@@ -542,6 +542,19 @@ assert_extension_pattern_intact() {
         || fail "Caddyfile.j2 must import user site blocks from Caddyfile.d"
 }
 
+assert_examples_follow_platform_contract() {
+    # User examples are not part of the platform image pin, but they must
+    # not teach :latest or a direct Caddy restart that bypasses candidate
+    # validation. Do not pin a third-party example tag here.
+    [[ -d examples ]] || fail "examples/ must exist for the documented extension path"
+    if grep -REq 'image:[[:space:]].*:latest' examples; then
+        fail "examples/ must not use image :latest"
+    fi
+    if grep -REq 'docker[[:space:]]+restart[[:space:]]+caddy' examples; then
+        fail "examples/ must not teach docker restart caddy"
+    fi
+}
+
 [[ -x install.sh ]] || fail "install.sh must exist and be executable"
 # shellcheck disable=SC2016  # match the literal install.sh entry guard
 grep -Fq 'BASH_SOURCE[0]:-$0' install.sh \
@@ -561,7 +574,9 @@ assert_optional_installer_prompts_have_role_defaults
 assert_wg_allowed_ips_default
 assert_installer_provides_wg_easy_init
 assert_extension_pattern_intact
+assert_examples_follow_platform_contract
 pass "installer entrypoints follow tagged quickstart and strict SSOT rules"
+pass "examples/ pin image tags and do not restart Caddy directly"
 
 ansible-inventory -i inventory/localhost.yml --graph vps >/dev/null \
     || fail "inventory/localhost.yml must define the vps group"
