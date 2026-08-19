@@ -72,7 +72,8 @@ verify_normal_caddy_api() {
         '{username: $username, password: $password, remember: false}' \
         >/tmp/zt-session-login.json
     chmod 0600 /tmp/zt-session-login.json
-    status="$(caddy_request '/api/session' -X POST -H 'Content-Type: application/json' \
+    # wg-easy 15.4 moved password login from POST /api/session to POST /api/auth/password
+    status="$(caddy_request '/api/auth/password' -X POST -H 'Content-Type: application/json' \
         --data-binary @/tmp/zt-session-login.json -c /tmp/zt-session-cookie)"
     [[ "${status}" == "200" ]] || {
         echo "[FAIL] wg-easy login returned ${status} through Caddy" >&2
