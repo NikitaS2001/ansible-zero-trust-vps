@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Public installer for ansible-zero-trust-vps.
 # Intended usage:
-#   curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.1.0/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.2.0/install.sh | sudo bash
 
 set -euo pipefail
 
 readonly REPO_URL="${ZERO_TRUST_REPO_URL:-https://github.com/NikitaS2001/ansible-zero-trust-vps.git}"
-readonly RELEASE_REF="${ZERO_TRUST_RELEASE_REF:-v1.1.0}"
+readonly RELEASE_REF="${ZERO_TRUST_RELEASE_REF:-v1.2.0}"
 readonly INSTALL_ROOT="/opt/zero-trust-vps-installer"
 readonly REPO_DIR="${INSTALL_ROOT}/repo"
 readonly VENV_DIR="${INSTALL_ROOT}/venv"
