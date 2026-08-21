@@ -5,8 +5,8 @@
 
 set -euo pipefail
 
-readonly REPO_URL="${ZERO_TRUST_REPO_URL:-https://github.com/NikitaS2001/ansible-zero-trust-vps.git}"
-readonly RELEASE_REF="${ZERO_TRUST_RELEASE_REF:-v1.2.1}"
+readonly OFFICIAL_REPO_URL="https://github.com/NikitaS2001/ansible-zero-trust-vps.git"
+readonly OFFICIAL_RELEASE_REF="v1.2.1"
 readonly OFFICIAL_SIGNER_IDENTITY="nikitasmadych2001@gmail.com"
 readonly OFFICIAL_SIGNER_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcfC1Stku7YQ0mLYptkX+t0SZiziyukPRofvs0YHZbx"
 readonly OFFICIAL_SIGNER_FINGERPRINT="SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0"
@@ -15,11 +15,17 @@ readonly REPO_DIR="${INSTALL_ROOT}/repo"
 readonly VENV_DIR="${INSTALL_ROOT}/venv"
 
 RESOLVED_RELEASE_REF=""
+REPO_URL="${OFFICIAL_REPO_URL}"
+RELEASE_REF="${OFFICIAL_RELEASE_REF}"
+DEVELOPMENT_MODE=false
 CREATED_INSTALL_ROOT=false
 CREATED_REPO_DIR=false
 CREATED_VENV_DIR=false
 EXTRA_VARS_FILE=""
 ALLOWED_SIGNERS_FILE=""
+REPO_CONFIG_BACKUP=""
+REPO_CONFIG_MODE=""
+REPO_CONFIG_ISOLATED=false
 SSH_PORT=""
 WG_PORT=""
 ADMIN_USER=""
@@ -44,6 +50,7 @@ cleanup_on_failure() {
 
     cleanup_extra_vars_file
     cleanup_allowed_signers_file
+    restore_repository_git_config
 
     if [[ "${exit_code}" -eq 0 ]]; then
         return
@@ -77,6 +84,19 @@ cleanup_allowed_signers_file() {
         rm -f "${ALLOWED_SIGNERS_FILE}"
     fi
     ALLOWED_SIGNERS_FILE=""
+}
+
+restore_repository_git_config() {
+    if [[ "${REPO_CONFIG_ISOLATED}" == "true" ]]; then
+        cp -- "${REPO_CONFIG_BACKUP}" "${REPO_DIR}/.git/config"
+        chmod "${REPO_CONFIG_MODE}" "${REPO_DIR}/.git/config"
+        REPO_CONFIG_ISOLATED=false
+    fi
+    if [[ -n "${REPO_CONFIG_BACKUP}" && -e "${REPO_CONFIG_BACKUP}" ]]; then
+        rm -f "${REPO_CONFIG_BACKUP}"
+    fi
+    REPO_CONFIG_BACKUP=""
+    REPO_CONFIG_MODE=""
 }
 
 usage() {
@@ -335,6 +355,26 @@ read_yaml_scalar_default() {
 }
 
 validate_release_source() {
+    case "${ZERO_TRUST_DEV_MODE:-}" in
+        '')
+            DEVELOPMENT_MODE=false
+            REPO_URL="${ZERO_TRUST_REPO_URL:-${OFFICIAL_REPO_URL}}"
+            RELEASE_REF="${ZERO_TRUST_RELEASE_REF:-${OFFICIAL_RELEASE_REF}}"
+            [[ "${REPO_URL}" == "${OFFICIAL_REPO_URL}" ]] \
+                || error "Production mode accepts only the official repository: ${OFFICIAL_REPO_URL}"
+            [[ "${RELEASE_REF}" == "${OFFICIAL_RELEASE_REF}" ]] \
+                || error "Production mode accepts only the built-in release tag: ${OFFICIAL_RELEASE_REF}"
+            ;;
+        1)
+            DEVELOPMENT_MODE=true
+            REPO_URL="${ZERO_TRUST_REPO_URL:-${OFFICIAL_REPO_URL}}"
+            RELEASE_REF="${ZERO_TRUST_RELEASE_REF:-${OFFICIAL_RELEASE_REF}}"
+            warn "NON-PRODUCTION DEVELOPMENT MODE: arbitrary repository and ref enabled."
+            ;;
+        *)
+            error "ZERO_TRUST_DEV_MODE must be unset or exactly 1."
+            ;;
+    esac
     if [[ -z "${REPO_URL}" || "${REPO_URL}" =~ [[:space:]] || "${REPO_URL}" == -* ]]; then
         error "ZERO_TRUST_REPO_URL must be a non-empty git URL without whitespace."
     fi
@@ -413,7 +453,7 @@ verify_signed_release() {
         warn "[ERROR] Release allowed-signers file must have mode 0600."
         return 1
     fi
-    object_type="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${repository}" cat-file -t "refs/tags/${tag}" 2>/dev/null)" || {
+    object_type="$(release_git -C "${repository}" cat-file -t "refs/tags/${tag}" 2>/dev/null)" || {
         warn "[ERROR] Release tag was not found: ${tag}"
         return 1
     }
@@ -421,14 +461,13 @@ verify_signed_release() {
         warn "[ERROR] Release ref is not an annotated tag: ${tag}"
         return 1
     fi
-    tagger_email="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${repository}" for-each-ref --format='%(taggeremail)' "refs/tags/${tag}")"
+    tagger_email="$(release_git -C "${repository}" for-each-ref --format='%(taggeremail)' "refs/tags/${tag}")"
     if [[ "${tagger_email}" != "<${expected_identity}>" ]]; then
         warn "[ERROR] Release tagger identity mismatch for ${tag}."
         return 1
     fi
     if ! verify_output="$(
-        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-            git -C "${repository}" \
+        release_git -C "${repository}" \
             -c gpg.format=ssh \
             -c gpg.ssh.allowedSignersFile="${allowed_signers}" \
             verify-tag --raw "${tag}" 2>&1
@@ -440,7 +479,7 @@ verify_signed_release() {
         warn "[ERROR] Release tag signer principal mismatch for ${tag}."
         return 1
     fi
-    commit_sha="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${repository}" rev-parse "${tag}^{commit}")"
+    commit_sha="$(release_git -C "${repository}" rev-parse "${tag}^{commit}")"
     if [[ ! "${commit_sha}" =~ ^[0-9a-f]{40}$ ]]; then
         warn "[ERROR] Release tag did not resolve to a full commit SHA: ${tag}"
         return 1
@@ -450,23 +489,69 @@ verify_signed_release() {
     info "Verified signed release tag ${tag} for ${expected_identity} at ${commit_sha}."
 }
 
+release_git() {
+    env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS \
+        GIT_NO_REPLACE_OBJECTS=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=0 \
+        git "$@"
+}
+
+isolate_repository_git_config() {
+    local config_file="${REPO_DIR}/.git/config"
+    local origin_url
+
+    [[ -f "${config_file}" && ! -L "${config_file}" ]] \
+        || error "Repository local Git configuration must be a regular file."
+    origin_url="$(GIT_CONFIG=/dev/null GIT_CONFIG_COUNT=0 \
+        git config --file "${config_file}" --no-includes --get remote.origin.url)" \
+        || error "Repository checkout has no origin URL in its local configuration."
+    REPO_CONFIG_BACKUP="$(mktemp "${INSTALL_ROOT}/repo-config.XXXXXX")"
+    REPO_CONFIG_MODE="$(stat -c '%a' "${config_file}")"
+    cp -- "${config_file}" "${REPO_CONFIG_BACKUP}"
+    chmod 0600 "${REPO_CONFIG_BACKUP}"
+    REPO_CONFIG_ISOLATED=true
+    rm -f "${config_file}"
+    install -m 0600 /dev/null "${config_file}"
+    GIT_CONFIG=/dev/null git config --file "${config_file}" remote.origin.url "${origin_url}"
+    GIT_CONFIG=/dev/null git config --file "${config_file}" remote.origin.fetch \
+        '+refs/heads/*:refs/remotes/origin/*'
+}
+
 checkout_release() {
+    local checkout_head
+    local existing_origin
+
     info "Checking out ${REPO_URL} at ${RELEASE_REF}..."
     ensure_install_root
     if [[ -d "${REPO_DIR}/.git" ]]; then
-        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${REPO_DIR}" fetch --quiet --tags origin
+        existing_origin="$(GIT_CONFIG=/dev/null GIT_CONFIG_COUNT=0 \
+            git config --file "${REPO_DIR}/.git/config" --no-includes --get remote.origin.url)" \
+            || error "Existing checkout has no origin repository."
+        [[ "${existing_origin}" == "${REPO_URL}" ]] \
+            || error "Existing checkout origin does not match requested repository."
     elif [[ -e "${REPO_DIR}" ]]; then
-        error "${REPO_DIR} exists but is not a git checkout. Remove it or set ZERO_TRUST_REPO_URL/ZERO_TRUST_RELEASE_REF for a clean install."
+        error "${REPO_DIR} exists but is not a git checkout. Remove it before retrying."
     else
         CREATED_REPO_DIR=true
-        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git clone --quiet "${REPO_URL}" "${REPO_DIR}"
+        release_git clone --quiet "${REPO_URL}" "${REPO_DIR}"
     fi
+    isolate_repository_git_config
 
-    prepare_allowed_signers_file
-    verify_signed_release "${REPO_DIR}" "${RELEASE_REF}" "${ALLOWED_SIGNERS_FILE}" "${OFFICIAL_SIGNER_IDENTITY}" \
-        || error "Release signature verification failed."
-    cleanup_allowed_signers_file
-    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${REPO_DIR}" checkout --quiet --detach "${RESOLVED_RELEASE_REF}"
+    if [[ "${DEVELOPMENT_MODE}" == "true" ]]; then
+        release_git -C "${REPO_DIR}" fetch --quiet origin "${RELEASE_REF}"
+        RESOLVED_RELEASE_REF="$(release_git -C "${REPO_DIR}" rev-parse 'FETCH_HEAD^{commit}')"
+    else
+        release_git -C "${REPO_DIR}" fetch --quiet --tags origin
+        prepare_allowed_signers_file
+        verify_signed_release "${REPO_DIR}" "${RELEASE_REF}" "${ALLOWED_SIGNERS_FILE}" "${OFFICIAL_SIGNER_IDENTITY}" \
+            || error "Release signature verification failed."
+        cleanup_allowed_signers_file
+    fi
+    [[ "${RESOLVED_RELEASE_REF}" =~ ^[0-9a-f]{40}$ ]] \
+        || error "Release ref did not resolve to a full commit SHA."
+    release_git -c core.hooksPath=/dev/null -C "${REPO_DIR}" checkout --quiet --detach "${RESOLVED_RELEASE_REF}"
+    checkout_head="$(release_git -C "${REPO_DIR}" rev-parse HEAD)"
+    [[ "${checkout_head}" == "${RESOLVED_RELEASE_REF}" ]] \
+        || error "Detached checkout HEAD does not match the resolved release SHA."
 }
 
 install_collections() {
@@ -669,7 +754,11 @@ run_ansible_pull() {
     else
         info "Running ansible-pull from ${REPO_URL} at ${RELEASE_REF}..."
     fi
-    "${VENV_DIR}/bin/ansible-pull" \
+    env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS \
+        GIT_NO_REPLACE_OBJECTS=1 \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null \
+        "${VENV_DIR}/bin/ansible-pull" \
         -U "${REPO_URL}" \
         -C "${RESOLVED_RELEASE_REF}" \
         -d "${REPO_DIR}" \
@@ -677,6 +766,7 @@ run_ansible_pull() {
         --extra-vars "@${EXTRA_VARS_FILE}" \
         site.yml
     cleanup_extra_vars_file
+    restore_repository_git_config
 }
 
 print_summary() {
