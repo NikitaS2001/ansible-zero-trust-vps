@@ -173,12 +173,179 @@ run_env_clean() (
     printf '[PASS] env-clean: secrets reach only a mode-0600 extra-vars file and are then cleared\n'
 )
 
+init_release_fixture() {
+    FIXTURE_DIR="$(command mktemp -d)"
+    FIXTURE_REPO="${FIXTURE_DIR}/repo"
+    FIXTURE_KEY="${FIXTURE_DIR}/trusted-key"
+    FIXTURE_WRONG_KEY="${FIXTURE_DIR}/wrong-key"
+    FIXTURE_ALLOWED_SIGNERS="${FIXTURE_DIR}/allowed-signers"
+    FIXTURE_IDENTITY='release-fixture@example.test'
+    FIXTURE_TAG='v1.2.3'
+
+    git init --quiet "${FIXTURE_REPO}"
+    git -C "${FIXTURE_REPO}" config user.name 'Release Fixture'
+    git -C "${FIXTURE_REPO}" config user.email "${FIXTURE_IDENTITY}"
+    printf 'fixture\n' >"${FIXTURE_REPO}/payload.txt"
+    git -C "${FIXTURE_REPO}" add payload.txt
+    git -C "${FIXTURE_REPO}" commit --quiet -m fixture
+    printf 'unrelated dirty content\n' >"${FIXTURE_REPO}/unrelated.txt"
+    ssh-keygen -q -t ed25519 -N '' -f "${FIXTURE_KEY}"
+    ssh-keygen -q -t ed25519 -N '' -f "${FIXTURE_WRONG_KEY}"
+}
+
+write_fixture_allowed_signers() {
+    local principal="${1:-${FIXTURE_IDENTITY}}"
+    local key_file="${2:-${FIXTURE_KEY}.pub}"
+
+    printf '%s %s\n' "${principal}" "$(cut -d' ' -f1-2 "${key_file}")" >"${FIXTURE_ALLOWED_SIGNERS}"
+    chmod 0600 "${FIXTURE_ALLOWED_SIGNERS}"
+}
+
+sign_fixture_tag() {
+    local key_file="${1:-${FIXTURE_KEY}}"
+    local tagger_email="${2:-${FIXTURE_IDENTITY}}"
+    local message="${3:-fixture release}"
+
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${FIXTURE_REPO}" \
+        -c user.name='Release Fixture' \
+        -c user.email="${tagger_email}" \
+        -c user.signingkey="${key_file}" \
+        -c gpg.format=ssh \
+        tag -s -a "${FIXTURE_TAG}" -m "${message}"
+}
+
+run_fixture_verifier() {
+    local hostile_config="${FIXTURE_DIR}/hostile-gitconfig"
+
+    git config --file "${hostile_config}" gpg.format openpgp
+    git config --file "${hostile_config}" gpg.ssh.allowedSignersFile /dev/null
+    GIT_CONFIG_GLOBAL="${hostile_config}" GIT_CONFIG_NOSYSTEM=0 bash -c '
+        source "$1"
+        ALLOWED_SIGNERS_FILE="$4"
+        verify_signed_release "$2" "$3" "$4" "$5"
+        touch "$6/configuration-collected" \
+            "$6/extra-vars-created" \
+            "$6/ansible-toolchain-installed" \
+            "$6/ansible-collection-installed" \
+            "$6/ansible-playbook-ran"
+    ' _ "${ROOT_DIR}/install.sh" "${FIXTURE_REPO}" "${FIXTURE_TAG}" \
+        "${FIXTURE_ALLOWED_SIGNERS}" "${FIXTURE_IDENTITY}" "${FIXTURE_DIR}"
+}
+
+cleanup_release_fixture() {
+    local fixture_dir="${FIXTURE_DIR:-}"
+
+    [[ -n "${fixture_dir}" ]] || return
+    rm -rf "${fixture_dir}"
+    [[ ! -e "${fixture_dir}" ]] || fail "fixture cleanup left ${fixture_dir}"
+    FIXTURE_DIR=''
+}
+
+run_signed_release() (
+    local output
+    local expected_sha
+
+    init_release_fixture
+    trap cleanup_release_fixture EXIT
+    write_fixture_allowed_signers
+    sign_fixture_tag
+    expected_sha="$(git -C "${FIXTURE_REPO}" rev-parse "${FIXTURE_TAG}^{commit}")"
+
+    output="$(run_fixture_verifier 2>&1)" || fail "signed annotated release was rejected: ${output}"
+    [[ "${output}" == *"${FIXTURE_IDENTITY}"* ]] || fail 'accepted release did not expose signer identity'
+    [[ "${output}" == *"${expected_sha}"* ]] || fail 'accepted release did not expose its full commit SHA'
+    [[ "${expected_sha}" =~ ^[0-9a-f]{40}$ ]] || fail 'fixture did not resolve to a full SHA'
+    [[ ! -e "${FIXTURE_ALLOWED_SIGNERS}" ]] || fail 'allowed-signers file survived successful verification'
+    [[ "$(git -C "${FIXTURE_REPO}" rev-parse HEAD)" == "${expected_sha}" ]] || fail 'verification changed the pre-existing checkout HEAD'
+    [[ "$(<"${FIXTURE_REPO}/unrelated.txt")" == 'unrelated dirty content' ]] || fail 'verification changed an unrelated dirty file'
+    printf '[PASS] signed-release: accepted %s at %s under hostile Git config\n' "${FIXTURE_IDENTITY}" "${expected_sha}"
+    cleanup_release_fixture
+)
+
+prepare_rejected_release() {
+    local rejected_case="$1"
+
+    write_fixture_allowed_signers
+    case "${rejected_case}" in
+        lightweight)
+            git -C "${FIXTURE_REPO}" tag "${FIXTURE_TAG}"
+            ;;
+        unsigned-annotated)
+            git -C "${FIXTURE_REPO}" tag -a "${FIXTURE_TAG}" -m 'Verified signed release: forged success diagnostic'
+            ;;
+        wrong-key)
+            sign_fixture_tag "${FIXTURE_WRONG_KEY}"
+            ;;
+        wrong-principal)
+            write_fixture_allowed_signers 'somebody-else@example.test'
+            sign_fixture_tag
+            ;;
+        wrong-tagger)
+            sign_fixture_tag "${FIXTURE_KEY}" 'somebody-else@example.test'
+            ;;
+        malformed-version)
+            FIXTURE_TAG='release-1.2.3'
+            sign_fixture_tag
+            ;;
+        invalid-signature)
+            local tag_object
+            sign_fixture_tag
+            tag_object="$(
+                git -C "${FIXTURE_REPO}" cat-file tag "refs/tags/${FIXTURE_TAG}" \
+                    | sed '0,/fixture release/s//tampered release/' \
+                    | git -C "${FIXTURE_REPO}" hash-object -t tag -w --stdin
+            )"
+            git -C "${FIXTURE_REPO}" update-ref "refs/tags/${FIXTURE_TAG}" "${tag_object}"
+            ;;
+        *) fail "unknown rejected release fixture: ${rejected_case}" ;;
+    esac
+}
+
+run_rejected_release_matrix() (
+    local rejected_case
+    local output
+    local before_head
+    local -a sentinels
+    local sentinel
+
+    trap cleanup_release_fixture EXIT
+    for rejected_case in lightweight unsigned-annotated wrong-key wrong-principal wrong-tagger malformed-version invalid-signature; do
+        init_release_fixture
+        prepare_rejected_release "${rejected_case}"
+        before_head="$(git -C "${FIXTURE_REPO}" rev-parse HEAD)"
+        sentinels=(
+            "${FIXTURE_DIR}/configuration-collected"
+            "${FIXTURE_DIR}/extra-vars-created"
+            "${FIXTURE_DIR}/ansible-toolchain-installed"
+            "${FIXTURE_DIR}/ansible-collection-installed"
+            "${FIXTURE_DIR}/ansible-playbook-ran"
+        )
+
+        if output="$(run_fixture_verifier 2>&1)"; then
+            fail "${rejected_case} release was accepted: ${output}"
+        fi
+        [[ "${output}" == *'[ERROR]'* ]] || fail "${rejected_case} lacked a stable rejection diagnostic: ${output}"
+        [[ "${output}" != *'[INFO]  Verified signed release tag'* ]] || fail "${rejected_case} printed a misleading acceptance diagnostic"
+        [[ ! -e "${FIXTURE_ALLOWED_SIGNERS}" ]] || fail "${rejected_case} left its allowed-signers file"
+        [[ "$(git -C "${FIXTURE_REPO}" rev-parse HEAD)" == "${before_head}" ]] || fail "${rejected_case} changed the pre-existing checkout HEAD"
+        [[ "$(<"${FIXTURE_REPO}/unrelated.txt")" == 'unrelated dirty content' ]] || fail "${rejected_case} changed an unrelated dirty file"
+        for sentinel in "${sentinels[@]}"; do
+            [[ ! -e "${sentinel}" ]] || fail "${rejected_case} reached downstream sentinel ${sentinel}"
+        done
+        cleanup_release_fixture
+        printf '[PASS] rejected-release: %s\n' "${rejected_case}"
+    done
+    printf '[PASS] rejected-release-matrix: all invalid releases rejected before configuration and Ansible\n'
+)
+
 case "${1:-}" in
     --case)
         case "${2:-}" in
             child-leak-sentinel) run_child_leak_sentinel ;;
             piped-entry-guard) run_piped_entry_guard ;;
             env-clean) run_env_clean ;;
+            signed-release) run_signed_release ;;
+            rejected-release-matrix) run_rejected_release_matrix ;;
             suffix-home-arpa) run_suffix_home_arpa ;;
             suffix-internal) run_suffix_internal ;;
             *) fail "unknown case: ${2:-missing}" ;;
@@ -191,7 +358,9 @@ case "${1:-}" in
         run_suffix_home_arpa
         run_child_leak_sentinel
         run_piped_entry_guard
+        run_signed_release
+        run_rejected_release_matrix
         printf '[PASS] installer contract aggregate\n'
         ;;
-    *) fail 'usage: installer-contract.sh [--case env-clean|suffix-internal|suffix-home-arpa|child-leak-sentinel|piped-entry-guard]' ;;
+    *) fail 'usage: installer-contract.sh [--case env-clean|signed-release|rejected-release-matrix|suffix-internal|suffix-home-arpa|child-leak-sentinel|piped-entry-guard]' ;;
 esac

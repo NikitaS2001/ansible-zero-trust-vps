@@ -7,6 +7,9 @@ set -euo pipefail
 
 readonly REPO_URL="${ZERO_TRUST_REPO_URL:-https://github.com/NikitaS2001/ansible-zero-trust-vps.git}"
 readonly RELEASE_REF="${ZERO_TRUST_RELEASE_REF:-v1.2.1}"
+readonly OFFICIAL_SIGNER_IDENTITY="nikitasmadych2001@gmail.com"
+readonly OFFICIAL_SIGNER_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcfC1Stku7YQ0mLYptkX+t0SZiziyukPRofvs0YHZbx"
+readonly OFFICIAL_SIGNER_FINGERPRINT="SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0"
 readonly INSTALL_ROOT="/opt/zero-trust-vps-installer"
 readonly REPO_DIR="${INSTALL_ROOT}/repo"
 readonly VENV_DIR="${INSTALL_ROOT}/venv"
@@ -16,6 +19,7 @@ CREATED_INSTALL_ROOT=false
 CREATED_REPO_DIR=false
 CREATED_VENV_DIR=false
 EXTRA_VARS_FILE=""
+ALLOWED_SIGNERS_FILE=""
 SSH_PORT=""
 WG_PORT=""
 ADMIN_USER=""
@@ -39,6 +43,7 @@ cleanup_on_failure() {
     local exit_code=$?
 
     cleanup_extra_vars_file
+    cleanup_allowed_signers_file
 
     if [[ "${exit_code}" -eq 0 ]]; then
         return
@@ -58,11 +63,20 @@ cleanup_on_failure() {
     fi
 }
 trap cleanup_on_failure EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cleanup_extra_vars_file() {
     if [[ -n "${EXTRA_VARS_FILE}" && -e "${EXTRA_VARS_FILE}" ]]; then
         rm -f "${EXTRA_VARS_FILE}"
     fi
+}
+
+cleanup_allowed_signers_file() {
+    if [[ -n "${ALLOWED_SIGNERS_FILE}" && -e "${ALLOWED_SIGNERS_FILE}" ]]; then
+        rm -f "${ALLOWED_SIGNERS_FILE}"
+    fi
+    ALLOWED_SIGNERS_FILE=""
 }
 
 usage() {
@@ -344,14 +358,15 @@ ensure_install_root() {
 }
 
 install_prerequisites() {
-    info "Installing system prerequisites..."
+    info "Installing source verification prerequisites..."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y ca-certificates git python3 python3-venv
+    apt-get install -y ca-certificates git openssh-client
 }
 
 install_ansible_toolchain() {
     info "Installing Ansible in ${VENV_DIR}..."
+    apt-get install -y python3 python3-venv
     ensure_install_root
     if [[ ! -e "${VENV_DIR}" ]]; then
         CREATED_VENV_DIR=true
@@ -367,26 +382,91 @@ install_ansible_toolchain() {
     "${VENV_DIR}/bin/pip" install --quiet "ansible==12.3.0" "passlib[bcrypt]" "bcrypt<4.1"
 }
 
+prepare_allowed_signers_file() {
+    local actual_fingerprint
+
+    actual_fingerprint="$(printf '%s\n' "${OFFICIAL_SIGNER_PUBLIC_KEY}" | ssh-keygen -lf - | awk '{print $2}')"
+    [[ "${actual_fingerprint}" == "${OFFICIAL_SIGNER_FINGERPRINT}" ]] \
+        || error "Built-in release signer fingerprint mismatch."
+
+    ensure_install_root
+    ALLOWED_SIGNERS_FILE="$(mktemp "${INSTALL_ROOT}/allowed-signers.XXXXXX")"
+    chmod 0600 "${ALLOWED_SIGNERS_FILE}"
+    printf '%s %s\n' "${OFFICIAL_SIGNER_IDENTITY}" "${OFFICIAL_SIGNER_PUBLIC_KEY}" >"${ALLOWED_SIGNERS_FILE}"
+}
+
+verify_signed_release() {
+    local repository="$1"
+    local tag="$2"
+    local allowed_signers="$3"
+    local expected_identity="$4"
+    local object_type
+    local tagger_email
+    local verify_output
+    local commit_sha
+
+    if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        warn "[ERROR] Release tag must match exact vX.Y.Z syntax: ${tag}"
+        return 1
+    fi
+    if [[ "$(stat -c '%a' "${allowed_signers}" 2>/dev/null)" != "600" ]]; then
+        warn "[ERROR] Release allowed-signers file must have mode 0600."
+        return 1
+    fi
+    object_type="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${repository}" cat-file -t "refs/tags/${tag}" 2>/dev/null)" || {
+        warn "[ERROR] Release tag was not found: ${tag}"
+        return 1
+    }
+    if [[ "${object_type}" != "tag" ]]; then
+        warn "[ERROR] Release ref is not an annotated tag: ${tag}"
+        return 1
+    fi
+    tagger_email="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${repository}" for-each-ref --format='%(taggeremail)' "refs/tags/${tag}")"
+    if [[ "${tagger_email}" != "<${expected_identity}>" ]]; then
+        warn "[ERROR] Release tagger identity mismatch for ${tag}."
+        return 1
+    fi
+    if ! verify_output="$(
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+            git -C "${repository}" \
+            -c gpg.format=ssh \
+            -c gpg.ssh.allowedSignersFile="${allowed_signers}" \
+            verify-tag --raw "${tag}" 2>&1
+    )"; then
+        warn "[ERROR] Release tag signature verification failed for ${tag}."
+        return 1
+    fi
+    if [[ "${verify_output}" != *"Good \"git\" signature for ${expected_identity}"* ]]; then
+        warn "[ERROR] Release tag signer principal mismatch for ${tag}."
+        return 1
+    fi
+    commit_sha="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${repository}" rev-parse "${tag}^{commit}")"
+    if [[ ! "${commit_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+        warn "[ERROR] Release tag did not resolve to a full commit SHA: ${tag}"
+        return 1
+    fi
+
+    RESOLVED_RELEASE_REF="${commit_sha}"
+    info "Verified signed release tag ${tag} for ${expected_identity} at ${commit_sha}."
+}
+
 checkout_release() {
     info "Checking out ${REPO_URL} at ${RELEASE_REF}..."
     ensure_install_root
     if [[ -d "${REPO_DIR}/.git" ]]; then
-        git -C "${REPO_DIR}" fetch --quiet --tags origin
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${REPO_DIR}" fetch --quiet --tags origin
     elif [[ -e "${REPO_DIR}" ]]; then
         error "${REPO_DIR} exists but is not a git checkout. Remove it or set ZERO_TRUST_REPO_URL/ZERO_TRUST_RELEASE_REF for a clean install."
     else
         CREATED_REPO_DIR=true
-        git clone --quiet "${REPO_URL}" "${REPO_DIR}"
+        GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git clone --quiet "${REPO_URL}" "${REPO_DIR}"
     fi
 
-    if git -C "${REPO_DIR}" rev-parse --verify --quiet "${RELEASE_REF}^{commit}" >/dev/null; then
-        RESOLVED_RELEASE_REF="${RELEASE_REF}"
-    elif git -C "${REPO_DIR}" rev-parse --verify --quiet "origin/${RELEASE_REF}^{commit}" >/dev/null; then
-        RESOLVED_RELEASE_REF="origin/${RELEASE_REF}"
-    else
-        error "Git ref '${RELEASE_REF}' or 'origin/${RELEASE_REF}' was not found in ${REPO_URL}."
-    fi
-    git -C "${REPO_DIR}" checkout --quiet "${RESOLVED_RELEASE_REF}"
+    prepare_allowed_signers_file
+    verify_signed_release "${REPO_DIR}" "${RELEASE_REF}" "${ALLOWED_SIGNERS_FILE}" "${OFFICIAL_SIGNER_IDENTITY}" \
+        || error "Release signature verification failed."
+    cleanup_allowed_signers_file
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${REPO_DIR}" checkout --quiet --detach "${RESOLVED_RELEASE_REF}"
 }
 
 install_collections() {
@@ -672,14 +752,14 @@ main() {
     validate_release_source
     require_root
     require_supported_os
+    install_prerequisites
+    checkout_release
     if [[ "${NONINTERACTIVE}" != "1" ]]; then
         open_tty
     fi
     collect_configuration
     resolve_wg_host
-    install_prerequisites
     install_ansible_toolchain
-    checkout_release
     install_collections
     run_ansible_pull
     print_summary
