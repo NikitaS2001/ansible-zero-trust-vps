@@ -25,27 +25,51 @@ esac
 
 fail() { echo "[FAIL] $*" >&2; exit 1; }
 pass() { echo "[PASS] $*"; }
+isolated_git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git "$@"; }
+
+release_ref="$(sed -nE 's/^readonly OFFICIAL_RELEASE_REF="([^"]+)"$/\1/p' install.sh)"
+signer_identity="$(sed -nE 's/^readonly OFFICIAL_SIGNER_IDENTITY="([^"]+)"$/\1/p' install.sh)"
+signer_public_key="$(sed -nE 's/^readonly OFFICIAL_SIGNER_PUBLIC_KEY="([^"]+)"$/\1/p' install.sh)"
+[[ -n "${release_ref}" ]] || fail "install.sh must define OFFICIAL_RELEASE_REF"
+[[ -n "${signer_identity}" ]] || fail "install.sh must define OFFICIAL_SIGNER_IDENTITY"
+[[ -n "${signer_public_key}" ]] || fail "install.sh must define OFFICIAL_SIGNER_PUBLIC_KEY"
+
+allowed_signers_file=""
+cleanup() { [[ -z "${allowed_signers_file}" ]] || rm -f -- "${allowed_signers_file}"; }
+trap cleanup EXIT
+trap 'exit 129' HUP INT TERM
 
 if [[ "${MODE}" == "--tag" ]]; then
-    tag_name="${GITHUB_REF_NAME:-$(git describe --tags --exact-match 2>/dev/null || true)}"
+    tag_name="${GITHUB_REF_NAME:-$(isolated_git describe --tags --exact-match 2>/dev/null || true)}"
     [[ -n "${tag_name}" ]] || fail "--tag mode requires HEAD to be exactly a git tag"
-    tag_commit="$(git rev-parse --verify --quiet "${tag_name}^{commit}")" \
+    tag_type="$(isolated_git cat-file -t "refs/tags/${tag_name}" 2>/dev/null || true)"
+    [[ "${tag_type}" == "tag" ]] \
+        || fail "git tag '${tag_name}' is not a trusted SSH-signed tag (annotated tag required)"
+    allowed_signers_file="$(mktemp "${TMPDIR:-/tmp}/release-contract-signers.XXXXXX")"
+    chmod 0600 "${allowed_signers_file}"
+    printf '%s %s\n' "${signer_identity}" "${signer_public_key}" >"${allowed_signers_file}"
+    isolated_git \
+        -c gpg.format=ssh \
+        -c gpg.ssh.allowedSignersFile="${allowed_signers_file}" \
+        verify-tag "${tag_name}" >/dev/null 2>&1 \
+        || fail "git tag '${tag_name}' is not a trusted SSH-signed tag"
+    tagger_email="$(isolated_git for-each-ref --format='%(taggeremail)' "refs/tags/${tag_name}")"
+    [[ "${tagger_email}" == "<${signer_identity}>" ]] \
+        || fail "git tag '${tag_name}' is not a trusted SSH-signed tag (tagger identity mismatch)"
+    pass "trusted SSH-signed tag ${tag_name}"
+    tag_commit="$(isolated_git rev-parse --verify --quiet "${tag_name}^{commit}")" \
         || fail "git tag '${tag_name}' does not resolve to a commit"
-    head_commit="$(git rev-parse --verify --quiet 'HEAD^{commit}')" \
+    head_commit="$(isolated_git rev-parse --verify --quiet 'HEAD^{commit}')" \
         || fail "HEAD does not resolve to a commit"
     [[ "${tag_commit}" == "${head_commit}" ]] \
         || fail "git tag '${tag_name}' does not point at HEAD"
-    [[ -z "$(git status --porcelain=v1)" ]] \
+    [[ -z "$(isolated_git status --porcelain=v1)" ]] \
         || fail "--tag mode requires a clean worktree"
 fi
 
-release_ref="$(
-    sed -nE 's/^readonly RELEASE_REF="\$\{ZERO_TRUST_RELEASE_REF:-([^}]+)\}"$/\1/p' install.sh
-)"
-[[ -n "${release_ref}" ]] || fail "install.sh must define a default ZERO_TRUST_RELEASE_REF"
 [[ "${release_ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || fail "default ZERO_TRUST_RELEASE_REF must be a vX.Y.Z tag; got '${release_ref}'"
-pass "installer default ZERO_TRUST_RELEASE_REF=${release_ref}"
+    || fail "OFFICIAL_RELEASE_REF must be a vX.Y.Z tag; got '${release_ref}'"
+pass "installer OFFICIAL_RELEASE_REF=${release_ref}"
 
 quickstart_ref="$(
     grep -oE 'raw\.githubusercontent\.com/[^/]+/[^/]+/v[0-9]+\.[0-9]+\.[0-9]+/install\.sh' README.md \
@@ -86,8 +110,8 @@ fi
     || fail "git tag '${tag_name}' does not match installer default '${release_ref}'"
 
 in_tag_ref="$(
-    git show "${tag_name}:install.sh" \
-        | sed -nE 's/^readonly RELEASE_REF="\$\{ZERO_TRUST_RELEASE_REF:-([^}]+)\}"$/\1/p'
+    isolated_git show "${tag_name}:install.sh" \
+        | sed -nE 's/^readonly OFFICIAL_RELEASE_REF="([^"]+)"$/\1/p'
 )"
 [[ "${in_tag_ref}" == "${tag_name}" ]] \
     || fail "install.sh inside ${tag_name} references '${in_tag_ref}', not '${tag_name}'"
