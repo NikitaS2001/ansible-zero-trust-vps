@@ -11,6 +11,8 @@
 #   QEMU_IMAGE       cloud image URL or local .img/.qcow2 path
 #                    (default: Ubuntu 24.04 noble server cloud image)
 #   QEMU_USER        initial login user created by cloud-init (default ubuntu)
+#   E2E_SOURCE_MODE  installer source mode: development or production
+#                    (default development)
 #   INSTALL_REF      git ref to install (default: current branch)
 #   E2E_SSH_PORT     hardened SSH port configured by the installer (default 2222)
 #   E2E_WG_PORT      WireGuard UDP port configured by the installer (default 51820)
@@ -32,12 +34,21 @@ source "${E2E_DIR}/common.sh"
 DEFAULT_IMAGE="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 QEMU_IMAGE="${QEMU_IMAGE:-${DEFAULT_IMAGE}}"
 QEMU_USER="${QEMU_USER:-ubuntu}"
+E2E_SOURCE_MODE="${E2E_SOURCE_MODE:-development}"
 INSTALL_REF="${INSTALL_REF:-$(git rev-parse --abbrev-ref HEAD)}"
 E2E_SSH_PORT="${E2E_SSH_PORT:-2222}"
 E2E_WG_PORT="${E2E_WG_PORT:-51820}"
 QEMU_SSH_PORT="${QEMU_SSH_PORT:-2223}"
 QEMU_ADMIN_PORT="${QEMU_ADMIN_PORT:-2222}"
 QEMU_WG_PORT="${QEMU_WG_PORT:-51822}"
+
+case "${E2E_SOURCE_MODE}" in
+    development|production) ;;
+    *)
+        echo "E2E_SOURCE_MODE must be development or production" >&2
+        exit 1
+        ;;
+esac
 
 DO_REBOOT=false
 DO_CLIENT_TEST=false
@@ -94,6 +105,8 @@ WG_PASS="${ZERO_TRUST_WG_PASSWORD:-Twelve\$COMPOSE_PROBE}"
 
 copy_repo_to_guest() {
     local target="$1" port="$2" key="$3"
+    run_remote "${target}" "${port}" "${key}" \
+        "command -v git >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq git)"
     git ls-files -z --cached --others --exclude-standard | \
         tar --null -czf - --files-from - | \
         run_remote_stdin "${target}" "${port}" "${key}" \
@@ -102,12 +115,16 @@ copy_repo_to_guest() {
 
 run_public_installer() {
     local target="$1" port="$2" key="$3"
+    local source_env=""
+    local installer_log="${TMP_DIR}/installer.log"
+    if [[ "${E2E_SOURCE_MODE}" == "development" ]]; then
+        source_env="ZERO_TRUST_DEV_MODE=1 ZERO_TRUST_REPO_URL=/tmp/ztrepo ZERO_TRUST_RELEASE_REF='${INSTALL_REF}'"
+    fi
     run_remote "${target}" "${port}" "${key}" \
         "cd /tmp/ztrepo && sudo env \
         PATH='${TODO10_DOCKER_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}' \
         ZERO_TRUST_NONINTERACTIVE=1 \
-        ZERO_TRUST_REPO_URL=/tmp/ztrepo \
-        ZERO_TRUST_RELEASE_REF='${INSTALL_REF}' \
+        ${source_env} \
         ZERO_TRUST_SSH_PORT='${E2E_SSH_PORT}' \
         ZERO_TRUST_WG_PORT='${E2E_WG_PORT}' \
         ZERO_TRUST_ADMIN_USER=sysadmin \
@@ -118,7 +135,16 @@ run_public_installer() {
         ZERO_TRUST_INTERNAL_DOMAINS='${WG_INTERNAL_DOMAIN} ${ADGUARD_INTERNAL_DOMAIN}' \
         ZERO_TRUST_SSH_PUBKEY='${PUBKEY}' \
         ZERO_TRUST_WG_HOST=127.0.0.1 \
-        bash ./install.sh"
+        bash ./install.sh" 2>&1 | tee "${installer_log}"
+    if [[ "${E2E_SOURCE_MODE}" == "development" ]]; then
+        grep -Fq "NON-PRODUCTION DEVELOPMENT MODE" "${installer_log}" || \
+            fail "development installer warning was not emitted"
+    else
+        grep -Eq "Verified signed release tag v1\\.2\\.1 for nikitasmadych2001@gmail\\.com at [0-9a-f]{40}\\." \
+            "${installer_log}" || fail "production installer provenance was not emitted"
+        ! grep -Fq "NON-PRODUCTION DEVELOPMENT MODE" "${installer_log}" || \
+            fail "production installer emitted the development warning"
+    fi
 }
 
 verify_wg_login() {
@@ -241,13 +267,15 @@ verify_caddy_site_reachable() {
 }
 
 echo "[E2E] image=${QEMU_IMAGE}"
-echo "[E2E] ref=${INSTALL_REF} ssh_port=${E2E_SSH_PORT} wg_port=${E2E_WG_PORT} user=${QEMU_USER}"
+echo "[E2E] installer_commit=$(git rev-parse HEAD)"
+echo "[E2E] source_mode=${E2E_SOURCE_MODE} ref=${INSTALL_REF} ssh_port=${E2E_SSH_PORT} wg_port=${E2E_WG_PORT} user=${QEMU_USER}"
 
 # --- guest image + cloud-init seed + boot ------------------------------------
 boot_vm "${TMP_DIR}" "${QEMU_IMAGE}" 20 2048 2 ztvps-e2e ztvps-e2e "" \
     "hostfwd=tcp:127.0.0.1:${QEMU_SSH_PORT}-:22" \
     "hostfwd=tcp:127.0.0.1:${QEMU_ADMIN_PORT}-:${E2E_SSH_PORT}" \
     "hostfwd=udp:127.0.0.1:${QEMU_WG_PORT}-:${E2E_WG_PORT}"
+echo "[E2E] image_sha256=$(sha256sum "${TMP_DIR}/cloud.img" | cut -d' ' -f1)"
 
 GUEST="${QEMU_USER}@127.0.0.1"
 echo "[E2E] Waiting for cloud-init to finish (SSH on guest:22)..."
@@ -272,7 +300,7 @@ if [[ "${DO_BOOTSTRAP_TIMEOUT}" == "true" ]]; then
 fi
 
 # --- run the public installer (non-interactive) ------------------------------
-echo "[E2E] Running the public installer non-interactively (repo=/tmp/ztrepo, ref=${INSTALL_REF})"
+echo "[E2E] Running the public installer non-interactively (source_mode=${E2E_SOURCE_MODE})"
 if [[ "${DO_BOOTSTRAP_TIMEOUT}" == "true" ]]; then
     bootstrap_failure_started="${SECONDS}"
     bootstrap_failure_log="${TMP_DIR}/bootstrap-failure.log"

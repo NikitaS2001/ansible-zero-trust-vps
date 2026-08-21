@@ -22,18 +22,19 @@ It asks for the SSH port, WireGuard port, Admin username, Admin password,
 AdGuard admin password, WireGuard panel password, Internal domains, WireGuard public hostname or IP, and SSH public key. For automation, set
 `ZERO_TRUST_NONINTERACTIVE=1` and supply the documented `ZERO_TRUST_*` inputs.
 
-Use release tags, not `main`, for real installs. To test unreleased changes on
-a disposable VPS, override `ZERO_TRUST_REPO_URL` and `ZERO_TRUST_RELEASE_REF`:
+Production mode accepts only `https://github.com/NikitaS2001/ansible-zero-trust-vps.git` and the built-in `v1.2.1` tag. Its annotated SSH-signed tag must be from `nikitasmadych2001@gmail.com`. The pinned signer fingerprint is `SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0`. The verified tag is peeled once to its exact full 40-character commit SHA; the checkout is detached and `ansible-pull -C` receives that SHA.
+
+`ZERO_TRUST_DEV_MODE=1` is an explicit non-production development escape hatch and emits `NON-PRODUCTION DEVELOPMENT MODE`. Use it only to test unreleased changes on a disposable VPS; the production command above has no repository or ref override:
 
 ```bash
 TEST_REF=feature/test
 curl -fsSL "https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/${TEST_REF}/install.sh" \
-  | sudo env ZERO_TRUST_REPO_URL=https://github.com/NikitaS2001/ansible-zero-trust-vps.git \
+  | sudo env ZERO_TRUST_DEV_MODE=1 \
+      ZERO_TRUST_REPO_URL=https://github.com/NikitaS2001/ansible-zero-trust-vps.git \
       ZERO_TRUST_RELEASE_REF="${TEST_REF}" bash
 ```
 
-The installer passes secrets in a temporary `0600` extra-vars file and removes
-it after success or failure. Before it changes SSH, open the new provider
+The installer removes its temporary allowed-signers file and secret extra-vars file after success or failure. The initially downloaded shell bytes still rely on HTTPS/TLS. This hardened path is not yet published: publish it only after a later version bump and annotated SSH-signed tag. Before it changes SSH, open the new provider
 firewall port and keep the original SSH session open until a new login works.
 The panel password and WireGuard host collected above automatically bootstrap
 wg-easy on its first start.
@@ -320,12 +321,13 @@ Rerun the installer or playbook afterward.
 
 ## Releases
 
-Installable artifacts are immutable git tags (`vX.Y.Z`). The installer deployed
-from a tag must deploy exactly that tag — `scripts/release-contract.sh`
+Installable artifacts are immutable git tags (`vX.Y.Z`). The hardened installer
+accepts only the official repository, verifies the pinned SSH signer on an
+annotated tag, and deploys the resulting exact commit SHA. `scripts/release-contract.sh`
 enforces this (`--tag` on tag pushes in CI, `--pr` structural checks on every
 pull request). The release step is explicit and mechanical:
 
-1. Bump the default `ZERO_TRUST_RELEASE_REF` in `install.sh` to the new tag.
+1. Bump `OFFICIAL_RELEASE_REF` in `install.sh` to the new tag.
 2. Update the README quickstart URL to the same tag.
 3. Run `scripts/release-contract.sh --pr` locally; create an **annotated and
    signed** tag (`git tag -s -a vX.Y.Z -m ...`) on the release commit.
@@ -333,11 +335,13 @@ pull request). The release step is explicit and mechanical:
    publish them in the release notes so users can verify `install.sh` before
    running `curl | sudo bash`.
 
-Mutable refs (`main`, branches) are for testing unreleased changes only, via
-the documented `ZERO_TRUST_RELEASE_REF` override. Known limitation (accepted
-risk): `install.sh` itself does not cryptographically verify the fetched ref
-signature before executing it; the SHA256 checksums published in the release
-notes are the manual verification path.
+Mutable refs (`main`, branches) are for disposable development testing only via
+`ZERO_TRUST_DEV_MODE=1`; that warning means the path is not production mode.
+The existing `v1.2.1` command remains the current default, but this hardened
+path is not yet published until the later version bump and annotated
+SSH-signed tag. Even then, the initial `curl` download still relies on HTTPS/TLS;
+the signed-tag check protects the repository revision fetched after the shell
+script begins, not the bytes initially downloaded by `curl`.
 
 ## Development and Testing
 

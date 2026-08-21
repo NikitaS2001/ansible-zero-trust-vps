@@ -453,11 +453,11 @@ read_install_release_ref() {
     local release_ref
 
     release_ref="$(
-        sed -nE 's/^readonly RELEASE_REF="\$\{ZERO_TRUST_RELEASE_REF:-([^}]+)\}"$/\1/p' install.sh
+        sed -nE 's/^readonly OFFICIAL_RELEASE_REF="([^"]+)"$/\1/p' install.sh
     )"
-    [[ -n "${release_ref}" ]] || fail "install.sh must define a default ZERO_TRUST_RELEASE_REF"
+    [[ -n "${release_ref}" ]] || fail "install.sh must define OFFICIAL_RELEASE_REF"
     [[ "${release_ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-        || fail "install.sh default ZERO_TRUST_RELEASE_REF must be a vX.Y.Z tag; got '${release_ref}'"
+        || fail "install.sh OFFICIAL_RELEASE_REF must be a vX.Y.Z tag; got '${release_ref}'"
     printf '%s\n' "${release_ref}"
 }
 
