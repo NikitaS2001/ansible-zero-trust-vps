@@ -54,13 +54,21 @@ make_repo() {
     chmod 0755 "${repo}/scripts/release-contract.sh"
     fixture_key="$(cat "${key_dir}/signer.pub")"
     printf '%s\n' \
+        'readonly OFFICIAL_REPO_URL="https://github.com/example/repo.git"' \
         'readonly OFFICIAL_RELEASE_REF="v1.1.0"' \
         'readonly OFFICIAL_SIGNER_IDENTITY="release-contract@example.invalid"' \
         "readonly OFFICIAL_SIGNER_PUBLIC_KEY=\"${fixture_key}\"" \
+        'readonly OFFICIAL_SIGNER_FINGERPRINT="SHA256:fixture"' \
         "readonly RELEASE_REF=\"\${OFFICIAL_RELEASE_REF}\"" \
         >"${repo}/install.sh"
     printf '%s\n' \
         'curl -fsSL https://raw.githubusercontent.com/example/repo/v1.1.0/install.sh | sudo bash' \
+        "Production mode accepts only \`https://github.com/example/repo.git\` and the built-in \`v1.1.0\` tag." \
+        "\`ZERO_TRUST_DEV_MODE=1\` is an explicit non-production development escape hatch and emits \`NON-PRODUCTION DEVELOPMENT MODE\`." \
+        "The pinned signer fingerprint is \`SHA256:fixture\`." \
+        "The verified tag is peeled once to its exact full 40-character commit SHA; the checkout is detached and \`ansible-pull -C\` receives that SHA." \
+        'The installer removes its temporary allowed-signers file and secret extra-vars file after success or failure.' \
+        'The initially downloaded shell bytes still rely on HTTPS/TLS. This hardened path is not yet published: publish it only after a later version bump and annotated SSH-signed tag.' \
         >"${repo}/README.md"
     : >"${repo}/site.yml"
     printf '%s\n' \
@@ -142,6 +150,10 @@ run_case() {
             ;;
         readme-install-mismatch)
             sed -i 's/v1.1.0/v9.9.9/' "${repo}/README.md"
+            expect_rejection "${name}" "${repo}/scripts/release-contract.sh" --pr
+            ;;
+        documentation-drift)
+            sed -i 's#https://github.com/example/repo.git#https://github.com/attacker/repo.git#' "${repo}/README.md"
             expect_rejection "${name}" "${repo}/scripts/release-contract.sh" --pr
             ;;
         tag-at-head)
@@ -256,6 +268,7 @@ case "${case_name}" in
         run_case missing-pin-last
         run_case nonexact-pin
         run_case readme-install-mismatch
+        run_case documentation-drift
         run_case tag-at-head
         run_case nonexistent-tag
         run_case tag-not-at-head
@@ -278,7 +291,7 @@ case "${case_name}" in
         run_case invalid-signature-tag
         run_case wrong-identity-tag
         ;;
-    pr-valid | missing-pin-first | missing-pin-middle | missing-pin-last | nonexact-pin | readme-install-mismatch | tag-at-head | nonexistent-tag | tag-not-at-head | dirty-worktree | malformed-option | lightweight-tag | unsigned-tag | wrong-key-tag | invalid-signature-tag | wrong-identity-tag | interrupted-cleanup)
+    pr-valid | missing-pin-first | missing-pin-middle | missing-pin-last | nonexact-pin | readme-install-mismatch | documentation-drift | tag-at-head | nonexistent-tag | tag-not-at-head | dirty-worktree | malformed-option | lightweight-tag | unsigned-tag | wrong-key-tag | invalid-signature-tag | wrong-identity-tag | interrupted-cleanup)
         run_case "${case_name}"
         ;;
     *)

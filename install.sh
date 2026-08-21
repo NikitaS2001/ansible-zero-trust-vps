@@ -103,11 +103,24 @@ usage() {
     cat <<EOF
 Usage: install.sh
 
+curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.2.1/install.sh | sudo bash
+
 Interactive public installer for ansible-zero-trust-vps.
 
-Environment overrides for release testing:
-  ZERO_TRUST_REPO_URL      Repository URL to pull from
-  ZERO_TRUST_RELEASE_REF  Git tag or ref to install
+Production mode accepts only:
+  https://github.com/NikitaS2001/ansible-zero-trust-vps.git at v1.2.1
+  Its annotated SSH-signed tag must match nikitasmadych2001@gmail.com
+  (SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0). The installer peels
+  it to an exact SHA, detaches the checkout, and passes that SHA to ansible-pull.
+
+Development-only source override (never production):
+  ZERO_TRUST_DEV_MODE=1   Enables ZERO_TRUST_REPO_URL and ZERO_TRUST_RELEASE_REF
+                          and emits NON-PRODUCTION DEVELOPMENT MODE.
+
+Trust boundary: the initially downloaded shell bytes still rely on HTTPS/TLS.
+This hardened path is not yet published; it requires a later version bump and
+annotated SSH-signed tag. Temporary signer and secret files are removed after
+success or failure.
 
 Non-interactive mode for automated testing:
   ZERO_TRUST_NONINTERACTIVE=1  Run without prompts; all inputs must be

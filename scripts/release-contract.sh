@@ -2,7 +2,7 @@
 # Release contract verification.
 #
 # --pr (default, structural, runs on every pull request):
-#   - install.sh default ZERO_TRUST_RELEASE_REF is a vX.Y.Z tag
+#   - install.sh default OFFICIAL_RELEASE_REF is a vX.Y.Z tag
 #   - the README quickstart URL uses the same tag
 #   - requirements.yml pins every collection to an exact "==" version
 #
@@ -28,11 +28,15 @@ pass() { echo "[PASS] $*"; }
 isolated_git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git "$@"; }
 
 release_ref="$(sed -nE 's/^readonly OFFICIAL_RELEASE_REF="([^"]+)"$/\1/p' install.sh)"
+official_repo_url="$(sed -nE 's/^readonly OFFICIAL_REPO_URL="([^"]+)"$/\1/p' install.sh)"
 signer_identity="$(sed -nE 's/^readonly OFFICIAL_SIGNER_IDENTITY="([^"]+)"$/\1/p' install.sh)"
 signer_public_key="$(sed -nE 's/^readonly OFFICIAL_SIGNER_PUBLIC_KEY="([^"]+)"$/\1/p' install.sh)"
+signer_fingerprint="$(sed -nE 's/^readonly OFFICIAL_SIGNER_FINGERPRINT="([^"]+)"$/\1/p' install.sh)"
 [[ -n "${release_ref}" ]] || fail "install.sh must define OFFICIAL_RELEASE_REF"
+[[ -n "${official_repo_url}" ]] || fail "install.sh must define OFFICIAL_REPO_URL"
 [[ -n "${signer_identity}" ]] || fail "install.sh must define OFFICIAL_SIGNER_IDENTITY"
 [[ -n "${signer_public_key}" ]] || fail "install.sh must define OFFICIAL_SIGNER_PUBLIC_KEY"
+[[ -n "${signer_fingerprint}" ]] || fail "install.sh must define OFFICIAL_SIGNER_FINGERPRINT"
 
 allowed_signers_file=""
 cleanup() { [[ -z "${allowed_signers_file}" ]] || rm -f -- "${allowed_signers_file}"; }
@@ -78,6 +82,20 @@ quickstart_ref="$(
 [[ "${quickstart_ref}" == "${release_ref}" ]] \
     || fail "README quickstart tag '${quickstart_ref:-<none>}' does not match RELEASE_REF '${release_ref}'"
 pass "README quickstart uses ${release_ref}"
+
+grep -Fq "Production mode accepts only \`${official_repo_url}\` and the built-in \`${release_ref}\` tag." README.md \
+    || fail "README must document the literal production repository and built-in tag policy"
+grep -Fq "\`ZERO_TRUST_DEV_MODE=1\` is an explicit non-production development escape hatch and emits \`NON-PRODUCTION DEVELOPMENT MODE\`." README.md \
+    || fail "README must document the explicit development-mode warning"
+grep -Fq "The pinned signer fingerprint is \`${signer_fingerprint}\`." README.md \
+    || fail "README must document the pinned signer fingerprint"
+grep -Fq "The verified tag is peeled once to its exact full 40-character commit SHA; the checkout is detached and \`ansible-pull -C\` receives that SHA." README.md \
+    || fail "README must document immutable SHA execution"
+grep -Fq 'The installer removes its temporary allowed-signers file and secret extra-vars file after success or failure.' README.md \
+    || fail "README must document installer cleanup"
+grep -Fq 'The initially downloaded shell bytes still rely on HTTPS/TLS. This hardened path is not yet published: publish it only after a later version bump and annotated SSH-signed tag.' README.md \
+    || fail "README must document the TLS bootstrap limitation and unpublished release boundary"
+pass "README documents the signed-release trust boundary"
 
 # Every collection must have an exact "==" version: a missing version line
 # would let ansible-galaxy install any version. awk exits 1 when a - name:
