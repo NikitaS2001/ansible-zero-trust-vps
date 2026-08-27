@@ -21,8 +21,8 @@ fail() {
 
 require_before() {
     local file="$1" first="$2" second="$3" first_line second_line
-    first_line="$(rg -n -F -- "${first}" "${file}" | head -n1 | cut -d: -f1 || true)"
-    second_line="$(rg -n -F -- "${second}" "${file}" | head -n1 | cut -d: -f1 || true)"
+    first_line="$(grep -n -F -- "${first}" "${file}" | head -n1 | cut -d: -f1 || true)"
+    second_line="$(grep -n -F -- "${second}" "${file}" | head -n1 | cut -d: -f1 || true)"
     [[ -n ${first_line} && -n ${second_line} && ${first_line} -lt ${second_line} ]] \
         || fail "expected ${first} before ${second} in ${file}"
 }
@@ -97,39 +97,39 @@ PY
 
 validate_no_swap_management() {
     local forbidden
-    forbidden="$(rg -n -i \
-        '(vps_swap_mode|zram-tools|\b(swapon|swapoff|mkswap)\b|/swap(file)?\b)' "${ROLE_DIR}" || true)"
+    forbidden="$(grep -ERin \
+        'vps_swap_mode|zram-tools|(^|[^[:alnum:]_])(swapon|swapoff|mkswap)([^[:alnum:]_]|$)|/swap(file)?([^[:alnum:]_]|$)' "${ROLE_DIR}" || true)"
     [[ -z ${forbidden} ]] || fail "swap or zram management was introduced:\n${forbidden}"
 }
 
 validate_plaintext_password_policy() {
-    ! rg -Pq '\badmin_password\b' "${ROLE_DIR}/tasks/user.yml" \
+    ! grep -Eq '(^|[^[:alnum:]_])admin_password([^[:alnum:]_]|$)' "${ROLE_DIR}/tasks/user.yml" \
         || fail 'user tasks still consume deprecated admin_password'
-    ! rg -Pq '\bpassword_hash\s*\(' "${ROLE_DIR}/tasks/user.yml" \
+    ! grep -Eq '(^|[^[:alnum:]_])password_hash[[:space:]]*\(' "${ROLE_DIR}/tasks/user.yml" \
         || fail 'user tasks still derive password hashes'
-    ! rg -Fq "lookup('password'" "${ROLE_DIR}/tasks/user.yml" \
+    ! grep -Fq "lookup('password'" "${ROLE_DIR}/tasks/user.yml" \
         || fail 'user tasks still generate password material'
-    rg -Fq 'password: "{{ admin_password_hash | default(omit, true) }}"' "${ROLE_DIR}/tasks/user.yml" \
+    grep -Fq 'password: "{{ admin_password_hash | default(omit, true) }}"' "${ROLE_DIR}/tasks/user.yml" \
         || fail 'user task does not omit an empty optional password hash'
 }
 
 validate_always_preflight() {
-    rg -Fq 'tags: [always, preflight]' "${ROLE_DIR}/tasks/main.yml" \
+    grep -Fq 'tags: [always, preflight]' "${ROLE_DIR}/tasks/main.yml" \
         || fail 'preflight include is not tagged always'
-    [[ "$(rg -Fc 'tags: [always, preflight]' "${ROLE_DIR}/tasks/preflight.yml")" -ge 4 ]] \
+    [[ "$(grep -Fc 'tags: [always, preflight]' "${ROLE_DIR}/tasks/preflight.yml")" -ge 4 ]] \
         || fail 'platform, memory, and legacy preflights are not tagged always'
 }
 
 validate_platform_policy() {
-    rg -Fq "== 'Debian'" "${ROLE_DIR}/tasks/preflight.yml" \
+    grep -Fq "== 'Debian'" "${ROLE_DIR}/tasks/preflight.yml" \
         || fail 'role lacks Debian platform validation'
-    rg -Fq "== '12'" "${ROLE_DIR}/tasks/preflight.yml" \
+    grep -Fq "== '12'" "${ROLE_DIR}/tasks/preflight.yml" \
         || fail 'role lacks Debian 12 validation'
-    rg -Fq "== 'Ubuntu'" "${ROLE_DIR}/tasks/preflight.yml" \
+    grep -Fq "== 'Ubuntu'" "${ROLE_DIR}/tasks/preflight.yml" \
         || fail 'role lacks Ubuntu platform validation'
-    rg -Fq "== '24.04'" "${ROLE_DIR}/tasks/preflight.yml" \
+    grep -Fq "== '24.04'" "${ROLE_DIR}/tasks/preflight.yml" \
         || fail 'role lacks Ubuntu 24.04 validation'
-    rg -Fq "== 'x86_64'" "${ROLE_DIR}/tasks/preflight.yml" \
+    grep -Fq "== 'x86_64'" "${ROLE_DIR}/tasks/preflight.yml" \
         || fail 'role lacks amd64 architecture validation'
 }
 
@@ -229,7 +229,7 @@ validate_platform_rejection() {
 
 main() {
     command -v python3 >/dev/null || fail 'python3 is required'
-    command -v rg >/dev/null || fail 'rg is required'
+    command -v grep >/dev/null || fail 'grep is required'
     command -v ansible-playbook >/dev/null || fail 'ansible-playbook is required'
     [[ -r /proc/swaps ]] || fail '/proc/swaps is required for swap-state observation'
     [[ -f "${ROLE_DIR}/meta/main.yml" ]] || fail 'role argument spec is missing'
@@ -244,8 +244,8 @@ main() {
     require_before "${ROLE_DIR}/tasks/main.yml" 'Include preflight checks' 'Include package setup'
     require_before "${ROLE_DIR}/tasks/main.yml" 'Include package setup' 'Include user setup'
     require_before "${ROLE_DIR}/tasks/preflight.yml" 'Require at least 1024 MiB of physical RAM' 'Check TUN device'
-    rg -Fq -- '- sudo' "${ROLE_DIR}/tasks/packages.yml" || fail 'sudo is not installed before user mutation'
-    rg -Fq -- "validate: 'visudo -cf %s'" "${ROLE_DIR}/tasks/user.yml" \
+    grep -Fq -- '- sudo' "${ROLE_DIR}/tasks/packages.yml" || fail 'sudo is not installed before user mutation'
+    grep -Fq -- "validate: 'visudo -cf %s'" "${ROLE_DIR}/tasks/user.yml" \
         || fail 'sudoers drop-in is not validated with visudo'
     validate_memory_preflight
     validate_plaintext_rejection

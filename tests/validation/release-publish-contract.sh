@@ -116,7 +116,7 @@ run_fixture attestation-failure true "${canonical}"
 run_fixture post-publish-failure true "${canonical}"
 run_fixture success true "${canonical}"
 
-! rg -n 'GH_TOKEN=|github_pat_|secrets\.' "${ROOT_DIR}/scripts/publish-release.sh" >/dev/null \
+! grep -En 'GH_TOKEN=|github_pat_|secrets\.' "${ROOT_DIR}/scripts/publish-release.sh" >/dev/null \
     || fail 'publisher contains stored-token plumbing'
 printf '[PASS] repository, immutability, attestation, monotonicity, and success fixtures\n'
 printf 'RELEASE PUBLISH CONTRACT PASS\n'

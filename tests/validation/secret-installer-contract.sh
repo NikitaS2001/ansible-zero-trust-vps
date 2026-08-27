@@ -257,8 +257,8 @@ for unsupported_release in 'debian:11' 'debian:13' 'debian:120' 'ubuntu:22.04' '
         fail "unsupported OS release was accepted: ${unsupported_release}"
     fi
 done
-supported_os_line="$(rg -n '^    require_supported_os$' "${ROOT_DIR}/install.sh" | cut -d: -f1)"
-prerequisites_line="$(rg -n '^    install_prerequisites$' "${ROOT_DIR}/install.sh" | cut -d: -f1)"
+supported_os_line="$(grep -En '^    require_supported_os$' "${ROOT_DIR}/install.sh" | cut -d: -f1)"
+prerequisites_line="$(grep -En '^    install_prerequisites$' "${ROOT_DIR}/install.sh" | cut -d: -f1)"
 [[ -n "${supported_os_line}" && -n "${prerequisites_line}" && "${supported_os_line}" -lt "${prerequisites_line}" ]] \
     || fail 'main does not validate the supported OS before installing prerequisites'
 grep -Fq 'sudo bash ./install.sh' "${ROOT_DIR}/install.sh" \
@@ -301,15 +301,15 @@ if (
 fi
 [[ ! -e "${mutation_trace}" ]] || fail 'architecture rejection happened after installer mutation'
 
-if rg -n 'vps_swap_mode|ZERO_TRUST_VPS_SWAP_MODE|zram-tools|bootstrap_swap' "${ROOT_DIR}/install.sh" \
+if grep -ERn 'vps_swap_mode|ZERO_TRUST_VPS_SWAP_MODE|zram-tools|bootstrap_swap' "${ROOT_DIR}/install.sh" \
     "${ROOT_DIR}/group_vars" "${ROOT_DIR}/inventory" >"${TMP}/swap-surface"; then
     fail 'installer/config still exposes swap or zram management'
 fi
-if rg -n 'write_extra_var (admin_password|adguard_password|wg_easy_admin_password)([[:space:]]|$)' \
+if grep -En 'write_extra_var (admin_password|adguard_password|wg_easy_admin_password)([[:space:]]|$)' \
     "${ROOT_DIR}/install.sh" >"${TMP}/plaintext-role-input"; then
     fail 'installer still sends a plaintext role password variable to Ansible'
 fi
-if rg -n 'ZERO_TRUST_TEST_FAIL_AFTER|vault_crash_point' "${ROOT_DIR}/install.sh" \
+if grep -En 'ZERO_TRUST_TEST_FAIL_AFTER|vault_crash_point' "${ROOT_DIR}/install.sh" \
     >"${TMP}/production-fault-hook"; then
     fail 'production installer still contains a test-only fault hook'
 fi
