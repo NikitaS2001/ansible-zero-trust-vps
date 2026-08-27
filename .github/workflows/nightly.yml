@@ -1,0 +1,75 @@
+---
+name: Nightly
+
+'on':
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            image: https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+            user: ubuntu
+          - os: debian-12
+            image: https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2
+            user: debian
+    name: qemu / ${{ matrix.os }} / services_only
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install QEMU dependencies
+        run: sudo apt-get update && sudo apt-get install -y genisoimage qemu-system-x86 qemu-utils
+
+      - name: Enable KVM access
+        run: sudo chmod a+rw /dev/kvm
+
+      - name: Run full E2E
+        env:
+          QEMU_IMAGE: ${{ matrix.image }}
+          QEMU_USER: ${{ matrix.user }}
+          ZERO_TRUST_WG_TRAFFIC_MODE: services_only
+        run: tests/e2e/qemu-install.sh --client-test --idempotency-test --reboot-test
+
+  lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Install QEMU dependencies
+        run: sudo apt-get update && sudo apt-get install -y genisoimage qemu-system-x86 qemu-utils
+
+      - name: Enable KVM access
+        run: sudo chmod a+rw /dev/kvm
+
+      - name: Test upgrade, idempotency, and restore
+        env:
+          E2E_ARTIFACT_DIR: ${{ runner.temp }}/lifecycle-evidence
+        run: tests/e2e/lifecycle-qemu.sh
+
+      - name: Upload lifecycle logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lifecycle-evidence
+          path: ${{ runner.temp }}/lifecycle-evidence
+          if-no-files-found: error
+          retention-days: 7

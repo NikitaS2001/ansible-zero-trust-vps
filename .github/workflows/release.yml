@@ -1,0 +1,104 @@
+---
+name: release
+
+'on':
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-24.04
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify signed tag and protected source branch
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "${GITHUB_REF_TYPE}" = tag
+          test "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "${GITHUB_SHA}"
+          git fetch --no-tags --force origin \
+            '+refs/heads/main:refs/remotes/origin/main'
+          scripts/release-contract.sh --tag
+
+      - name: Build release assets
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir release
+          scripts/build-release-artifacts.sh \
+            --tag "${TAG}" \
+            --sha "${GITHUB_SHA}" \
+            --output release
+          scripts/release-contract.sh \
+            --assets release \
+            --tag "${TAG}" \
+            --sha "${GITHUB_SHA}"
+
+      - name: Attest every release asset
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release/*
+
+      - name: Create and verify draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -Eeuo pipefail
+          download="$(mktemp -d "${RUNNER_TEMP}/release-download.XXXXXX")"
+          draft_created=false
+          draft_verified=false
+          cleanup() {
+            rm -rf -- "${download}"
+            if [[ "${draft_created}" == true && "${draft_verified}" == false ]]; then
+              gh release delete "${TAG}" --yes >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT INT TERM
+
+          gh release create "${TAG}" \
+            release/CHANGELOG.md \
+            release/RELEASE_NOTES.md \
+            release/SHA256SUMS \
+            release/UPGRADE.md \
+            release/install.sh \
+            release/install.sh.sha256 \
+            release/sbom.spdx.json \
+            --draft \
+            --verify-tag \
+            --title "${TAG}" \
+            --notes-file release/RELEASE_NOTES.md
+          draft_created=true
+
+          gh release download "${TAG}" --dir "${download}"
+          scripts/release-contract.sh \
+            --assets "${download}" \
+            --tag "${TAG}" \
+            --sha "${GITHUB_SHA}"
+          for asset in release/*; do
+            cmp -- "${asset}" "${download}/$(basename "${asset}")"
+          done
+
+          draft_verified=true
+          trap - EXIT INT TERM
+          rm -rf -- "${download}"
+          printf 'Verified draft ready. Maintainer: scripts/publish-release.sh %s\n' "${TAG}" \
+            >>"${GITHUB_STEP_SUMMARY}"

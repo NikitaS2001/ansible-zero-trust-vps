@@ -1,140 +1,158 @@
 #!/usr/bin/env bash
-# Release contract verification.
-#
-# --pr (default, structural, runs on every pull request):
-#   - install.sh default OFFICIAL_RELEASE_REF is a vX.Y.Z tag
-#   - the README quickstart URL uses the same tag
-#   - requirements.yml pins every collection to an exact "==" version
-#
-# --tag (strict, runs on tag pushes / release gates):
-#   - everything from --pr
-#   - the current git tag matches the installer default
-#   - install.sh *inside* the tag references the same tag (self-consistency:
-#     the tagged installer must deploy exactly that tag)
-#   - prints SHA256 checksums of the release artifacts for the release notes
-set -euo pipefail
+set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-MODE="${1:---pr}"
-case "${MODE}" in
-    --pr | --tag) ;;
-    *) echo "usage: $0 [--pr|--tag]" >&2; exit 2 ;;
+fail() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
+pass() { printf '[PASS] %s\n' "$*"; }
+isolated_git() {
+    env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS \
+        GIT_NO_REPLACE_OBJECTS=1 \
+        GIT_CONFIG_GLOBAL=/dev/null \
+        GIT_CONFIG_NOSYSTEM=1 \
+        GIT_CONFIG_COUNT=0 \
+        git "$@"
+}
+
+mode="${1:---pr}"
+asset_dir=''
+asset_tag=''
+asset_sha=''
+case "${mode}" in
+    --pr | --tag)
+        [[ $# -eq 1 ]] || fail "usage: $0 ${mode}"
+        ;;
+    --assets)
+        shift
+        [[ $# -ge 1 ]] || fail "usage: $0 --assets DIR --tag TAG --sha SHA"
+        asset_dir="$1"
+        shift
+        while (($#)); do
+            (($# >= 2)) || fail "usage: $0 --assets DIR --tag TAG --sha SHA"
+            case "$1" in
+                --tag) asset_tag="$2" ;;
+                --sha) asset_sha="$2" ;;
+                *) fail "usage: $0 --assets DIR --tag TAG --sha SHA" ;;
+            esac
+            shift 2
+        done
+        ;;
+    *) fail "usage: $0 [--pr|--tag|--assets DIR --tag TAG --sha SHA]" ;;
 esac
 
-fail() { echo "[FAIL] $*" >&2; exit 1; }
-pass() { echo "[PASS] $*"; }
-isolated_git() { GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git "$@"; }
-
 release_ref="$(sed -nE 's/^readonly OFFICIAL_RELEASE_REF="([^"]+)"$/\1/p' install.sh)"
-official_repo_url="$(sed -nE 's/^readonly OFFICIAL_REPO_URL="([^"]+)"$/\1/p' install.sh)"
 signer_identity="$(sed -nE 's/^readonly OFFICIAL_SIGNER_IDENTITY="([^"]+)"$/\1/p' install.sh)"
 signer_public_key="$(sed -nE 's/^readonly OFFICIAL_SIGNER_PUBLIC_KEY="([^"]+)"$/\1/p' install.sh)"
-signer_fingerprint="$(sed -nE 's/^readonly OFFICIAL_SIGNER_FINGERPRINT="([^"]+)"$/\1/p' install.sh)"
-[[ -n "${release_ref}" ]] || fail "install.sh must define OFFICIAL_RELEASE_REF"
-[[ -n "${official_repo_url}" ]] || fail "install.sh must define OFFICIAL_REPO_URL"
-[[ -n "${signer_identity}" ]] || fail "install.sh must define OFFICIAL_SIGNER_IDENTITY"
-[[ -n "${signer_public_key}" ]] || fail "install.sh must define OFFICIAL_SIGNER_PUBLIC_KEY"
-[[ -n "${signer_fingerprint}" ]] || fail "install.sh must define OFFICIAL_SIGNER_FINGERPRINT"
-
-allowed_signers_file=""
-cleanup() { [[ -z "${allowed_signers_file}" ]] || rm -f -- "${allowed_signers_file}"; }
-trap cleanup EXIT
-trap 'exit 129' HUP INT TERM
-
-if [[ "${MODE}" == "--tag" ]]; then
-    tag_name="${GITHUB_REF_NAME:-$(isolated_git describe --tags --exact-match 2>/dev/null || true)}"
-    [[ -n "${tag_name}" ]] || fail "--tag mode requires HEAD to be exactly a git tag"
-    tag_type="$(isolated_git cat-file -t "refs/tags/${tag_name}" 2>/dev/null || true)"
-    [[ "${tag_type}" == "tag" ]] \
-        || fail "git tag '${tag_name}' is not a trusted SSH-signed tag (annotated tag required)"
-    allowed_signers_file="$(mktemp "${TMPDIR:-/tmp}/release-contract-signers.XXXXXX")"
-    chmod 0600 "${allowed_signers_file}"
-    printf '%s %s\n' "${signer_identity}" "${signer_public_key}" >"${allowed_signers_file}"
-    isolated_git \
-        -c gpg.format=ssh \
-        -c gpg.ssh.allowedSignersFile="${allowed_signers_file}" \
-        verify-tag "${tag_name}" >/dev/null 2>&1 \
-        || fail "git tag '${tag_name}' is not a trusted SSH-signed tag"
-    tagger_email="$(isolated_git for-each-ref --format='%(taggeremail)' "refs/tags/${tag_name}")"
-    [[ "${tagger_email}" == "<${signer_identity}>" ]] \
-        || fail "git tag '${tag_name}' is not a trusted SSH-signed tag (tagger identity mismatch)"
-    pass "trusted SSH-signed tag ${tag_name}"
-    tag_commit="$(isolated_git rev-parse --verify --quiet "${tag_name}^{commit}")" \
-        || fail "git tag '${tag_name}' does not resolve to a commit"
-    head_commit="$(isolated_git rev-parse --verify --quiet 'HEAD^{commit}')" \
-        || fail "HEAD does not resolve to a commit"
-    [[ "${tag_commit}" == "${head_commit}" ]] \
-        || fail "git tag '${tag_name}' does not point at HEAD"
-    [[ -z "$(isolated_git status --porcelain=v1)" ]] \
-        || fail "--tag mode requires a clean worktree"
-fi
-
 [[ "${release_ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    || fail "OFFICIAL_RELEASE_REF must be a vX.Y.Z tag; got '${release_ref}'"
-pass "installer OFFICIAL_RELEASE_REF=${release_ref}"
+    || fail "installer release ref must be a vX.Y.Z tag"
+[[ -n "${signer_identity}" && -n "${signer_public_key}" ]] \
+    || fail "installer release signer is incomplete"
 
-quickstart_ref="$(
-    grep -oE 'raw\.githubusercontent\.com/[^/]+/[^/]+/v[0-9]+\.[0-9]+\.[0-9]+/install\.sh' README.md \
-        | head -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true
-)"
-[[ "${quickstart_ref}" == "${release_ref}" ]] \
-    || fail "README quickstart tag '${quickstart_ref:-<none>}' does not match RELEASE_REF '${release_ref}'"
-pass "README quickstart uses ${release_ref}"
+allowed_signers='.github/release-allowed-signers'
+expected_signer="${signer_identity} ${signer_public_key}"
+[[ -f "${allowed_signers}" && ! -L "${allowed_signers}" ]] \
+    || fail "${allowed_signers} must be a regular file"
+[[ "$(<"${allowed_signers}")" == "${expected_signer}" \
+    && "$(wc -l <"${allowed_signers}")" -eq 1 ]] \
+    || fail "${allowed_signers} must contain only the installer signer"
+pass "release signer is pinned once"
 
-grep -Fq "Production mode accepts only \`${official_repo_url}\` and the built-in \`${release_ref}\` tag." README.md \
-    || fail "README must document the literal production repository and built-in tag policy"
-grep -Fq "\`ZERO_TRUST_DEV_MODE=1\` is an explicit non-production development escape hatch and emits \`NON-PRODUCTION DEVELOPMENT MODE\`." README.md \
-    || fail "README must document the explicit development-mode warning"
-grep -Fq "The pinned signer fingerprint is \`${signer_fingerprint}\`." README.md \
-    || fail "README must document the pinned signer fingerprint"
-grep -Fq "The verified tag is peeled once to its exact full 40-character commit SHA; the checkout is detached and \`ansible-pull -C\` receives that SHA." README.md \
-    || fail "README must document immutable SHA execution"
-grep -Fq 'The installer removes its temporary allowed-signers file and secret extra-vars file after success or failure.' README.md \
-    || fail "README must document installer cleanup"
-grep -Fq 'The initially downloaded shell bytes still rely on HTTPS/TLS. This hardened path is not yet published: publish it only after a later version bump and annotated SSH-signed tag.' README.md \
-    || fail "README must document the TLS bootstrap limitation and unpublished release boundary"
-pass "README documents the signed-release trust boundary"
+if [[ "${mode}" == '--assets' ]]; then
+    [[ -d "${asset_dir}" && ! -L "${asset_dir}" ]] \
+        || fail "asset input must be a regular directory"
+    [[ "${asset_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ \
+        && "${asset_sha}" =~ ^[0-9a-f]{40}$ ]] \
+        || fail "asset tag or source SHA is invalid"
+    expected_names=$'CHANGELOG.md\nRELEASE_NOTES.md\nSHA256SUMS\nUPGRADE.md\ninstall.sh\ninstall.sh.sha256\nsbom.spdx.json'
+    actual_names="$(find "${asset_dir}" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
+    [[ "${actual_names}" == "${expected_names}" ]] \
+        || fail "release assets must match the seven-file allowlist"
+    [[ -z "$(find "${asset_dir}" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] \
+        || fail "release assets must be regular files"
+    [[ -z "$(find "${asset_dir}" -mindepth 1 -maxdepth 1 -type f -links +1 -print -quit)" ]] \
+        || fail "release assets must not be hard linked"
 
-# Every collection must have an exact "==" version: a missing version line
-# would let ansible-galaxy install any version. awk exits 1 when a - name:
-# entry ends without a "version: \"==\"" line.
-if awk '
-    function finish_entry() {
-        if (in_entry && !has_pin) exit 1
-    }
-    /^  - name:/ {
-        finish_entry()
-        in_entry = 1
-        has_pin = 0
-        next
-    }
-    in_entry && /^    version: "==[^"]+"[[:space:]]*$/ { has_pin = 1 }
-    END { finish_entry() }
-' requirements.yml; then
-    pass "requirements.yml pins every collection exactly"
-else
-    fail "every collection must be pinned with an exact '==' version"
-fi
+    expected_manifest=$'CHANGELOG.md\nRELEASE_NOTES.md\nUPGRADE.md\ninstall.sh\ninstall.sh.sha256\nsbom.spdx.json'
+    manifest_names="$(awk 'NF == 2 && $1 ~ /^[0-9a-f]{64}$/ {print $2}' "${asset_dir}/SHA256SUMS")"
+    [[ "$(wc -l <"${asset_dir}/SHA256SUMS")" -eq 6 \
+        && "${manifest_names}" == "${expected_manifest}" ]] \
+        || fail "SHA256SUMS must list the six payloads in bytewise order"
+    (cd "${asset_dir}" && sha256sum --check --strict SHA256SUMS >/dev/null) \
+        || fail "release payload checksum mismatch"
+    [[ "$(grep -E '^[0-9a-f]{64}  install\.sh$' "${asset_dir}/SHA256SUMS")" \
+        == "$(<"${asset_dir}/install.sh.sha256")" ]] \
+        || fail "installer checksum files disagree"
 
-if [[ "${MODE}" == "--pr" ]]; then
-    pass "release contract (structural) OK"
+    python3 - "${asset_dir}/sbom.spdx.json" "${asset_tag}" "${asset_sha}" <<'PY'
+import json
+import sys
+
+path, tag, sha = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    document = json.load(handle)
+packages = document.get("packages", [])
+source = [item for item in packages if item.get("SPDXID") == "SPDXRef-Package-Source"]
+valid = (
+    document.get("spdxVersion") == "SPDX-2.3"
+    and document.get("name") == f"ansible-zero-trust-vps-{tag}"
+    and document.get("documentNamespace")
+        == f"https://github.com/NikitaS2001/ansible-zero-trust-vps/releases/download/{tag}/sbom.spdx.json?sha={sha}"
+    and len(source) == 1
+    and source[0].get("versionInfo") == tag
+    and {row.get("algorithm"): row.get("checksumValue") for row in source[0].get("checksums", [])}.get("SHA1") == sha
+)
+raise SystemExit(0 if valid else 1)
+PY
+    pass "seven release assets are complete and self-consistent"
     exit 0
 fi
 
-# --tag: strict checks
+changelog_release_line="$(grep -E '^## \[v1\.3\.0\] - (Unreleased|[0-9]{4}-[0-9]{2}-[0-9]{2})$' CHANGELOG.md || true)"
+[[ "$(wc -l <<<"${changelog_release_line}")" -eq 1 && -n "${changelog_release_line}" ]] \
+    || fail "CHANGELOG must contain one v1.3.0 heading with Unreleased or an ISO release date"
+grep -Fxq '## [v1.2.1] - 2026-08-20' CHANGELOG.md \
+    || fail "CHANGELOG v1.2.1 date is incorrect"
+
+if ! awk '
+    function finish() { if (entry && !pin) exit 1 }
+    /^  - name:/ { finish(); entry=1; pin=0; next }
+    entry && /^    version: "==[^"]+"[[:space:]]*$/ { pin=1 }
+    END { finish() }
+' requirements.yml; then
+    fail "every Ansible collection must use an exact == version"
+fi
+pass "structural release contract"
+
+[[ "${mode}" == '--tag' ]] || exit 0
+
+[[ "${changelog_release_line}" =~ ^##\ \[v1\.3\.0\]\ -\ [0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+    || fail "tagged CHANGELOG must replace Unreleased with the ISO release date"
+
+tag_name="${GITHUB_REF_NAME:-$(isolated_git describe --tags --exact-match 2>/dev/null || true)}"
 [[ "${tag_name}" == "${release_ref}" ]] \
-    || fail "git tag '${tag_name}' does not match installer default '${release_ref}'"
-
-in_tag_ref="$(
-    isolated_git show "${tag_name}:install.sh" \
-        | sed -nE 's/^readonly OFFICIAL_RELEASE_REF="([^"]+)"$/\1/p'
-)"
+    || fail "tag ${tag_name:-<none>} does not match installer ref ${release_ref}"
+[[ "$(isolated_git cat-file -t "refs/tags/${tag_name}" 2>/dev/null || true)" == tag ]] \
+    || fail "release tag must be annotated and SSH-signed"
+tagger_email="$(isolated_git for-each-ref --format='%(taggeremail)' "refs/tags/${tag_name}")"
+[[ "${tagger_email}" == "<${signer_identity}>" ]] \
+    || fail "release tagger identity must match the pinned signer principal"
+isolated_git \
+    -c gpg.format=ssh \
+    -c gpg.ssh.allowedSignersFile="${ROOT_DIR}/${allowed_signers}" \
+    verify-tag "${tag_name}" >/dev/null 2>&1 \
+    || fail "release tag is not signed by the pinned maintainer key"
+tag_commit="$(isolated_git rev-parse "${tag_name}^{commit}")"
+head_commit="$(isolated_git rev-parse 'HEAD^{commit}')"
+[[ "${tag_commit}" == "${head_commit}" ]] \
+    || fail "release tag must point at HEAD"
+main_commit="$(isolated_git rev-parse --verify 'refs/remotes/origin/main^{commit}' 2>/dev/null || true)"
+[[ -n "${main_commit}" && "${tag_commit}" == "${main_commit}" ]] \
+    || fail "release tag must point at the fetched origin/main commit"
+[[ -z "$(isolated_git status --porcelain=v1 --untracked-files=all)" ]] \
+    || fail "tag verification requires a clean worktree"
+in_tag_ref="$(isolated_git show "${tag_name}:install.sh" \
+    | sed -nE 's/^readonly OFFICIAL_RELEASE_REF="([^"]+)"$/\1/p')"
 [[ "${in_tag_ref}" == "${tag_name}" ]] \
-    || fail "install.sh inside ${tag_name} references '${in_tag_ref}', not '${tag_name}'"
-pass "install.sh inside ${tag_name} is self-consistent (deploys ${tag_name})"
-
-echo "--- SHA256 (publish in the release notes) ---"
-sha256sum install.sh site.yml requirements.yml scripts/release-contract.sh
-pass "release contract (tag) OK"
+    || fail "tagged installer does not reference its own release tag"
+pass "trusted SSH-signed tag ${tag_name} at ${tag_commit}"

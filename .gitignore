@@ -12,3 +12,4 @@ inventory/hosts.yml
 *.retry
 __pycache__/
 *.pyc
+.venv/
