@@ -1,0 +1,42 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy the private WireGuard service stack
+    options:
+      project_root:
+        type: path
+        default: /opt/zero-trust-vps
+      wg_traffic_mode:
+        type: str
+        choices: [services_only, full_tunnel]
+        default: services_only
+      docker_network_subnet:
+        type: str
+        default: 10.66.0.0/24
+      docker_network_ipv6_subnet:
+        type: str
+        default: fd00:67:0:0::/64
+      wg_vpn_subnet:
+        type: str
+        default: 10.8.0.0/24
+      wg_vpn_ipv6_subnet:
+        type: str
+        default: fd42:42:42::/64
+      wg_services_only_ipv4_destinations:
+        type: list
+        elements: str
+      wg_services_only_ipv6_destinations:
+        type: list
+        elements: str
+      wg_public_host:
+        type: str
+        required: true
+      wg_easy_bootstrap_secret:
+        type: str
+        required: true
+      vault_adguard_password_hash:
+        type: str
+        required: true
+      vps_services_vault_path:
+        type: path
+        default: "{{ playbook_dir }}/group_vars/all/vault_services.yml"

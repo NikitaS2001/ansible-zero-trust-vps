@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end test of the public installer inside a plain qemu/KVM VM.
+# End-to-end test of the repository installer inside a plain qemu/KVM VM.
 # Needs only qemu, KVM support and genisoimage (no libvirt daemon).
 #
 # Usage:
@@ -16,9 +16,12 @@
 #   INSTALL_REF      git ref to install (default: current branch)
 #   E2E_SSH_PORT     hardened SSH port configured by the installer (default 2222)
 #   E2E_WG_PORT      WireGuard UDP port configured by the installer (default 51820)
+#   ZERO_TRUST_WG_TRAFFIC_MODE  services_only or full_tunnel (default services_only)
 #   QEMU_SSH_PORT    host tcp port -> guest:22  (default 2223)
 #   QEMU_ADMIN_PORT  host tcp port -> guest:<E2E_SSH_PORT> (default 2222)
 #   QEMU_WG_PORT     host udp port -> guest:<E2E_WG_PORT> (default 51822)
+#   E2E_KEEP_STATE_ON_FAILURE  keep the VM and QEMU_STATE_DIR after failure
+#                              for diagnostics (default 0; requires QEMU_STATE_DIR)
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -30,6 +33,46 @@ ADGUARD_INTERNAL_DOMAIN="${ADGUARD_INTERNAL_DOMAIN:-adguard.${INTERNAL_DOMAIN_SU
 # shellcheck disable=SC1091
 # shellcheck source=tests/e2e/common.sh
 source "${E2E_DIR}/common.sh"
+
+list_existing_source_paths() {
+    local source_root="$1" path
+    while IFS= read -r -d '' path; do
+        if [[ -e ${source_root}/${path} || -L ${source_root}/${path} ]]; then
+            printf '%s\0' "${path}"
+        fi
+    done < <(git -C "${source_root}" ls-files -z --cached --others --exclude-standard)
+}
+
+build_installer_credential_env() {
+    local state_mode="$1" admin_password="$2" adguard_password="$3"
+    local wg_password="$4" public_key="$5"
+    local quoted_admin quoted_adguard quoted_wg quoted_key
+
+    case "${state_mode}" in
+        fresh)
+            printf -v quoted_admin '%q' "${admin_password}"
+            printf -v quoted_adguard '%q' "${adguard_password}"
+            printf -v quoted_wg '%q' "${wg_password}"
+            printf -v quoted_key '%q' "${public_key}"
+            printf 'ZERO_TRUST_ADMIN_PASSWORD=%s ZERO_TRUST_ADGUARD_PASSWORD=%s ZERO_TRUST_WG_PASSWORD=%s ZERO_TRUST_SSH_PUBKEY=%s' \
+                "${quoted_admin}" "${quoted_adguard}" "${quoted_wg}" "${quoted_key}"
+            ;;
+        existing) ;;
+        *) fail "unknown installer state mode: ${state_mode}" ;;
+    esac
+}
+
+if [[ ${1:-} == --self-test-source-list ]]; then
+    [[ $# -eq 2 && -d $2 ]] || fail '--self-test-source-list requires one directory'
+    list_existing_source_paths "$2"
+    exit 0
+fi
+if [[ ${1:-} == --self-test-installer-env ]]; then
+    [[ $# -eq 2 ]] || fail '--self-test-installer-env requires fresh or existing'
+    build_installer_credential_env "$2" "admin'secret" 'adguard secret' "wg\$secret" \
+        'ssh-ed25519 AAAA fixture'
+    exit 0
+fi
 
 DEFAULT_IMAGE="https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 QEMU_IMAGE="${QEMU_IMAGE:-${DEFAULT_IMAGE}}"
@@ -86,6 +129,13 @@ STATE_SENTINEL="${TMP_DIR}/.qemu-install-state"
 printf 'qemu-install-v1\n' >"${STATE_SENTINEL}"
 QEMU_PID=""
 cleanup() {
+    local exit_status=$?
+    if [[ "${E2E_KEEP_STATE_ON_FAILURE:-0}" == 1 && ${exit_status} -ne 0 ]]; then
+        [[ -n "${QEMU_STATE_DIR:-}" ]] || \
+            fail "E2E_KEEP_STATE_ON_FAILURE requires QEMU_STATE_DIR"
+        echo "[E2E] Failure state preserved at ${TMP_DIR} (qemu pid ${QEMU_PID})" >&2
+        return
+    fi
     if [[ -n "${QEMU_PID}" ]] && kill -0 "${QEMU_PID}" >/dev/null 2>&1; then
         kill "${QEMU_PID}" >/dev/null 2>&1 || true
         sleep 2
@@ -95,6 +145,7 @@ cleanup() {
     rm -rf -- "${TMP_DIR}"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 # --- test fixtures ----------------------------------------------------------
 ssh-keygen -q -t ed25519 -N "" -f "${TMP_DIR}/id_ed25519" -C "e2e-ztvps"
@@ -102,38 +153,41 @@ PUBKEY="$(cat "${TMP_DIR}/id_ed25519.pub")"
 ADMIN_PASS="$(openssl rand -hex 12)"
 ADGUARD_PASS="$(openssl rand -hex 12)"
 WG_PASS="${ZERO_TRUST_WG_PASSWORD:-Twelve\$COMPOSE_PROBE}"
+WG_TRAFFIC_MODE="${ZERO_TRUST_WG_TRAFFIC_MODE:-services_only}"
 
 copy_repo_to_guest() {
     local target="$1" port="$2" key="$3"
     run_remote "${target}" "${port}" "${key}" \
         "command -v git >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y -qq git)"
-    git ls-files -z --cached --others --exclude-standard | \
+    list_existing_source_paths "${ROOT_DIR}" | \
         tar --null -czf - --files-from - | \
         run_remote_stdin "${target}" "${port}" "${key}" \
         "sudo mkdir -p /tmp/ztrepo && sudo find /tmp/ztrepo -mindepth 1 -delete && sudo tar xzf - -C /tmp/ztrepo && sudo chown -R \$(id -u):\$(id -g) /tmp/ztrepo && cd /tmp/ztrepo && git init -q -b '${INSTALL_REF}' && git add -A && git -c user.name=e2e -c user.email=e2e.invalid commit -qm e2e-source"
 }
 
-run_public_installer() {
+run_repository_installer() {
     local target="$1" port="$2" key="$3"
+    local state_mode="${4:-fresh}"
+    local credential_env=""
     local source_env=""
     local installer_log="${TMP_DIR}/installer.log"
+    credential_env="$(build_installer_credential_env \
+        "${state_mode}" "${ADMIN_PASS}" "${ADGUARD_PASS}" "${WG_PASS}" "${PUBKEY}")"
     if [[ "${E2E_SOURCE_MODE}" == "development" ]]; then
         source_env="ZERO_TRUST_DEV_MODE=1 ZERO_TRUST_REPO_URL=/tmp/ztrepo ZERO_TRUST_RELEASE_REF='${INSTALL_REF}'"
     fi
     run_remote "${target}" "${port}" "${key}" \
         "cd /tmp/ztrepo && sudo env \
-        PATH='${TODO10_DOCKER_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}' \
+        PATH='${E2E_DOCKER_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}' \
         ZERO_TRUST_NONINTERACTIVE=1 \
         ${source_env} \
         ZERO_TRUST_SSH_PORT='${E2E_SSH_PORT}' \
         ZERO_TRUST_WG_PORT='${E2E_WG_PORT}' \
         ZERO_TRUST_ADMIN_USER=sysadmin \
-        ZERO_TRUST_ADMIN_PASSWORD='${ADMIN_PASS}' \
-        ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}' \
-        ZERO_TRUST_WG_PASSWORD='${WG_PASS}' \
+        ${credential_env} \
+        ZERO_TRUST_WG_TRAFFIC_MODE='${WG_TRAFFIC_MODE}' \
         ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX='${INTERNAL_DOMAIN_SUFFIX}' \
         ZERO_TRUST_INTERNAL_DOMAINS='${WG_INTERNAL_DOMAIN} ${ADGUARD_INTERNAL_DOMAIN}' \
-        ZERO_TRUST_SSH_PUBKEY='${PUBKEY}' \
         ZERO_TRUST_WG_HOST=127.0.0.1 \
         bash ./install.sh" 2>&1 | tee "${installer_log}"
     if [[ "${E2E_SOURCE_MODE}" == "development" ]]; then
@@ -224,7 +278,7 @@ run_compose_deployment() {
     local suffix="${4:-${INTERNAL_DOMAIN_SUFFIX:-internal}}"
     local wg_domain="${5:-${WG_INTERNAL_DOMAIN:-wg.internal}}"
     local adguard_domain="${6:-${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}}"
-    local docker_path="${7:-${TODO10_DOCKER_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}}"
+    local docker_path="${7:-${E2E_DOCKER_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}}"
     run_remote "${target}" "${port}" "${key}" \
         "cd /opt/zero-trust-vps-installer/repo && sudo env PATH='${docker_path}' \
         /opt/zero-trust-vps-installer/venv/bin/ansible-playbook \
@@ -237,13 +291,13 @@ run_compose_deployment() {
 install_reload_audit() {
     local target="$1" port="$2" key="$3"
     run_remote "${target}" "${port}" "${key}" \
-        "sudo install -d -m 0755 /tmp/todo10-bin && printf '0\\n' | sudo tee /tmp/todo10-reload-count >/dev/null && printf '%s\\n' '#!/bin/sh' 'if [ \"\$1\" = exec ] && [ \"\$2\" = caddy ] && [ \"\$3\" = caddy ] && [ \"\$4\" = reload ]; then' '    count=\$(cat /tmp/todo10-reload-count)' '    printf \"%s\\\\n\" \"\$((count + 1))\" > /tmp/todo10-reload-count' '    if [ -e /tmp/todo10-fail-next-reload ]; then' '        unlink /tmp/todo10-fail-next-reload' '        exit 42' '    fi' 'fi' 'exec /usr/bin/docker \"\$@\"' | sudo tee /tmp/todo10-bin/docker >/dev/null && sudo chmod 0755 /tmp/todo10-bin/docker"
+        "sudo install -d -m 0755 /tmp/e2e-docker-bin && printf '0\\n' | sudo tee /tmp/e2e-caddy-reload-count >/dev/null && printf '%s\\n' '#!/bin/sh' 'if [ \"\$1\" = exec ] && [ \"\$2\" = caddy ] && [ \"\$3\" = caddy ] && [ \"\$4\" = reload ]; then' '    count=\$(cat /tmp/e2e-caddy-reload-count)' '    printf \"%s\\\\n\" \"\$((count + 1))\" > /tmp/e2e-caddy-reload-count' '    if [ -e /tmp/e2e-caddy-fail-next-reload ]; then' '        unlink /tmp/e2e-caddy-fail-next-reload' '        exit 42' '    fi' 'fi' 'exec /usr/bin/docker \"\$@\"' | sudo tee /tmp/e2e-docker-bin/docker >/dev/null && sudo chmod 0755 /tmp/e2e-docker-bin/docker"
 }
 
 remote_reload_count() {
     local target="$1" port="$2" key="$3"
     run_remote "${target}" "${port}" "${key}" \
-        "sudo cat /tmp/todo10-reload-count"
+        "sudo cat /tmp/e2e-caddy-reload-count"
 }
 
 remote_caddy_admin_hash() {
@@ -299,12 +353,12 @@ if [[ "${DO_BOOTSTRAP_TIMEOUT}" == "true" ]]; then
         "python3 -c \"from pathlib import Path; path=Path('/tmp/ztrepo/roles/vps_orchestration/templates/docker-compose.yml.j2'); marker='    container_name: wg-easy\\n'; data=path.read_text(); count=data.count(marker); count == 1 or (_ for _ in ()).throw(RuntimeError('unexpected wg-easy service count')); path.write_text(data.replace(marker, marker + '    entrypoint: [\\\"sleep\\\", \\\"300\\\"]\\n'))\" && grep -q 'entrypoint: \[\"sleep\", \"300\"\]' /tmp/ztrepo/roles/vps_orchestration/templates/docker-compose.yml.j2 && cd /tmp/ztrepo && git add roles/vps_orchestration/templates/docker-compose.yml.j2 && git -c user.name=e2e -c user.email=e2e.invalid commit --amend --no-edit -q"
 fi
 
-# --- run the public installer (non-interactive) ------------------------------
-echo "[E2E] Running the public installer non-interactively (source_mode=${E2E_SOURCE_MODE})"
+# --- run the repository installer (non-interactive) --------------------------
+echo "[E2E] Running the repository installer non-interactively (source_mode=${E2E_SOURCE_MODE})"
 if [[ "${DO_BOOTSTRAP_TIMEOUT}" == "true" ]]; then
     bootstrap_failure_started="${SECONDS}"
     bootstrap_failure_log="${TMP_DIR}/bootstrap-failure.log"
-    if run_public_installer "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" | \
+    if run_repository_installer "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" | \
         tee "${bootstrap_failure_log}"; then
         fail "injected wg-easy authentication timeout unexpectedly succeeded"
     fi
@@ -328,15 +382,15 @@ if [[ "${DO_BOOTSTRAP_TIMEOUT}" == "true" ]]; then
     copy_repo_to_guest \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
     bootstrap_retry_log="${TMP_DIR}/bootstrap-retry.log"
-    run_public_installer \
-        "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" | \
+    run_repository_installer \
+        "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" existing | \
         tee "${bootstrap_retry_log}"
     verify_bootstrap_auth_tasks_ran "${bootstrap_retry_log}"
     verify_bootstrap_state \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" complete
     echo "[E2E] Same-VM retry executed both authentication phases to durable completion"
 else
-    run_public_installer "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519"
+    run_repository_installer "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519"
 fi
 
 echo "[E2E] Verifying the deployed stack on the hardened SSH port ${QEMU_ADMIN_PORT}"
@@ -348,6 +402,8 @@ require_wrong_host_key_rejected "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
     "${TMP_DIR}/id_ed25519"
 export E2E_SSH_PORT E2E_WG_PORT
 verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
+verify_traffic_mode "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+    "${TMP_DIR}/id_ed25519" "${WG_TRAFFIC_MODE}"
 verify_wg_login "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
 verify_bootstrap_secret_free \
     "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
@@ -383,6 +439,8 @@ if [[ "${DO_REBOOT}" == "true" ]]; then
         "${TMP_DIR}/id_ed25519" "${boot_id_before}" 60
     sleep 20
     verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
+    verify_traffic_mode "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${WG_TRAFFIC_MODE}"
     echo "[E2E] Reboot survival verified"
 fi
 
@@ -392,14 +450,14 @@ if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
         'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils resolvconf >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
     run_remote_stdin "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${E2E_WG_PORT}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN}' bash -s" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${E2E_WG_PORT}' WG_TRAFFIC_MODE='${WG_TRAFFIC_MODE}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN}' bash -s" \
         < "${E2E_DIR}/client-in-guest.sh"
 fi
 
 if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
     install_reload_audit \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
-    TODO10_DOCKER_PATH="/tmp/todo10-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    E2E_DOCKER_PATH="/tmp/e2e-docker-bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     wg_container_id_before="$(run_remote "sysadmin@127.0.0.1" \
         "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         'sudo docker inspect wg-easy --format "{{.Id}}"')"
@@ -416,8 +474,8 @@ if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
     echo "[E2E] Re-running the installer to verify idempotency..."
     idempotency_log="${TMP_DIR}/idempotency.log"
-    run_public_installer \
-        "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" | \
+    run_repository_installer \
+        "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" existing | \
         tee "${idempotency_log}"
     echo "[E2E] Verifying the stack after the second installer run..."
     verify_deployment "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
@@ -455,7 +513,7 @@ if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
     if [[ "${DO_INVALID_CADDY}" == "true" || "${DO_IDEMPOTENCY}" == "true" ]]; then
     echo "[E2E] Rejecting an invalid Caddyfile.d candidate without changing the live site..."
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        "printf '%s\\n' 'todo10.invalid {' | sudo tee /opt/zero-trust-vps/Caddyfile.d/todo10-invalid.conf >/dev/null"
+        "printf '%s\\n' 'caddy-transaction.invalid {' | sudo tee /opt/zero-trust-vps/Caddyfile.d/e2e-invalid.conf >/dev/null"
     invalid_caddy_log="${TMP_DIR}/invalid-caddy.log"
     if run_compose_deployment \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" | \
@@ -479,7 +537,7 @@ if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
 
     echo "[E2E] Rolling back the managed file and active config after an injected reload failure..."
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        "sudo rm -f /opt/zero-trust-vps/Caddyfile.d/todo10-invalid.conf && sudo touch /tmp/todo10-fail-next-reload"
+        "sudo rm -f /opt/zero-trust-vps/Caddyfile.d/e2e-invalid.conf && sudo touch /tmp/e2e-caddy-fail-next-reload"
     reload_failure_log="${TMP_DIR}/reload-failure.log"
     if run_compose_deployment \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
@@ -501,9 +559,9 @@ if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
     verify_caddy_site_reachable "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
         "${TMP_DIR}/id_ed25519" "${WG_INTERNAL_DOMAIN}"
     echo "[E2E] Recovering with a valid Caddyfile.d change and live reload..."
-    caddy_probe_domain="todo10.${INTERNAL_DOMAIN_SUFFIX:-internal}"
+    caddy_probe_domain="caddy-probe.${INTERNAL_DOMAIN_SUFFIX:-internal}"
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        "sudo rm -f /opt/zero-trust-vps/Caddyfile.d/todo10-invalid.conf && printf '%s\\n' '${caddy_probe_domain} {' '    tls internal' '    respond todo10-live 200' '}' | sudo tee /opt/zero-trust-vps/Caddyfile.d/todo10-valid.conf >/dev/null"
+        "sudo rm -f /opt/zero-trust-vps/Caddyfile.d/e2e-invalid.conf && printf '%s\\n' '${caddy_probe_domain} {' '    tls internal' '    respond caddy-probe-live 200' '}' | sudo tee /opt/zero-trust-vps/Caddyfile.d/e2e-valid.conf >/dev/null"
     recovery_caddy_log="${TMP_DIR}/recovery-caddy.log"
     run_compose_deployment \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" | \
@@ -517,23 +575,23 @@ if [[ "${DO_IDEMPOTENCY}" == "true" ]]; then
     [[ "$(remote_reload_count "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519")" == 3 ]] || \
         fail "valid Caddyfile.d change did not invoke exactly one additional reload"
     verify_caddy_site "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
-        "${TMP_DIR}/id_ed25519" "${caddy_probe_domain}" todo10-live
+        "${TMP_DIR}/id_ed25519" "${caddy_probe_domain}" caddy-probe-live
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        "sudo rm -f /opt/zero-trust-vps/Caddyfile.d/todo10-valid.conf"
+        "sudo rm -f /opt/zero-trust-vps/Caddyfile.d/e2e-valid.conf"
     run_compose_deployment \
         "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" >/dev/null
     [[ "$(remote_reload_count "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519")" == 4 ]] || \
         fail "Caddy fixture cleanup did not invoke exactly one additional reload"
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
-        "sudo rm -rf /tmp/todo10-bin /tmp/todo10-reload-count /tmp/todo10-fail-next-reload"
-    unset TODO10_DOCKER_PATH
+        "sudo rm -rf /tmp/e2e-docker-bin /tmp/e2e-caddy-reload-count /tmp/e2e-caddy-fail-next-reload"
+    unset E2E_DOCKER_PATH
     echo "[E2E] Invalid candidate preserved live state; valid recovery reloaded without recreation"
 
     echo "[E2E] Exercising retry from a nonzero setup_step..."
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         "sudo docker stop wg-easy >/dev/null && sudo python3 -c \"import sqlite3; db=sqlite3.connect('/opt/zero-trust-vps/volumes/wg-easy/wg-easy.db'); db.execute('DELETE FROM users_table'); db.execute('UPDATE general_table SET setup_step=2'); db.commit(); db.close()\""
-    run_public_installer \
-        "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
+    run_repository_installer \
+        "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" existing
     run_remote "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
         "sudo python3 -c \"import sqlite3; db=sqlite3.connect('/opt/zero-trust-vps/volumes/wg-easy/wg-easy.db'); rows=db.execute('SELECT setup_step FROM general_table').fetchall(); db.close(); raise SystemExit(0 if rows == [(0,)] else 1)\""
     verify_wg_login "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
@@ -558,4 +616,4 @@ if [[ "${QEMU_HOLD_FOR_EXTERNAL_CLIENT:-0}" == 1 ]]; then
     done
 fi
 
-echo "[E2E] PASS: public installer E2E succeeded in qemu/KVM"
+echo "[E2E] PASS: repository installer E2E succeeded in qemu/KVM"

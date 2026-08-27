@@ -1,6 +1,7 @@
 ---
 # Project paths
 project_root: "/opt/zero-trust-vps"
+vps_services_vault_path: "{{ playbook_dir }}/group_vars/all/vault_services.yml"
 
 # Docker network
 docker_network_subnet: "10.66.0.0/24"
@@ -10,21 +11,22 @@ wg_easy_container_ip: "10.66.0.4"
 
 # WireGuard
 wg_easy_version: "15.4.0"
+wg_easy_image_digest: "sha256:0e7bc9d34e86ddcaa92bc700d4d7dc9b33291dbc07ac8d13382f7c2095f949ec"
 wg_vpn_subnet: "10.8.0.0/24"
 wg_server_ip: "10.8.0.1"
 wg_client_dns: "10.66.0.2"
 wg_port: 51820
 wg_container_port: 51820
-# When true the stack allocates IPv6 addresses for clients and tunnels IPv6
-# traffic (client configs automatically get ::/0, so there is no IPv6 leak).
-# Requires a host with global IPv6 egress; the playbook refuses IPv6 mode on
-# hosts without IPv6. When false (default), client configs stay IPv4-only and
-# IPv6-enabled clients must block IPv6 themselves to avoid a leak.
-wg_enable_ipv6: false
+wg_traffic_mode: "services_only"
+wg_vpn_ipv6_subnet: "fd42:42:42::/64"
+docker_network_ipv6_subnet: "fd00:67:0:0::/64"
+wg_services_only_ipv4_destinations: "{{ wg_allowed_ips }}"
+wg_services_only_ipv6_destinations:
+  - "{{ wg_vpn_ipv6_subnet }}"
+vps_orchestration_traffic_mode_readiness_retries: 30
 
 # wg-easy initial setup (Unattended Setup via INIT_* env vars, first start only)
 wg_easy_admin_user: admin
-wg_easy_admin_password: ""
 wg_public_host: ""
 wg_allowed_ips:
   - "10.8.0.0/24"
@@ -33,9 +35,11 @@ wg_allowed_ips:
 
 # AdGuard Home
 adguard_version: "v0.107.78"
+adguard_image_digest: "sha256:1ea34eafe5dc691007946e8eaab7bf46b0de9412f39213d8c06e48b53bf9a6c5"
 
 # Caddy
 caddy_version: "2.11.4"
+caddy_image_digest: "sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d"
 
 # Internal domains. The suffix is used for the AdGuard wildcard rewrite
 # (*.<suffix> -> Caddy) and for the derived default domains below (both can be
@@ -70,6 +74,3 @@ vps_orchestration_enable_ufw_before_ufw_docker: false
 # Certificate fetch settings
 root_ca_path_on_host: "{{ project_root }}/volumes/caddy/data/caddy/pki/authorities/local/root.crt"
 fetched_certs_dir: "fetched_certs"
-
-# Vault placeholders
-vault_adguard_password_hash: ""

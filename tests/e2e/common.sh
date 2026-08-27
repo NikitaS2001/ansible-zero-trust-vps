@@ -313,6 +313,35 @@ verify_deployment() {
     pass "compose file is free of the panel password"
 }
 
+# verify_traffic_mode target port key expected_mode
+verify_traffic_mode() {
+    local target="$1" port="$2" key="$3" expected_mode="$4"
+
+    [[ "${expected_mode}" == services_only || "${expected_mode}" == full_tunnel ]] \
+        || fail "invalid expected traffic mode: ${expected_mode}"
+    run_remote "${target}" "${port}" "${key}" \
+        "sudo test \"\$(cat /opt/zero-trust-vps/.wg-traffic-mode)\" = '${expected_mode}'" \
+        || fail "deployed traffic mode does not match ${expected_mode}"
+
+    if [[ "${expected_mode}" == services_only ]]; then
+        # shellcheck disable=SC2016
+        run_remote "${target}" "${port}" "${key}" \
+            'sudo bash -eu -o pipefail -c '\''
+                docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS
+                docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS
+                test "$(docker exec wg-easy iptables -S WG_CLIENTS | tail -n 1)" = "-A WG_CLIENTS -j DROP"
+                test "$(docker exec wg-easy ip6tables -S WG_CLIENTS | tail -n 1)" = "-A WG_CLIENTS -j DROP"
+            '\''' || fail "services_only firewall is not active for both address families"
+    else
+        # shellcheck disable=SC2016
+        run_remote "${target}" "${port}" "${key}" \
+            'sudo bash -eu -o pipefail -c '\''
+                ! docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null
+                ! docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null
+            '\''' || fail "full_tunnel unexpectedly retained services_only firewall hooks"
+    fi
+}
+
 # boot_vm <tmp_dir> <image> <disk_gb> <mem_mb> <smp> <instance_id> <hostname> \
 #         [user_data_file] [hostfwd ...]
 # Boots a headless qemu/KVM VM with a NoCloud cloud-init seed. Requires an SSH

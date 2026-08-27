@@ -1,44 +1,151 @@
 ---
+- name: "VPS Orchestration | Preflight | Inspect encrypted services vault"
+  ansible.builtin.stat:
+    path: "{{ vps_services_vault_path | default(playbook_dir ~ '/group_vars/all/vault_services.yml') }}"
+    follow: false
+  register: vps_orchestration_services_vault
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  tags: [compose, adguard]
+
+- name: "VPS Orchestration | Preflight | Read encrypted services vault header"
+  ansible.builtin.slurp:
+    src: "{{ vps_services_vault_path | default(playbook_dir ~ '/group_vars/all/vault_services.yml') }}"
+  register: vps_orchestration_services_vault_raw
+  when:
+    - vps_orchestration_services_vault.stat.isreg | default(false)
+    - not vps_orchestration_services_vault.stat.islnk | default(false)
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  tags: [compose, adguard]
+
+- name: "VPS Orchestration | Preflight | Validate encrypted services vault"
+  ansible.builtin.assert:
+    that:
+      - vps_orchestration_services_vault.stat.isreg | default(false)
+      - not vps_orchestration_services_vault.stat.islnk | default(false)
+      - vps_orchestration_services_vault.stat.mode | default('') == '0600'
+      - >-
+        vps_orchestration_services_vault_raw.content | default('') | b64decode
+        is match('^\\$ANSIBLE_VAULT;1\\.[12];AES256(?:;[^\\r\\n]+)?\\r?\\n')
+    fail_msg: >-
+      {{ vps_services_vault_path | default(playbook_dir ~ '/group_vars/all/vault_services.yml') }}
+      must be a regular, non-symlink,
+      whole-file encrypted Ansible Vault with mode 0600.
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  changed_when: false
+  tags: [compose, adguard]
+
+- name: "VPS Orchestration | Preflight | Validate traffic mode"
+  ansible.builtin.assert:
+    that:
+      - wg_traffic_mode in ['services_only', 'full_tunnel']
+    fail_msg: "wg_traffic_mode must be exactly services_only or full_tunnel"
+  tags: [compose, traffic_mode]
+
+- name: "VPS Orchestration | Preflight | Validate traffic subnets"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import ipaddress,json,sys;
+        docker4,vpn4,docker6,vpn6=map(ipaddress.ip_network,sys.argv[1:5]);
+        assert docker4.version==vpn4.version==4 and docker6.version==vpn6.version==6;
+        assert not docker4.overlaps(vpn4) and not docker6.overlaps(vpn6);
+        allowed4=[ipaddress.ip_network(value) for value in json.loads(sys.argv[5])];
+        allowed6=[ipaddress.ip_network(value) for value in json.loads(sys.argv[6])];
+        assert allowed4 and allowed6;
+        assert all(net.version==4 and (net.subnet_of(docker4) or net.subnet_of(vpn4)) for net in allowed4);
+        assert all(net.version==6 and (net.subnet_of(docker6) or net.subnet_of(vpn6)) for net in allowed6)
+      - "{{ docker_network_subnet }}"
+      - "{{ wg_vpn_subnet }}"
+      - "{{ docker_network_ipv6_subnet }}"
+      - "{{ wg_vpn_ipv6_subnet }}"
+      - "{{ wg_services_only_ipv4_destinations | to_json }}"
+      - "{{ wg_services_only_ipv6_destinations | to_json }}"
+  changed_when: false
+  tags: [compose, traffic_mode]
+
 - name: "VPS Orchestration | Preflight | Probe host IPv6 connectivity"
-  command: ip -6 route get 2001:4860:4860::8888
+  ansible.builtin.command: ip -6 route get 2606:4700:4700::1111
   register: vps_orchestration_ipv6_probe
   changed_when: false
   failed_when: false
-  when: wg_enable_ipv6 | default(false) | bool
+  when: wg_traffic_mode == 'full_tunnel'
   tags: [compose]
 
 - name: "VPS Orchestration | Preflight | Refuse IPv6 mode without host IPv6"
-  fail:
+  ansible.builtin.fail:
     msg: >
-      wg_enable_ipv6 is true but this host has no IPv6 connectivity
+      wg_traffic_mode is full_tunnel but this host has no IPv6 connectivity
       (ip -6 route get returned rc={{ vps_orchestration_ipv6_probe.rc }}).
       The VPN cannot route IPv6 client traffic without host IPv6 egress.
-      Keep the default (IPv6 disabled) or deploy on a dual-stack host.
+      Keep the default services_only mode or deploy on a dual-stack host.
   when:
-    - wg_enable_ipv6 | default(false) | bool
+    - wg_traffic_mode == 'full_tunnel'
     - vps_orchestration_ipv6_probe.rc != 0
   tags: [compose]
 
-- name: "VPS Orchestration | Preflight | wg-easy panel password meets v15 minimum"
-  assert:
-    that: wg_easy_admin_password | default('') | length == 0 or wg_easy_admin_password | default('') | length >= 12
-    msg: >
-      wg_easy_admin_password must be empty (manual wizard setup) or at least
-      12 characters; wg-easy v15 rejects shorter passwords at login.
+- name: "VPS Orchestration | Preflight | Prove full-tunnel IPv4 egress"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import socket;
+        s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);
+        s.settimeout(8); s.connect(('1.1.1.1',443)); s.close()
+  changed_when: false
+  when: wg_traffic_mode == 'full_tunnel'
+  tags: [compose, traffic_mode]
+
+- name: "VPS Orchestration | Preflight | Prove full-tunnel IPv6 egress"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import socket;
+        s=socket.socket(socket.AF_INET6,socket.SOCK_STREAM);
+        s.settimeout(8); s.connect(('2606:4700:4700::1111',443)); s.close()
+  changed_when: false
+  when: wg_traffic_mode == 'full_tunnel'
+  tags: [compose, traffic_mode]
+
+- name: "VPS Orchestration | Preflight | Require encrypted wg-easy bootstrap input"
+  ansible.builtin.assert:
+    that:
+      - wg_easy_admin_password is not defined
+      - wg_easy_bootstrap_secret is defined
+      - wg_easy_bootstrap_secret is string
+      - wg_easy_bootstrap_secret | length >= 12
+    msg: >-
+      Configure wg_easy_bootstrap_secret through the encrypted vault; legacy
+      plaintext wg_easy_admin_password input is not accepted.
+  no_log: true
   tags: [compose]
 
-- name: "VPS Orchestration | Preflight | wg_public_host is set when the panel password is set"
-  fail:
+- name: "VPS Orchestration | Preflight | wg_public_host is set for unattended setup"
+  ansible.builtin.fail:
     msg: >-
-      wg_public_host must be non-empty when wg_easy_admin_password is set;
+      wg_public_host must be non-empty when wg_easy_bootstrap_secret is set;
       otherwise the INIT_HOST value renders empty and client configs break.
   when:
-    - wg_easy_admin_password | default('') | length > 0
+    - wg_easy_bootstrap_secret | default('') | length > 0
     - wg_public_host | default('') | length == 0
+  no_log: true
   tags: [compose]
 
 - name: "VPS Orchestration | Preflight | Internal domains match the configured suffix"
-  fail:
+  ansible.builtin.fail:
     msg: >
       {{ wg_internal_domain }} / {{ adguard_internal_domain }} must end with
       .{{ internal_domain_suffix }} so the AdGuard wildcard rewrite covers them.
@@ -47,45 +154,49 @@
     or not adguard_internal_domain.endswith('.' ~ internal_domain_suffix)
   tags: [compose, orchestration_domain_preflight]
 
-- name: "VPS Orchestration | Preflight | Probe Docker/WireGuard subnet overlap"
-  command: >
-    python3 -c "import ipaddress,sys; a=ipaddress.ip_network(sys.argv[1]);
-    b=ipaddress.ip_network(sys.argv[2]); sys.exit(1 if a.overlaps(b) else 0)"
-    "{{ docker_network_subnet }}" "{{ wg_vpn_subnet }}"
-  register: vps_orchestration_subnet_overlap
+- name: "VPS Orchestration | Preflight | Validate project root safety"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import pathlib,sys;
+        value=sys.argv[1]; path=pathlib.PurePosixPath(value);
+        assert path.is_absolute() and value!='/' and not value.startswith('//');
+        assert '..' not in path.parts and value==str(path);
+        assert all(ord(char)>=32 and ord(char)!=127 for char in value)
+      - "{{ project_root }}"
   changed_when: false
-  failed_when: false
-  tags: [compose]
+  tags: [docker, volumes, compose, traffic_mode, adguard, ufw_docker, verify]
 
-- name: "VPS Orchestration | Preflight | Fail when Docker and WireGuard subnets overlap"
-  fail:
-    msg: >-
-      docker_network_subnet ({{ docker_network_subnet }}) overlaps the
-      WireGuard subnet ({{ wg_vpn_subnet }}); overlapping ranges would confuse
-      client DNS and routing.
-  when: vps_orchestration_subnet_overlap.rc == 1
-  tags: [compose]
+- name: "VPS Orchestration | Main | Include host netfilter modules"
+  ansible.builtin.include_tasks: netfilter_modules.yml
+  tags: [docker, compose, traffic_mode]
 
 - name: "VPS Orchestration | Main | Include Docker setup"
-  include_tasks: docker.yml
+  ansible.builtin.include_tasks: docker.yml
   tags: [docker]
 
 - name: "VPS Orchestration | Main | Include volume setup"
-  include_tasks: volumes.yml
+  ansible.builtin.include_tasks: volumes.yml
   tags: [volumes]
 
 - name: "VPS Orchestration | Main | Include AdGuard config"
-  include_tasks: adguard_config.yml
+  ansible.builtin.include_tasks: adguard_config.yml
   tags: [adguard]
 
 - name: "VPS Orchestration | Main | Include Compose deployment"
-  include_tasks: compose.yml
+  ansible.builtin.include_tasks: compose.yml
   tags: [compose]
 
+- name: "VPS Orchestration | Main | Include traffic-mode reconciliation"
+  ansible.builtin.include_tasks: traffic_mode.yml
+  tags: [compose, traffic_mode]
+
 - name: "VPS Orchestration | Main | Include UFW-Docker integration [C2]"
-  include_tasks: ufw_docker.yml
+  ansible.builtin.include_tasks: ufw_docker.yml
   tags: [ufw_docker]
 
 - name: "VPS Orchestration | Main | Include verification"
-  include_tasks: verify.yml
+  ansible.builtin.include_tasks: verify.yml
   tags: [verify]

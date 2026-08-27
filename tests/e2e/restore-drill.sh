@@ -26,8 +26,7 @@ printf 'age-package-installed-by-test=stale-run\n' >/var/tmp/zt-restore-drill/ag
 chmod 0600 /var/tmp/zt-restore-drill/age-package-installed-by-test
 DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run bash /fixture/prepare.sh
 test ! -e /var/tmp/zt-restore-drill/age-package-installed-by-test
-DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run RELEASE_CANDIDATE=0 \
-    REMOTE_ARCHIVE=/var/tmp/a REMOTE_MARKER=/var/tmp/m bash /fixture/cleanup.sh
+DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run bash /fixture/cleanup.sh
 dpkg-query -W age >/dev/null 2>&1
 STALE_PREEXISTING
     echo '[PASS] age-provenance=stale-marker-preexisting-package-retained'
@@ -39,8 +38,7 @@ printf 'age-package-installed-by-test=stale-run\n' >/var/tmp/zt-restore-drill/ag
 chmod 0600 /var/tmp/zt-restore-drill/age-package-installed-by-test
 DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run bash /fixture/prepare.sh
 grep -Fqx 'age-package-installed-by-test=current-run' /var/tmp/zt-restore-drill/age-package-installed-by-test
-DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run RELEASE_CANDIDATE=0 \
-    REMOTE_ARCHIVE=/var/tmp/a REMOTE_MARKER=/var/tmp/m bash /fixture/cleanup.sh
+DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run bash /fixture/cleanup.sh
 ! dpkg-query -W age >/dev/null 2>&1
 STALE_MISSING
     echo '[PASS] age-provenance=stale-marker-missing-package-current-install-removed'
@@ -50,8 +48,7 @@ set -euo pipefail
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends age >/dev/null
 install -d -m 0700 /var/tmp/zt-restore-drill
-DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run RELEASE_CANDIDATE=0 \
-    REMOTE_ARCHIVE=/var/tmp/a REMOTE_MARKER=/var/tmp/m bash /fixture/cleanup.sh
+DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run bash /fixture/cleanup.sh
 dpkg-query -W age >/dev/null 2>&1
 INTERRUPTED
     echo '[PASS] age-provenance=interrupted-without-current-marker-package-retained'
@@ -63,8 +60,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ag
 install -d -m 0700 /var/tmp/zt-restore-drill
 printf 'age-package-installed-by-test=current-run\n' >/var/tmp/zt-restore-drill/age-package-installed-by-test
 chmod 0600 /var/tmp/zt-restore-drill/age-package-installed-by-test
-DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run RELEASE_CANDIDATE=0 \
-    REMOTE_ARCHIVE=/var/tmp/a REMOTE_MARKER=/var/tmp/m bash /fixture/cleanup.sh
+DRILL_WORK=/var/tmp/zt-restore-drill AGE_RUN_ID=current-run bash /fixture/cleanup.sh
 ! dpkg-query -W age >/dev/null 2>&1
 CURRENT_OWNER
     echo '[PASS] age-provenance=current-marker-owned-package-removed'
@@ -85,10 +81,6 @@ REMOTE_PROJECT_ROOT="${RESTORE_DRILL_PROJECT_ROOT:-/opt/zero-trust-vps}"
 DRILL_TIMEOUT="${RESTORE_DRILL_TIMEOUT:-600}"
 AGE_PREP_TIMEOUT="${RESTORE_DRILL_AGE_PREP_TIMEOUT:-420}"
 AGE_RUN_ID="$(openssl rand -hex 16)"
-RELEASE_CANDIDATE="${RESTORE_DRILL_RELEASE_CANDIDATE:-0}"
-TESTED_SHA="${RESTORE_DRILL_TESTED_SHA:-}"
-REMOTE_ARCHIVE="/var/tmp/zt-f3-restore.tar.gz.age"
-REMOTE_MARKER="/var/tmp/zt-f3-restore.marker"
 [[ ${REMOTE_WORK} =~ ^/var/tmp/zt-restore-drill([.][A-Za-z0-9_-]+)?$ ]] \
     || { echo '[FAIL] unsafe remote work path' >&2; exit 2; }
 [[ ${REMOTE_PROJECT_ROOT} =~ ^/[A-Za-z0-9._/-]+$ \
@@ -98,18 +90,11 @@ REMOTE_MARKER="/var/tmp/zt-f3-restore.marker"
     || { echo '[FAIL] restore drill timeout must be a positive integer' >&2; exit 2; }
 [[ ${AGE_PREP_TIMEOUT} =~ ^[1-9][0-9]*$ ]] \
     || { echo '[FAIL] age preparation timeout must be a positive integer' >&2; exit 2; }
-[[ ${RELEASE_CANDIDATE} =~ ^[01]$ ]] \
-    || { echo '[FAIL] release-candidate mode must be 0 or 1' >&2; exit 2; }
-if [[ ${RELEASE_CANDIDATE} == 1 ]]; then
-    [[ ${TESTED_SHA} =~ ^[0-9a-f]{40}$ ]] \
-        || { echo '[FAIL] release-candidate mode requires a full tested SHA' >&2; exit 2; }
-fi
-
 cleanup_remote() {
     local original_rc=$? cleanup_rc=0
     trap - EXIT
     run_remote "${TARGET}" "${PORT}" "${KEY}" \
-        "sudo timeout --signal=TERM --kill-after=15s '${AGE_PREP_TIMEOUT}s' env DRILL_WORK='${REMOTE_WORK}' AGE_RUN_ID='${AGE_RUN_ID}' RELEASE_CANDIDATE='${RELEASE_CANDIDATE}' REMOTE_ARCHIVE='${REMOTE_ARCHIVE}' REMOTE_MARKER='${REMOTE_MARKER}' bash -s" <<'REMOTE_CLEANUP' || cleanup_rc=$?
+        "sudo timeout --signal=TERM --kill-after=15s '${AGE_PREP_TIMEOUT}s' env DRILL_WORK='${REMOTE_WORK}' AGE_RUN_ID='${AGE_RUN_ID}' bash -s" <<'REMOTE_CLEANUP' || cleanup_rc=$?
 set -euo pipefail
 work="${DRILL_WORK}"
 provenance="${work}/age-package-installed-by-test"
@@ -149,9 +134,6 @@ else
 fi
 rm -rf -- "${work}"
 rm -f -- /var/tmp/zt-f3-backup.sh /var/tmp/zt-f3-restore.sh
-if [[ "${RELEASE_CANDIDATE}" != 1 ]]; then
-    rm -f -- "${REMOTE_ARCHIVE}" "${REMOTE_MARKER}"
-fi
 exit 0
 REMOTE_CLEANUP
     if (( cleanup_rc != 0 )); then
@@ -248,7 +230,7 @@ run_remote "${TARGET}" "${PORT}" "${KEY}" \
     "printf '%s  %s\\n' '${BACKUP_SHA}' '${REMOTE_WORK}/backup.sh' '${RESTORE_SHA}' '${REMOTE_WORK}/restore.sh' | sudo sha256sum -c - >/dev/null"
 
 run_remote "${TARGET}" "${PORT}" "${KEY}" \
-    "sudo timeout --signal=TERM --kill-after=30s '${DRILL_TIMEOUT}s' env DRILL_PROJECT_ROOT='${REMOTE_PROJECT_ROOT}' DRILL_WORK='${REMOTE_WORK}' RELEASE_CANDIDATE='${RELEASE_CANDIDATE}' TESTED_SHA='${TESTED_SHA}' REMOTE_ARCHIVE='${REMOTE_ARCHIVE}' REMOTE_MARKER='${REMOTE_MARKER}' bash -s" <<'REMOTE'
+    "sudo timeout --signal=TERM --kill-after=30s '${DRILL_TIMEOUT}s' env DRILL_PROJECT_ROOT='${REMOTE_PROJECT_ROOT}' DRILL_WORK='${REMOTE_WORK}' bash -s" <<'REMOTE'
 set -euo pipefail
 umask 077
 step=preflight
@@ -267,11 +249,6 @@ if [[ -f "${override}" ]]; then
     override_was_present=1
 else
     test ! -e "${override}"
-fi
-setup_step_before=0
-if [[ "${RELEASE_CANDIDATE}" == 1 ]]; then
-    setup_step_before="$(python3 -c "import sqlite3; db=sqlite3.connect('${db}'); rows=db.execute('SELECT setup_step FROM general_table').fetchall(); db.close(); print(rows[0][0] if rows == [(0,)] else 'invalid')")"
-    test "${setup_step_before}" = 0
 fi
 db_before="$(sha256sum "${db}" | cut -d' ' -f1)"
 ca_before="$(sha256sum "${ca}" | cut -d' ' -f1)"
@@ -318,26 +295,9 @@ else
 fi
 echo 'predicate.override_state_preserved=PASS'
 docker exec wg-easy wg show >/dev/null
-setup_step_after=0
-if [[ "${RELEASE_CANDIDATE}" == 1 ]]; then
-    setup_step_after="$(python3 -c "import sqlite3; db=sqlite3.connect('${db}'); rows=db.execute('SELECT setup_step FROM general_table').fetchall(); db.close(); print(rows[0][0] if rows == [(0,)] else 'invalid')")"
-    test "${setup_step_after}" = 0
-fi
 rm -f -- "${work}/identity" "${work}/restore-identity"
 test ! -e "${work}/identity" && test ! -e "${work}/restore-identity"
 echo 'predicate.age_identities_deleted=PASS'
-if [[ "${RELEASE_CANDIDATE}" == 1 ]]; then
-    install -m 0600 "${archive}" "${REMOTE_ARCHIVE}"
-    archive_sha256="$(sha256sum "${REMOTE_ARCHIVE}" | cut -d' ' -f1)"
-    marker_tmp="$(mktemp /var/tmp/zt-f3-restore.marker.XXXXXX)"
-    printf 'tested_sha=%s\narchive_sha256=%s\narchive_path=%s\nsetup_step_before=%s\nsetup_step_after=%s\n' \
-        "${TESTED_SHA}" "${archive_sha256}" "${REMOTE_ARCHIVE}" \
-        "${setup_step_before}" "${setup_step_after}" >"${marker_tmp}"
-    chmod 0600 "${marker_tmp}"
-    mv -f -- "${marker_tmp}" "${REMOTE_MARKER}"
-else
-    rm -f -- "${REMOTE_ARCHIVE}" "${REMOTE_MARKER}"
-fi
 step=complete
 REMOTE
 

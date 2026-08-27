@@ -1,26 +1,26 @@
 ---
 - name: "Volumes | Create | Caddy data and config directories"
-  file:
+  ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    mode: '0755'
+    mode: '0700'
   loop:
     - "{{ project_root }}/volumes/caddy/data"
     - "{{ project_root }}/volumes/caddy/config"
   tags: [volumes]
 
 - name: "Volumes | Create | wg-easy directory"
-  file:
+  ansible.builtin.file:
     path: "{{ project_root }}/volumes/wg-easy"
     state: directory
-    mode: '0755'
+    mode: '0700'
   tags: [volumes]
 
 - name: "Volumes | Create | AdGuard directories"
-  file:
+  ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    mode: '0755'
+    mode: '0700'
   loop:
     - "{{ project_root }}/volumes/adguard/work"
     - "{{ project_root }}/volumes/adguard/conf"

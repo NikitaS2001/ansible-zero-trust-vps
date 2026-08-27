@@ -104,7 +104,9 @@ trap cleanup EXIT
 ssh-keygen -q -t ed25519 -N "" -f "${TMP_DIR}/id_ed25519" -C "e2e-ztvps-remote"
 PUBKEY="$(cat "${TMP_DIR}/id_ed25519.pub")"
 ADGUARD_PASS="$(openssl rand -hex 12)"
+ADMIN_PASS="$(openssl rand -hex 12)"
 WG_PASS="${ZERO_TRUST_WG_PASSWORD:-Twelve\$COMPOSE_PROBE}"
+ADMIN_HASH="$(openssl passwd -6 -stdin <<<"${ADMIN_PASS}")"
 ADGUARD_HASH="$(python3 - <<PY
 from passlib.hash import bcrypt
 print(bcrypt.using(ident='2y', rounds=10).hash('${ADGUARD_PASS}'))
@@ -186,6 +188,7 @@ write_group_vars() {
     cat >"${ROOT_DIR}/group_vars/all/vars.yml" <<EOF
 ---
 # Network
+wg_traffic_mode: "${ZERO_TRUST_WG_TRAFFIC_MODE:-services_only}"
 ssh_port: ${configured_ssh_port}
 wg_port: ${E2E_WG_PORT}
 wg_container_port: ${E2E_WG_PORT}
@@ -195,7 +198,8 @@ wg_client_dns: "10.66.0.2"
 
 # wg-easy initial setup (INIT_*)
 wg_easy_admin_user: "admin"
-wg_easy_admin_password: "${WG_PASS}"
+admin_password_hash: "{{ vault_admin_password_hash }}"
+wg_easy_bootstrap_secret: "{{ vault_wg_easy_bootstrap_secret }}"
 wg_public_host: "127.0.0.1"
 wg_allowed_ips:
   - "10.8.0.0/24"
@@ -232,7 +236,9 @@ vault_admin_ssh_pubkey: "${PUBKEY}"
 EOF
 cat >"${ROOT_DIR}/group_vars/all/vault_services.yml" <<EOF
 ---
+vault_admin_password_hash: "${ADMIN_HASH}"
 vault_adguard_password_hash: "${ADGUARD_HASH}"
+vault_wg_easy_bootstrap_secret: "${WG_PASS}"
 EOF
 echo 'test-vault-password' >"${TMP_DIR}/vault_pass"
 chmod 0600 "${TMP_DIR}/vault_pass"

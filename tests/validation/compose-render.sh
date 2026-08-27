@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TEMPLATE_PATH="${REPO_ROOT}/roles/vps_orchestration/templates/docker-compose.yml.j2"
 TASK_PATH="${REPO_ROOT}/roles/vps_orchestration/tasks/compose.yml"
+PROBE_TASK_PATH="${REPO_ROOT}/roles/vps_orchestration/tasks/compose_prepare.yml"
 FIXTURE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/compose-render.XXXXXX")"
 ACTIVE_COMPOSE_FILE=""
 ACTIVE_OVERRIDE_FILE=""
@@ -38,36 +39,42 @@ import json
 import os
 from pathlib import Path
 
-passwords = {
+secrets = {
     "dollar": "Twelve$COMPOSE_PROBE",
     "scalars": "  quote\" and ' colon: hash# backslash\\ spaces  ",
     "completed": "Twelve$COMPOSE_PROBE",
-    "manual": "",
 }
-password = passwords[os.environ["CASE_NAME"]]
+secret = secrets[os.environ["CASE_NAME"]]
 variables = {
     "adguard_bootstrap_ui_port": 3000,
     "adguard_container_ip": "10.66.0.2",
     "adguard_version": "v0.107.78",
+    "adguard_image_digest": "sha256:1ea34eafe5dc691007946e8eaab7bf46b0de9412f39213d8c06e48b53bf9a6c5",
     "caddy_container_ip": "10.66.0.3",
     "caddy_version": "2.11.4",
+    "caddy_image_digest": "sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d",
     "docker_network_subnet": "10.66.0.0/24",
+    "docker_network_ipv6_subnet": "fd00:67:0:0::/64",
     "project_root": os.environ["PROJECT_ROOT"],
     "wg_allowed_ips": ["10.8.0.0/24", "10.66.0.2/32"],
     "wg_client_dns": "10.66.0.2",
     "wg_container_port": 51820,
-    "wg_easy_admin_password": password,
+    "wg_easy_bootstrap_secret": secret,
     "wg_easy_admin_user": "admin",
     "wg_easy_bootstrap_ui_port": 51821,
     "wg_easy_container_ip": "10.66.0.4",
     "wg_easy_include_init": os.environ["CASE_NAME"] in {"dollar", "scalars"},
     "wg_easy_version": "15.4.0",
-    "wg_enable_ipv6": False,
+    "wg_easy_image_digest": "sha256:0e7bc9d34e86ddcaa92bc700d4d7dc9b33291dbc07ac8d13382f7c2095f949ec",
     "wg_port": 51820,
     "wg_public_host": "vpn.example.test",
+    "wg_services_only_ipv4_destinations": ["10.8.0.0/24", "10.66.0.2/32"],
+    "wg_services_only_ipv6_destinations": ["fd42:42:42::/64"],
+    "wg_traffic_mode": "services_only",
+    "wg_vpn_ipv6_subnet": "fd42:42:42::/64",
 }
 Path(os.environ["VARS_PATH"]).write_text(json.dumps(variables), encoding="utf-8")
-Path(os.environ["EXPECTED_PATH"]).write_text(password, encoding="utf-8")
+Path(os.environ["EXPECTED_PATH"]).write_text(secret, encoding="utf-8")
 PY
   chmod 600 "${vars_path}" "${expected_path}"
 
@@ -118,7 +125,7 @@ elif environment["INIT_PASSWORD"] != expected.replace("$", "$$"):
     raise SystemExit(1)
 PY
 
-  if [[ "${case_name}" == "completed" || "${case_name}" == "manual" ]]; then
+  if [[ "${case_name}" == "completed" ]]; then
     return
   fi
   ACTIVE_COMPOSE_FILE="${rendered_path}"
@@ -163,7 +170,7 @@ probe_case() {
   vars:
     project_root: "${fixture_root}"
   tasks:
-    - ansible.builtin.import_tasks: "${TASK_PATH}"
+    - ansible.builtin.import_tasks: "${PROBE_TASK_PATH}"
     - name: Assert the production state decision
       ansible.builtin.assert:
         that:
@@ -189,9 +196,8 @@ probe_failure_case() {
 render_case dollar
 render_case scalars
 render_case completed
-render_case manual
 printf '%s\n' 'password_exact=true' 'scalar_encoding=true' \
-  'completed_secret_free=true' 'manual_wizard_secret_free=true'
+  'completed_secret_free=true' 'vault_only_bootstrap=true'
 
 probe_case absent false
 make_database nonzero 2
@@ -218,6 +224,9 @@ printf '%s\n' 'state_absent=true' 'state_nonzero=true' 'state_zero=true' \
   'schema_fail_closed=true' 'unreadable_fail_closed=true'
 
 COMPOSE_TASK_PATH="${TASK_PATH}" \
+COMPOSE_PREPARE_TASK_PATH="${REPO_ROOT}/roles/vps_orchestration/tasks/compose_prepare.yml" \
+CADDY_TASK_PATH="${REPO_ROOT}/roles/vps_orchestration/tasks/caddy_transaction.yml" \
+COMPOSE_LIFECYCLE_TASK_PATH="${REPO_ROOT}/roles/vps_orchestration/tasks/compose_lifecycle.yml" \
 VERIFY_TASK_PATH="${REPO_ROOT}/roles/vps_orchestration/tasks/verify.yml" python3 - <<'PY'
 import os
 import shutil
@@ -237,7 +246,13 @@ def tasks_in(items):
 
 
 documents = []
-for variable in ("COMPOSE_TASK_PATH", "VERIFY_TASK_PATH"):
+for variable in (
+    "COMPOSE_TASK_PATH",
+    "COMPOSE_PREPARE_TASK_PATH",
+    "CADDY_TASK_PATH",
+    "COMPOSE_LIFECYCLE_TASK_PATH",
+    "VERIFY_TASK_PATH",
+):
     documents.extend(yaml.safe_load(Path(os.environ[variable]).read_text(encoding="utf-8")))
 
 required_names = {
@@ -261,6 +276,11 @@ for name in required_names:
     if tasks[name].get("no_log") in (None, False):
         raise SystemExit(1)
 
+caddy_validation = tasks["Compose | Caddy | Validate complete candidate tree"]
+caddy_argv = caddy_validation["ansible.builtin.command"]["argv"]
+if not any(value.startswith("caddy:") and "@{{ caddy_image_digest }}" in value for value in caddy_argv):
+    raise SystemExit(1)
+
 # Caddyfile is a Docker file bind-mount: replacing it with mv leaves the
 # container on the old inode while .Caddyfile.active.sha256 tracks the new path.
 inplace_names = (
@@ -270,7 +290,7 @@ inplace_names = (
 for name in inplace_names:
     if name not in tasks:
         raise SystemExit(1)
-    argv = tasks[name].get("command", {}).get("argv") or []
+    argv = tasks[name].get("ansible.builtin.command", {}).get("argv") or []
     if len(argv) < 4 or argv[0] != "python3" or "-c" not in argv:
         raise SystemExit(1)
     script = argv[argv.index("-c") + 1]
@@ -279,8 +299,8 @@ for name in inplace_names:
     if "os.rename" in script or "os.replace" in script:
         raise SystemExit(1)
 
-script = tasks[inplace_names[0]]["command"]["argv"][
-    tasks[inplace_names[0]]["command"]["argv"].index("-c") + 1
+script = tasks[inplace_names[0]]["ansible.builtin.command"]["argv"][
+    tasks[inplace_names[0]]["ansible.builtin.command"]["argv"].index("-c") + 1
 ]
 root = tempfile.mkdtemp(prefix="caddy-inode.")
 try:
