@@ -247,6 +247,23 @@ echo 'predicate.post_upgrade_network_contract=PASS' | tee -a "${ARTIFACT_DIR}/pr
 
 "${E2E_DIR}/restore-drill.sh" "${TARGET}" "${QEMU_ADMIN_PORT}" \
     "${TMP_DIR}/id_ed25519" 2>&1 | tee "${ARTIFACT_DIR}/restore.log"
+run_remote "${TARGET}" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
+    'sudo bash -se' 2>&1 <<'REMOTE' | tee "${ARTIFACT_DIR}/post-restore-readiness.log"
+set -euo pipefail
+for attempt in $(seq 1 30); do
+    state="$(docker inspect --format '{{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' wg-easy adguard caddy)"
+    if grep -Eq '^/wg-easy running (none|healthy)$' <<<"${state}" \
+        && grep -q '^/adguard running healthy$' <<<"${state}" \
+        && grep -q '^/caddy running healthy$' <<<"${state}"; then
+        printf '%s\n' "${state}"
+        echo 'predicate.post_restore_stack_ready=PASS'
+        exit 0
+    fi
+    sleep 2
+done
+printf '%s\n' "${state}" >&2
+exit 1
+REMOTE
 verify_deployment "${TARGET}" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519"
 echo 'predicate.restore_recovered_current_stack=PASS' | tee -a "${ARTIFACT_DIR}/predicates.log"
 
