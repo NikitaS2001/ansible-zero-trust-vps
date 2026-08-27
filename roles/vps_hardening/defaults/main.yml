@@ -11,6 +11,9 @@ admin_shell: /bin/bash
 # the role are removed from the admin account (rotation revokes old keys).
 # Set to false to allow manually-added keys to coexist.
 vps_hardening_authorized_keys_exclusive: true
+# Password authentication remains disabled. Leave this empty for a locked
+# key-only account, or supply a precomputed hash; plaintext admin_password is
+# explicitly rejected during preflight.
 admin_password_hash: ""
 vault_admin_ssh_pubkey: ""
 

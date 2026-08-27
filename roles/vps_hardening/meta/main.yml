@@ -1,0 +1,93 @@
+---
+argument_specs:
+  main:
+    short_description: Harden a Debian or Ubuntu VPS before service orchestration.
+    description:
+      - Validates the stable role inputs used to configure SSH, UFW, the managed administrator, and Fail2Ban.
+    options:
+      ssh_port:
+        description: Hardened SSH TCP listening port.
+        type: int
+        default: 2222
+      wg_port:
+        description: Public WireGuard UDP port allowed by UFW.
+        type: int
+        default: 51820
+      admin_user:
+        description: Name of the managed non-root administrator.
+        type: str
+        default: sysadmin
+      admin_group:
+        description: Privileged primary group assigned to the managed administrator.
+        type: str
+        default: sudo
+      admin_shell:
+        description: Login shell for the managed administrator.
+        type: str
+        default: /bin/bash
+      admin_password_hash:
+        description: Optional precomputed password hash for the managed administrator.
+        type: str
+        default: ''
+      vault_admin_ssh_pubkey:
+        description: SSH public key installed for the managed administrator.
+        type: str
+        default: ''
+      vps_hardening_authorized_keys_exclusive:
+        description: Remove administrator SSH keys that are not managed by this role.
+        type: bool
+        default: true
+      ssh_service_name:
+        description: System service name for OpenSSH.
+        type: str
+        default: ssh
+      ssh_socket_name:
+        description: Systemd socket unit name for OpenSSH socket activation.
+        type: str
+        default: ssh.socket
+      ssh_allow_tcp_forwarding:
+        description: OpenSSH AllowTcpForwarding value.
+        type: str
+        default: 'yes'
+      vps_hardening_manage_ssh_socket:
+        description: Disable SSH socket activation so sshd_config controls the hardened port.
+        type: bool
+        default: true
+      wg_easy_bootstrap_ui_port:
+        description: Localhost wg-easy UI port allowed through SSH forwarding.
+        type: int
+        default: 51821
+      adguard_bootstrap_ui_port:
+        description: Localhost AdGuard UI port allowed through SSH forwarding.
+        type: int
+        default: 3000
+      fail2ban_ignore_ips:
+        description: CIDRs and addresses ignored by Fail2Ban.
+        type: list
+        elements: str
+        default:
+          - 127.0.0.1/8
+      fail2ban_bantime:
+        description: Fail2Ban ban duration in seconds.
+        type: int
+        default: 3600
+      fail2ban_findtime:
+        description: Fail2Ban find-time window in seconds.
+        type: int
+        default: 600
+      fail2ban_maxretry:
+        description: Fail2Ban retries before a ban.
+        type: int
+        default: 5
+      vps_hardening_apply_package_upgrade:
+        description: Apply the configured apt upgrade mode before package installation.
+        type: bool
+        default: false
+      vps_hardening_package_upgrade_mode:
+        description: Apt upgrade mode used when package upgrades are enabled.
+        type: str
+        default: safe
+      vps_hardening_enable_ufw_on_local_connection:
+        description: Explicitly enable UFW when Ansible connects locally.
+        type: bool
+        default: false

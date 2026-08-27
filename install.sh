@@ -1,18 +1,34 @@
 #!/usr/bin/env bash
 # Public installer for ansible-zero-trust-vps.
-# Intended usage:
-#   curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.2.1/install.sh | sudo bash
+# Recommended usage after verifying release bytes locally:
+#   sudo bash ./install.sh
 
 set -euo pipefail
+umask 077
 
 readonly OFFICIAL_REPO_URL="https://github.com/NikitaS2001/ansible-zero-trust-vps.git"
-readonly OFFICIAL_RELEASE_REF="v1.2.1"
+# Release-preparation target: this tag is required only by the release gate.
+# Before the tag exists, source-tree tests must use explicit ZERO_TRUST_DEV_MODE=1.
+readonly OFFICIAL_RELEASE_REF="v1.3.0"
 readonly OFFICIAL_SIGNER_IDENTITY="nikitasmadych2001@gmail.com"
 readonly OFFICIAL_SIGNER_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcfC1Stku7YQ0mLYptkX+t0SZiziyukPRofvs0YHZbx"
 readonly OFFICIAL_SIGNER_FINGERPRINT="SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0"
 readonly INSTALL_ROOT="/opt/zero-trust-vps-installer"
 readonly REPO_DIR="${INSTALL_ROOT}/repo"
 readonly VENV_DIR="${INSTALL_ROOT}/venv"
+
+VAULT_DIR="/etc/zero-trust-vps"
+VAULT_PASS_FILE="${VAULT_DIR}/installer-vault.pass"
+VAULT_FILE="${VAULT_DIR}/installer-vault.yml"
+VAULT_MARKER="${VAULT_DIR}/.installer-vault.incomplete"
+VAULT_LOCK_FILE="${VAULT_DIR}/.installer.lock"
+VAULT_OWNER="root"
+VAULT_ANSIBLE_BIN="${VENV_DIR}/bin/ansible-vault"
+VAULT_PYTHON_BIN="${VENV_DIR}/bin/python"
+ANSIBLE_PULL_BIN="${VENV_DIR}/bin/ansible-pull"
+OPENSSL_BIN="openssl"
+VAULT_COMMAND_TIMEOUT=30
+ANSIBLE_PULL_TIMEOUT=3600
 
 RESOLVED_RELEASE_REF=""
 REPO_URL="${OFFICIAL_REPO_URL}"
@@ -22,6 +38,11 @@ CREATED_INSTALL_ROOT=false
 CREATED_REPO_DIR=false
 CREATED_VENV_DIR=false
 EXTRA_VARS_FILE=""
+VAULT_PLAIN_FILE=""
+VAULT_PASS_TEMP=""
+VAULT_FILE_TEMP=""
+VAULT_MARKER_TEMP=""
+VAULT_LOCK_FD=""
 ALLOWED_SIGNERS_FILE=""
 REPO_CONFIG_BACKUP=""
 REPO_CONFIG_MODE=""
@@ -37,9 +58,11 @@ ADGUARD_INTERNAL_DOMAIN=""
 SSH_PUBKEY=""
 WG_PASSWORD=""
 WG_HOST=""
-WG_ENABLE_IPV6=""
+WG_TRAFFIC_MODE="services_only"
+WG_TRAFFIC_MODE_INPUT=""
 INTERNAL_DOMAIN_SUFFIX=""
 NONINTERACTIVE=""
+REUSE_INSTALLER_STATE=false
 INHERITED_ADMIN_PASSWORD=""
 INHERITED_ADGUARD_PASSWORD=""
 INHERITED_WG_PASSWORD=""
@@ -49,6 +72,9 @@ cleanup_on_failure() {
     local exit_code=$?
 
     cleanup_extra_vars_file
+    cleanup_vault_temps
+    unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
+    unset INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY
     cleanup_allowed_signers_file
     restore_repository_git_config
 
@@ -72,11 +98,23 @@ cleanup_on_failure() {
 trap cleanup_on_failure EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 cleanup_extra_vars_file() {
     if [[ -n "${EXTRA_VARS_FILE}" && -e "${EXTRA_VARS_FILE}" ]]; then
         rm -f "${EXTRA_VARS_FILE}"
     fi
+}
+
+cleanup_vault_temps() {
+    local path
+    for path in "${VAULT_PLAIN_FILE}" "${VAULT_PASS_TEMP}" "${VAULT_FILE_TEMP}" "${VAULT_MARKER_TEMP}"; do
+        [[ -n "${path}" ]] && rm -f -- "${path}"
+    done
+    VAULT_PLAIN_FILE=""
+    VAULT_PASS_TEMP=""
+    VAULT_FILE_TEMP=""
+    VAULT_MARKER_TEMP=""
 }
 
 cleanup_allowed_signers_file() {
@@ -103,12 +141,14 @@ usage() {
     cat <<EOF
 Usage: install.sh
 
-curl -fsSL https://raw.githubusercontent.com/NikitaS2001/ansible-zero-trust-vps/v1.2.1/install.sh | sudo bash
+Verify the release assets locally, then run:
+
+  sudo bash ./install.sh
 
 Interactive public installer for ansible-zero-trust-vps.
 
 Production mode accepts only:
-  https://github.com/NikitaS2001/ansible-zero-trust-vps.git at v1.2.1
+  https://github.com/NikitaS2001/ansible-zero-trust-vps.git at v1.3.0
   Its annotated SSH-signed tag must match nikitasmadych2001@gmail.com
   (SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0). The installer peels
   it to an exact SHA, detaches the checkout, and passes that SHA to ansible-pull.
@@ -117,20 +157,19 @@ Development-only source override (never production):
   ZERO_TRUST_DEV_MODE=1   Enables ZERO_TRUST_REPO_URL and ZERO_TRUST_RELEASE_REF
                           and emits NON-PRODUCTION DEVELOPMENT MODE.
 
-Trust boundary: the initially downloaded shell bytes still rely on HTTPS/TLS.
-This hardened path is not yet published; it requires a later version bump and
-annotated SSH-signed tag. Temporary signer and secret files are removed after
-success or failure.
+Trust boundary: verify the tagged release asset attestation and checksum before
+executing it. The installer independently verifies the SSH-signed tag and exact
+resolved SHA. Temporary signer and secret files are removed after success or failure.
 
 Non-interactive mode for automated testing:
-  ZERO_TRUST_NONINTERACTIVE=1  Run without prompts; all inputs must be
-                               provided via the ZERO_TRUST_* variables below.
+  ZERO_TRUST_NONINTERACTIVE=1  Run without prompts. A fresh installation needs
+                               the required ZERO_TRUST_* inputs below.
   ZERO_TRUST_SSH_PORT          Hardened SSH port (optional, default from role)
   ZERO_TRUST_WG_PORT           WireGuard UDP port (optional, default from role)
   ZERO_TRUST_ADMIN_USER        Admin username (optional, default from role)
   ZERO_TRUST_ADMIN_PASSWORD    Admin password (required, min 8 chars)
   ZERO_TRUST_ADGUARD_PASSWORD  AdGuard admin password (required, min 8 chars)
-  ZERO_TRUST_WG_PASSWORD       WireGuard panel password (required, min 8 chars)
+  ZERO_TRUST_WG_PASSWORD       WireGuard panel password (required, min 12 chars)
   ZERO_TRUST_INTERNAL_DOMAINS  Two internal hostnames, space separated
   ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX  Local DNS suffix for the internal domains
                                (optional, default internal; recommended
@@ -138,11 +177,16 @@ Non-interactive mode for automated testing:
   ZERO_TRUST_SSH_PUBKEY        SSH public key for the admin user (required)
   ZERO_TRUST_WG_HOST           Public hostname/IP for clients (optional,
                                auto-detected when omitted)
-  ZERO_TRUST_WG_ENABLE_IPV6    Enable IPv6 in the VPN stack (true/false,
-                               optional, default false; requires a host with
-                               IPv6 connectivity)
+  ZERO_TRUST_WG_TRAFFIC_MODE   VPN routing: services_only or full_tunnel
+                               (optional, default services_only)
 
-The public quickstart should use the tagged script URL, not main.
+On rerun, the encrypted installer state is authoritative. Omit credential
+inputs; any supplied non-secret input must match its persisted value.
+
+This installer supports amd64 hosts with at least 1024 MiB of physical RAM.
+Existing swap is reported for diagnostics and is never changed.
+
+The public quickstart should use a tagged release, never main.
 EOF
 }
 
@@ -155,27 +199,79 @@ error() {
 
 require_root() {
     if [[ "${EUID}" -ne 0 ]]; then
-        error "Run this installer as root, for example: curl -fsSL .../install.sh | sudo bash"
+        error "Run this installer as root: sudo bash ./install.sh"
     fi
+}
+
+is_supported_os_release() {
+    local distribution_id="${1:-}"
+    local version_id="${2:-}"
+
+    case "${distribution_id}:${version_id}" in
+        debian:12|debian:12.*|ubuntu:24.04)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 require_supported_os() {
     if [[ ! -r /etc/os-release ]]; then
-        error "/etc/os-release not found. This installer supports Debian/Ubuntu systems."
+        error "/etc/os-release not found. This installer supports Debian 12 and Ubuntu 24.04 only."
     fi
 
     # shellcheck disable=SC1091
     source /etc/os-release
 
-    case "${ID:-}" in
-        debian|ubuntu)
-            ;;
-        *)
-            error "Unsupported OS '${ID:-unknown}'. This installer supports Debian/Ubuntu systems."
-            ;;
-    esac
+    is_supported_os_release "${ID:-}" "${VERSION_ID:-}" \
+        || error "Unsupported OS '${ID:-unknown}' version '${VERSION_ID:-unknown}'. This installer supports Debian 12 and Ubuntu 24.04 only."
 
-    command -v apt-get >/dev/null 2>&1 || error "apt-get not found. This installer supports apt-based systems."
+    command -v apt-get >/dev/null 2>&1 || error "apt-get not found. This installer supports Debian 12 and Ubuntu 24.04 only."
+}
+
+platform_arch() {
+    uname -m
+}
+
+require_supported_platform() {
+    local arch
+    arch="$(platform_arch)"
+    [[ "${arch}" == x86_64 ]] \
+        || error "Unsupported platform architecture '${arch}'. This installer supports amd64 only."
+}
+
+physical_memory_mib() {
+    awk '/^MemTotal:/ { print int($2 / 1024); exit }' /proc/meminfo
+}
+
+require_minimum_memory() {
+    local memory_mib
+    memory_mib="$(physical_memory_mib)"
+    [[ "${memory_mib}" =~ ^[0-9]+$ && "${memory_mib}" -ge 1024 ]] \
+        || error "At least 1024 MiB of physical RAM is required. Detected ${memory_mib:-unknown} MiB."
+}
+
+report_existing_swap() {
+    local swap_summary
+    swap_summary="$(awk 'NR > 1 { count++; total += $3 } END { printf "%d devices, %d MiB total", count + 0, int(total / 1024) }' /proc/swaps)"
+    info "Existing swap: ${swap_summary}. The installer will not change swap configuration."
+}
+
+validate_traffic_mode() {
+    case "${WG_TRAFFIC_MODE}" in
+        services_only|full_tunnel) ;;
+        *) error "ZERO_TRUST_WG_TRAFFIC_MODE must be services_only or full_tunnel." ;;
+    esac
+}
+
+require_traffic_egress() {
+    [[ "${WG_TRAFFIC_MODE}" == full_tunnel ]] || return 0
+    curl -4 -fsS --max-time 10 -o /dev/null https://api.ipify.org \
+        || error "Full-tunnel mode requires working IPv4 egress."
+    curl -6 -fsS --max-time 10 -o /dev/null https://api64.ipify.org \
+        || error "Full-tunnel mode requires working IPv6 egress."
 }
 
 open_tty() {
@@ -195,17 +291,15 @@ prompt_optional() {
     printf -v "${__var_name}" '%s' "${value}"
 }
 
-prompt_yesno() {
+prompt_choice() {
     local __var_name="$1"
     local prompt_text="$2"
+    local default_value="$3"
     local value
 
-    printf "%s [y/N]: " "${prompt_text}" >&3
+    printf '%s [%s]: ' "${prompt_text}" "${default_value}" >&3
     IFS= read -r value <&3
-    case "${value,,}" in
-        y | yes) printf -v "${__var_name}" 'true' ;;
-        *) printf -v "${__var_name}" 'false' ;;
-    esac
+    printf -v "${__var_name}" '%s' "${value:-${default_value}}"
 }
 
 prompt_required_secret() {
@@ -414,7 +508,9 @@ install_prerequisites() {
     info "Installing source verification prerequisites..."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    apt-get install -y ca-certificates git openssh-client
+    apt-get install -y ca-certificates curl git openssh-client sudo
+    command -v visudo >/dev/null 2>&1 || error "sudo was installed without visudo."
+    visudo -cf /etc/sudoers >/dev/null || error "Existing sudoers configuration is invalid."
 }
 
 install_ansible_toolchain() {
@@ -425,14 +521,11 @@ install_ansible_toolchain() {
         CREATED_VENV_DIR=true
     fi
     python3 -m venv "${VENV_DIR}"
-    "${VENV_DIR}/bin/python" -m pip install --quiet --upgrade pip
-    # Pin the Ansible release that the playbook was validated against, so a
-    # Pin Ansible to a version that supports Python 3.11 (Debian 12) as well as
-    # Python 3.12 (Ubuntu 24.04): ansible >= 13 requires Python >= 3.12, which
-    # breaks the public installer on Debian 12. Also pin bcrypt: passlib 1.7.4
-    # is incompatible with bcrypt >= 4.1 (removed __about__), which makes the
-    # AdGuard bcrypt hash fail with a bogus 72-byte error.
-    "${VENV_DIR}/bin/pip" install --quiet "ansible==12.3.0" "passlib[bcrypt]" "bcrypt<4.1"
+    # Pin the runtime versions validated for Debian 12 and Ubuntu 24.04.
+    # passlib 1.7.4 needs bcrypt 4.0.1 because bcrypt >= 4.1 removed __about__.
+    "${VENV_DIR}/bin/pip" install --quiet \
+        "ansible-core==2.19.11" "passlib==1.7.4" "bcrypt==4.0.1"
+    "${VENV_DIR}/bin/pip" uninstall --quiet --yes ansible
 }
 
 prepare_allowed_signers_file() {
@@ -575,12 +668,17 @@ install_collections() {
 }
 
 collect_configuration() {
+    if [[ -n "${ZERO_TRUST_WG_ENABLE_IPV6:-}" ]]; then
+        error "ZERO_TRUST_WG_ENABLE_IPV6 is no longer accepted. Use ZERO_TRUST_WG_TRAFFIC_MODE; full_tunnel requires working IPv4 and IPv6 egress."
+    fi
     if [[ "${NONINTERACTIVE}" == "1" ]]; then
         collect_configuration_noninteractive
         return
     fi
 
     info "Starting interactive configuration..."
+    prompt_choice WG_TRAFFIC_MODE "VPN traffic mode (services_only or full_tunnel)" services_only
+    WG_TRAFFIC_MODE_INPUT="${WG_TRAFFIC_MODE}"
     prompt_optional SSH_PORT "SSH port"
     prompt_optional WG_PORT "WireGuard port"
     prompt_optional ADMIN_USER "Admin username"
@@ -590,7 +688,6 @@ collect_configuration() {
     prompt_optional INTERNAL_DOMAINS "Internal domains, separated by space"
     prompt_optional INTERNAL_DOMAIN_SUFFIX "Internal domain suffix (Enter for role default: internal)"
     prompt_optional WG_HOST "WireGuard public hostname or IP (Enter to auto-detect)"
-    prompt_yesno WG_ENABLE_IPV6 "Enable IPv6 in the VPN stack"
     prompt_required_line SSH_PUBKEY "SSH public key"
 
     require_max_length "${ADGUARD_PASSWORD}" "AdGuard admin password" 72
@@ -598,11 +695,12 @@ collect_configuration() {
     require_min_length "${WG_PASSWORD}" "WireGuard panel password" 12
 
     validate_port "SSH port" "${SSH_PORT}"
+    validate_traffic_mode
     validate_port "WireGuard port" "${WG_PORT}"
     validate_optional_admin_user "${ADMIN_USER}"
     validate_internal_domains "${INTERNAL_DOMAINS}"
     validate_internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${INTERNAL_DOMAINS}"
-    validate_ssh_pubkey "${SSH_PUBKEY}"
+    [[ -z "${SSH_PUBKEY}" ]] || validate_ssh_pubkey "${SSH_PUBKEY}"
     if [[ -n "${WG_HOST}" ]] && ! validate_hostname "${WG_HOST}"; then
         error "Invalid public hostname or IP for WireGuard clients: ${WG_HOST}"
     fi
@@ -642,6 +740,11 @@ detect_public_ip() {
 }
 
 collect_configuration_noninteractive() {
+    if [[ -n "${ZERO_TRUST_WG_EASY_ADMIN_PASSWORD:-}" ]]; then
+        error "ZERO_TRUST_WG_EASY_ADMIN_PASSWORD is no longer accepted. Use ZERO_TRUST_WG_PASSWORD; it is persisted only in the encrypted installer vault."
+    fi
+    WG_TRAFFIC_MODE_INPUT="${ZERO_TRUST_WG_TRAFFIC_MODE:-}"
+    WG_TRAFFIC_MODE="${WG_TRAFFIC_MODE_INPUT:-services_only}"
     SSH_PORT="${ZERO_TRUST_SSH_PORT:-}"
     WG_PORT="${ZERO_TRUST_WG_PORT:-}"
     ADMIN_USER="${ZERO_TRUST_ADMIN_USER:-}"
@@ -652,34 +755,52 @@ collect_configuration_noninteractive() {
     INTERNAL_DOMAIN_SUFFIX="${ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX:-}"
     SSH_PUBKEY="${INHERITED_SSH_PUBKEY}"
     WG_HOST="${ZERO_TRUST_WG_HOST:-}"
-    WG_ENABLE_IPV6="${ZERO_TRUST_WG_ENABLE_IPV6:-}"
 
     local missing=""
     local var
-    for var in ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY; do
-        if [[ -z "${!var}" ]]; then
-            missing="${missing} ZERO_TRUST_${var}"
-        fi
-    done
+    if [[ "${REUSE_INSTALLER_STATE}" != true \
+        && ( ! -f "${VAULT_PASS_FILE}" || ! -f "${VAULT_FILE}" ) ]]; then
+        for var in ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY; do
+            if [[ -z "${!var}" ]]; then
+                missing="${missing} ZERO_TRUST_${var}"
+            fi
+        done
+    fi
     if [[ -n "${missing}" ]]; then
         error "Non-interactive mode requires the following environment variables:${missing}"
     fi
 
-    require_min_length "${ADMIN_PASSWORD}" "Admin password"
-    require_min_length "${ADGUARD_PASSWORD}" "AdGuard admin password"
-    require_max_length "${ADGUARD_PASSWORD}" "AdGuard admin password" 72
-    # wg-easy v15 requires at least 12 characters for the panel password at login.
-    require_min_length "${WG_PASSWORD}" "WireGuard panel password" 12
+    if [[ -n "${ADMIN_PASSWORD}${ADGUARD_PASSWORD}${WG_PASSWORD}" ]]; then
+        require_min_length "${ADMIN_PASSWORD}" "Admin password"
+        require_min_length "${ADGUARD_PASSWORD}" "AdGuard admin password"
+        require_max_length "${ADGUARD_PASSWORD}" "AdGuard admin password" 72
+        # wg-easy v15 requires at least 12 characters for the panel password at login.
+        require_min_length "${WG_PASSWORD}" "WireGuard panel password" 12
+    fi
 
     validate_port "SSH port" "${SSH_PORT}"
+    validate_traffic_mode
     validate_port "WireGuard port" "${WG_PORT}"
     validate_optional_admin_user "${ADMIN_USER}"
     validate_internal_domains "${INTERNAL_DOMAINS}"
     validate_internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${INTERNAL_DOMAINS}"
-    validate_ssh_pubkey "${SSH_PUBKEY}"
+    [[ -z "${SSH_PUBKEY}" ]] || validate_ssh_pubkey "${SSH_PUBKEY}"
     if [[ -n "${WG_HOST}" ]] && ! validate_hostname "${WG_HOST}"; then
         error "Invalid public hostname or IP for WireGuard clients: ${WG_HOST}"
     fi
+}
+
+installer_state_paths_present() {
+    [[ -e "${VAULT_MARKER}" || -L "${VAULT_MARKER}" \
+        || -e "${VAULT_PASS_FILE}" || -L "${VAULT_PASS_FILE}" \
+        || -e "${VAULT_FILE}" || -L "${VAULT_FILE}" ]]
+}
+
+collect_existing_configuration() {
+    if [[ -n "${ADMIN_PASSWORD}${ADGUARD_PASSWORD}${WG_PASSWORD}${SSH_PUBKEY}${INHERITED_ADMIN_PASSWORD}${INHERITED_ADGUARD_PASSWORD}${INHERITED_WG_PASSWORD}${INHERITED_SSH_PUBKEY}" ]]; then
+        error "Existing installer state is immutable on rerun; omit credential inputs and use an explicit rotation procedure."
+    fi
+    collect_configuration_noninteractive
 }
 
 resolve_wg_host() {
@@ -714,71 +835,299 @@ write_extra_var() {
     } >>"${EXTRA_VARS_FILE}"
 }
 
-prepare_extra_vars_file() {
-    ensure_install_root
-    EXTRA_VARS_FILE="$(mktemp "${INSTALL_ROOT}/extra-vars.XXXXXX.yml")"
-    chmod 0600 "${EXTRA_VARS_FILE}"
+write_installer_inputs() {
+    write_extra_var wg_traffic_mode "${WG_TRAFFIC_MODE}"
+    write_extra_var vps_services_vault_path "${VAULT_FILE}"
+}
 
-    write_extra_var ansible_connection local
-    write_extra_var vps_orchestration_enable_ufw_before_ufw_docker true
-    write_extra_var admin_password "${ADMIN_PASSWORD}"
-    write_extra_var adguard_password "${ADGUARD_PASSWORD}"
-    write_extra_var wg_easy_admin_password "${WG_PASSWORD}"
-    write_extra_var wg_public_host "${WG_HOST}"
-    write_extra_var vault_admin_ssh_pubkey "${SSH_PUBKEY}"
+read_installer_vault_inputs() {
+    timeout "${VAULT_COMMAND_TIMEOUT}" "${VAULT_ANSIBLE_BIN}" view \
+        --vault-password-file "${VAULT_PASS_FILE}" "${VAULT_FILE}" \
+        | awk -F: '
+            BEGIN {
+                size = split("ssh_port wg_port wg_container_port admin_user wg_public_host wg_internal_domain adguard_internal_domain internal_domain_suffix wg_traffic_mode", order, " ")
+                for (i = 1; i <= size; i++) wanted[order[i]] = 1
+            }
+            $1 in wanted {
+                count[$1]++
+                value=$0
+                sub(/^[^:]+:[[:space:]]*/, "", value)
+                gsub(/^[]"'\''[]|[]"'\''[]$/, "", value)
+                values[$1] = value
+            }
+            END {
+                for (i = 1; i <= size; i++) {
+                    key = order[i]
+                    if (count[key] != 1) exit 1
+                    print values[key]
+                }
+            }
+        '
+}
 
-    # The secrets were just written to the 0600 extra-vars file; drop them from
-    # the environment so child processes (ansible-pull, git) cannot see them.
-    unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
-    unset INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY
+reject_changed_installer_input() {
+    local label="$1"
+    local supplied="$2"
+    local persisted="$3"
 
-    if [[ -n "${SSH_PORT}" ]]; then
-        write_extra_var ssh_port "${SSH_PORT}"
-    fi
-    if [[ -n "${WG_PORT}" ]]; then
-        write_extra_var wg_port "${WG_PORT}"
-        write_extra_var wg_container_port "${WG_PORT}"
-    fi
-    if [[ -n "${WG_ENABLE_IPV6}" ]]; then
-        case "${WG_ENABLE_IPV6,,}" in
-            y | yes | 1 | true) write_extra_var wg_enable_ipv6 true ;;
-            *) write_extra_var wg_enable_ipv6 false ;;
-        esac
-    fi
-    if [[ -n "${ADMIN_USER}" ]]; then
-        write_extra_var admin_user "${ADMIN_USER}"
-    fi
-    if [[ -n "${WG_INTERNAL_DOMAIN}" ]]; then
-        write_extra_var wg_internal_domain "${WG_INTERNAL_DOMAIN}"
-    fi
-    if [[ -n "${ADGUARD_INTERNAL_DOMAIN}" ]]; then
-        write_extra_var adguard_internal_domain "${ADGUARD_INTERNAL_DOMAIN}"
-    fi
-    if [[ -n "${INTERNAL_DOMAIN_SUFFIX}" ]]; then
-        write_extra_var internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}"
+    if [[ -n "${supplied}" && "${supplied}" != "${persisted}" ]]; then
+        error "Existing installer state uses ${label}=${persisted}; refusing an implicit configuration change."
     fi
 }
 
+load_installer_inputs() {
+    local serialized_inputs
+    local -a persisted_inputs
+    local persisted_input
+    local persisted_ssh_port persisted_wg_port persisted_wg_container_port
+    local persisted_admin_user persisted_wg_host persisted_wg_domain
+    local persisted_adguard_domain persisted_domain_suffix persisted_traffic
+
+    serialized_inputs="$(read_installer_vault_inputs)" \
+        || error "Existing installer vault has duplicate or missing persisted inputs."
+    mapfile -t persisted_inputs <<<"${serialized_inputs}"
+    [[ "${#persisted_inputs[@]}" -eq 9 ]] \
+        || error "Existing installer vault has an invalid persisted input schema."
+    persisted_ssh_port="${persisted_inputs[0]}"
+    persisted_wg_port="${persisted_inputs[1]}"
+    persisted_wg_container_port="${persisted_inputs[2]}"
+    persisted_admin_user="${persisted_inputs[3]}"
+    persisted_wg_host="${persisted_inputs[4]}"
+    persisted_wg_domain="${persisted_inputs[5]}"
+    persisted_adguard_domain="${persisted_inputs[6]}"
+    persisted_domain_suffix="${persisted_inputs[7]}"
+    persisted_traffic="${persisted_inputs[8]}"
+
+    for persisted_input in "${persisted_inputs[@]}"; do
+        [[ -n "${persisted_input}" ]] \
+            || error "Existing installer vault has an incomplete input schema."
+    done
+    [[ "${persisted_wg_container_port}" == "${persisted_wg_port}" ]] \
+        || error "Existing installer vault has inconsistent WireGuard ports."
+
+    reject_changed_installer_input ssh_port "${SSH_PORT}" "${persisted_ssh_port}"
+    reject_changed_installer_input wg_port "${WG_PORT}" "${persisted_wg_port}"
+    reject_changed_installer_input admin_user "${ADMIN_USER}" "${persisted_admin_user}"
+    reject_changed_installer_input wg_public_host "${WG_HOST}" "${persisted_wg_host}"
+    reject_changed_installer_input wg_internal_domain "${WG_INTERNAL_DOMAIN}" "${persisted_wg_domain}"
+    reject_changed_installer_input adguard_internal_domain "${ADGUARD_INTERNAL_DOMAIN}" "${persisted_adguard_domain}"
+    reject_changed_installer_input internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${persisted_domain_suffix}"
+    reject_changed_installer_input wg_traffic_mode "${WG_TRAFFIC_MODE_INPUT}" "${persisted_traffic}"
+
+    SSH_PORT="${persisted_ssh_port}"
+    WG_PORT="${persisted_wg_port}"
+    ADMIN_USER="${persisted_admin_user}"
+    WG_HOST="${persisted_wg_host}"
+    WG_INTERNAL_DOMAIN="${persisted_wg_domain}"
+    ADGUARD_INTERNAL_DOMAIN="${persisted_adguard_domain}"
+    INTERNAL_DOMAINS="${persisted_wg_domain} ${persisted_adguard_domain}"
+    INTERNAL_DOMAIN_SUFFIX="${persisted_domain_suffix}"
+    WG_TRAFFIC_MODE="${persisted_traffic}"
+
+    validate_port "Persisted SSH port" "${SSH_PORT}"
+    validate_port "Persisted WireGuard port" "${WG_PORT}"
+    validate_optional_admin_user "${ADMIN_USER}"
+    validate_hostname "${WG_HOST}" || error "Persisted WireGuard endpoint is invalid."
+    validate_internal_domains "${INTERNAL_DOMAINS}"
+    validate_internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${INTERNAL_DOMAINS}"
+    validate_traffic_mode
+}
+
+resolve_effective_installer_inputs() {
+    local effective_input
+
+    SSH_PORT="${SSH_PORT:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" ssh_port)}"
+    WG_PORT="${WG_PORT:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" wg_port)}"
+    ADMIN_USER="${ADMIN_USER:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_hardening/defaults/main.yml" admin_user)}"
+    INTERNAL_DOMAIN_SUFFIX="${INTERNAL_DOMAIN_SUFFIX:-$(read_yaml_scalar_default "${REPO_DIR}/roles/vps_orchestration/defaults/main.yml" internal_domain_suffix)}"
+    WG_INTERNAL_DOMAIN="${WG_INTERNAL_DOMAIN:-wg.${INTERNAL_DOMAIN_SUFFIX}}"
+    ADGUARD_INTERNAL_DOMAIN="${ADGUARD_INTERNAL_DOMAIN:-adguard.${INTERNAL_DOMAIN_SUFFIX}}"
+    INTERNAL_DOMAINS="${WG_INTERNAL_DOMAIN} ${ADGUARD_INTERNAL_DOMAIN}"
+
+    for effective_input in \
+        "${SSH_PORT}" "${WG_PORT}" "${ADMIN_USER}" "${WG_HOST}" \
+        "${WG_INTERNAL_DOMAIN}" "${ADGUARD_INTERNAL_DOMAIN}" \
+        "${INTERNAL_DOMAIN_SUFFIX}" "${WG_TRAFFIC_MODE}"; do
+        [[ -n "${effective_input}" ]] \
+            || error "Could not resolve the effective installer inputs."
+    done
+    validate_port "SSH port" "${SSH_PORT}"
+    validate_port "WireGuard port" "${WG_PORT}"
+    validate_optional_admin_user "${ADMIN_USER}"
+    validate_hostname "${WG_HOST}" || error "WireGuard endpoint is invalid."
+    validate_internal_domains "${INTERNAL_DOMAINS}"
+    validate_internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}" "${INTERNAL_DOMAINS}"
+    validate_traffic_mode
+}
+
+fsync_path() {
+    "${VAULT_PYTHON_BIN}" - "$1" <<'PY'
+import os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+}
+
+vault_file_is_private() {
+    [[ -f "$1" && ! -L "$1" && "$(stat -c '%U:%G:%a:%h' "$1" 2>/dev/null)" == "${VAULT_OWNER}:${VAULT_OWNER}:600:1" ]]
+}
+
+validate_installer_vault() {
+    vault_file_is_private "${VAULT_PASS_FILE}" \
+        && vault_file_is_private "${VAULT_FILE}" \
+        && timeout "${VAULT_COMMAND_TIMEOUT}" "${VAULT_ANSIBLE_BIN}" view \
+            --vault-password-file "${VAULT_PASS_FILE}" "${VAULT_FILE}" >/dev/null
+}
+
+acquire_installer_lock() {
+    [[ -z "${VAULT_LOCK_FD}" ]] || return 0
+    install -d -o "${VAULT_OWNER}" -g "${VAULT_OWNER}" -m 0700 "${VAULT_DIR}"
+    [[ -d "${VAULT_DIR}" && ! -L "${VAULT_DIR}" \
+        && "$(stat -c '%U:%G:%a' "${VAULT_DIR}" 2>/dev/null)" == "${VAULT_OWNER}:${VAULT_OWNER}:700" ]] \
+        || error "Installer vault directory is not private and owner-controlled."
+    if [[ -e "${VAULT_LOCK_FILE}" || -L "${VAULT_LOCK_FILE}" ]]; then
+        vault_file_is_private "${VAULT_LOCK_FILE}" \
+            || error "Installer operation lock is not a private owner-controlled regular file."
+    fi
+    exec {VAULT_LOCK_FD}>"${VAULT_LOCK_FILE}"
+    flock -n "${VAULT_LOCK_FD}" || error "Another zero-trust installer operation is active."
+    chown "${VAULT_OWNER}:${VAULT_OWNER}" "${VAULT_LOCK_FILE}"
+    chmod 0600 "${VAULT_LOCK_FILE}"
+}
+
+hash_secret() {
+    local scheme="$1"
+    local secret="$2"
+    if [[ "${scheme}" == bcrypt ]]; then
+        printf '%s' "${secret}" | "${VAULT_PYTHON_BIN}" -c \
+            'import sys; from passlib.hash import bcrypt; print(bcrypt.using(ident="2y", rounds=10).hash(sys.stdin.read()))'
+    else
+        printf '%s' "${secret}" | "${VAULT_PYTHON_BIN}" -c \
+            'import sys; from passlib.hash import sha512_crypt; print(sha512_crypt.hash(sys.stdin.read()))'
+    fi
+}
+
+write_vault_plaintext() {
+    local admin_hash adguard_hash
+    admin_hash="$(hash_secret sha512_crypt "${ADMIN_PASSWORD}")"
+    adguard_hash="$(hash_secret bcrypt "${ADGUARD_PASSWORD}")"
+
+    resolve_effective_installer_inputs
+    EXTRA_VARS_FILE="${VAULT_PLAIN_FILE}"
+    write_extra_var ansible_connection local
+    write_extra_var vps_orchestration_enable_ufw_before_ufw_docker true
+    write_extra_var admin_password_hash "${admin_hash}"
+    write_extra_var vault_adguard_password_hash "${adguard_hash}"
+    write_extra_var wg_easy_bootstrap_secret "${WG_PASSWORD}"
+    write_extra_var wg_public_host "${WG_HOST}"
+    write_extra_var vault_admin_ssh_pubkey "${SSH_PUBKEY}"
+    write_installer_inputs
+    write_extra_var ssh_port "${SSH_PORT}"
+    write_extra_var wg_port "${WG_PORT}"
+    write_extra_var wg_container_port "${WG_PORT}"
+    write_extra_var admin_user "${ADMIN_USER}"
+    write_extra_var wg_internal_domain "${WG_INTERNAL_DOMAIN}"
+    write_extra_var adguard_internal_domain "${ADGUARD_INTERNAL_DOMAIN}"
+    write_extra_var internal_domain_suffix "${INTERNAL_DOMAIN_SUFFIX}"
+
+    unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
+    unset INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY
+}
+
+create_installer_vault() {
+    VAULT_MARKER_TEMP="$(mktemp "${VAULT_DIR}/.installer-vault.incomplete.XXXXXX")"
+    chmod 0600 "${VAULT_MARKER_TEMP}"
+    fsync_path "${VAULT_MARKER_TEMP}"
+    mv -f -- "${VAULT_MARKER_TEMP}" "${VAULT_MARKER}"
+    VAULT_MARKER_TEMP=""
+    fsync_path "${VAULT_DIR}"
+
+    VAULT_PASS_TEMP="$(mktemp "${VAULT_DIR}/.installer-vault.pass.XXXXXX")"
+    chmod 0600 "${VAULT_PASS_TEMP}"
+    timeout "${VAULT_COMMAND_TIMEOUT}" "${OPENSSL_BIN}" rand -hex 32 >"${VAULT_PASS_TEMP}"
+    fsync_path "${VAULT_PASS_TEMP}"
+
+    VAULT_PLAIN_FILE="$(mktemp "${VAULT_DIR}/.installer-vault.plain.XXXXXX")"
+    chmod 0600 "${VAULT_PLAIN_FILE}"
+    write_vault_plaintext
+    fsync_path "${VAULT_PLAIN_FILE}"
+
+    VAULT_FILE_TEMP="$(mktemp "${VAULT_DIR}/.installer-vault.yml.XXXXXX")"
+    chmod 0600 "${VAULT_FILE_TEMP}"
+    timeout "${VAULT_COMMAND_TIMEOUT}" "${VAULT_ANSIBLE_BIN}" encrypt \
+        --vault-password-file "${VAULT_PASS_TEMP}" --output "${VAULT_FILE_TEMP}" "${VAULT_PLAIN_FILE}"
+    chmod 0600 "${VAULT_FILE_TEMP}"
+    fsync_path "${VAULT_FILE_TEMP}"
+    timeout "${VAULT_COMMAND_TIMEOUT}" "${VAULT_ANSIBLE_BIN}" view \
+        --vault-password-file "${VAULT_PASS_TEMP}" "${VAULT_FILE_TEMP}" | cmp -s - "${VAULT_PLAIN_FILE}" \
+        || error "New installer vault failed verification."
+    rm -f -- "${VAULT_PLAIN_FILE}"
+    VAULT_PLAIN_FILE=""
+    EXTRA_VARS_FILE=""
+
+    mv -f -- "${VAULT_PASS_TEMP}" "${VAULT_PASS_FILE}"
+    VAULT_PASS_TEMP=""
+    fsync_path "${VAULT_DIR}"
+    mv -f -- "${VAULT_FILE_TEMP}" "${VAULT_FILE}"
+    VAULT_FILE_TEMP=""
+    fsync_path "${VAULT_DIR}"
+    validate_installer_vault || error "Persisted installer vault failed verification."
+}
+
+prepare_installer_vault() {
+    acquire_installer_lock
+    if [[ -e "${VAULT_MARKER}" || -L "${VAULT_MARKER}" ]]; then
+        vault_file_is_private "${VAULT_MARKER}" || error "Installer vault marker is not a private owner-controlled regular file."
+        if validate_installer_vault; then
+            rm -f -- "${VAULT_MARKER}"
+            fsync_path "${VAULT_DIR}"
+            load_installer_inputs
+            unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
+            unset INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY
+            return
+        fi
+        error "Interrupted installer vault transaction is incomplete or invalid; committed paths were preserved for manual recovery."
+    elif [[ -e "${VAULT_PASS_FILE}" || -L "${VAULT_PASS_FILE}" \
+        || -e "${VAULT_FILE}" || -L "${VAULT_FILE}" ]]; then
+        [[ ( -e "${VAULT_PASS_FILE}" || -L "${VAULT_PASS_FILE}" ) \
+            && ( -e "${VAULT_FILE}" || -L "${VAULT_FILE}" ) ]] \
+            || error "Incomplete installer vault; refusing to deploy."
+        validate_installer_vault || error "Existing installer vault is invalid; refusing to deploy."
+        load_installer_inputs
+        unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
+        unset INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY
+        return
+    fi
+    create_installer_vault
+}
+
 run_ansible_pull() {
-    prepare_extra_vars_file
+    prepare_installer_vault
+    require_traffic_egress
 
     if [[ "${RESOLVED_RELEASE_REF}" != "${RELEASE_REF}" ]]; then
         info "Running ansible-pull from ${REPO_URL} at ${RELEASE_REF} (resolved to ${RESOLVED_RELEASE_REF})..."
     else
         info "Running ansible-pull from ${REPO_URL} at ${RELEASE_REF}..."
     fi
+    rm -f -- "${VAULT_MARKER}"
+    fsync_path "${VAULT_DIR}"
     env -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS \
+        ANSIBLE_VAULT_PASSWORD_FILE="${VAULT_PASS_FILE}" \
         GIT_NO_REPLACE_OBJECTS=1 \
         GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
         GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null \
-        "${VENV_DIR}/bin/ansible-pull" \
+        timeout "${ANSIBLE_PULL_TIMEOUT}" "${ANSIBLE_PULL_BIN}" \
         -U "${REPO_URL}" \
         -C "${RESOLVED_RELEASE_REF}" \
         -d "${REPO_DIR}" \
         -i inventory/localhost.yml \
-        --extra-vars "@${EXTRA_VARS_FILE}" \
-        site.yml
-    cleanup_extra_vars_file
+        --vault-password-file "${VAULT_PASS_FILE}" \
+        --extra-vars "@${VAULT_FILE}" \
+        site.yml || error "ansible-pull failed; the encrypted installer state was retained for a safe rerun."
     restore_repository_git_config
 }
 
@@ -855,20 +1204,31 @@ main() {
     validate_release_source
     require_root
     require_supported_os
-    install_prerequisites
-    checkout_release
-    if [[ "${NONINTERACTIVE}" != "1" ]]; then
-        open_tty
+    require_supported_platform
+    require_minimum_memory
+    report_existing_swap
+    if installer_state_paths_present; then
+        REUSE_INSTALLER_STATE=true
+        info "Existing encrypted installer state detected; persisted deployment inputs will be reused."
+        collect_existing_configuration
+    else
+        if [[ "${NONINTERACTIVE}" != "1" ]]; then
+            open_tty
+        fi
+        collect_configuration
     fi
-    collect_configuration
-    resolve_wg_host
+    install_prerequisites
+    if [[ "${REUSE_INSTALLER_STATE}" != true ]]; then
+        resolve_wg_host
+    fi
+    checkout_release
     install_ansible_toolchain
     install_collections
     run_ansible_pull
     print_summary
 }
 
-# curl | bash leaves BASH_SOURCE unset; ${parameter:-$0} still invokes main.
+# Piped shell execution leaves BASH_SOURCE unset; ${parameter:-$0} still invokes main.
 # Sourcing the file keeps BASH_SOURCE different from $0, so tests can stub main.
 if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
     main "$@"

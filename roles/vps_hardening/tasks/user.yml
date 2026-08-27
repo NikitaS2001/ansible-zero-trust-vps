@@ -1,45 +1,12 @@
 ---
 - name: "VPS Hardening | User | Ensure docker group exists"
-  group:
+  ansible.builtin.group:
     name: docker
     state: present
   tags: [user]
 
-- name: "VPS Hardening | User | Generate admin password hash"
-  set_fact:
-    vps_hardening_admin_password_hash: >-
-      {{
-        admin_password | password_hash(
-          'sha512',
-          ((admin_user ~ inventory_hostname) | hash('sha256'))[:16]
-        )
-      }}
-  no_log: true
-  changed_when: false
-  when: admin_password is defined
-  tags: [user]
-
-- name: "VPS Hardening | User | Ensure a valid password hash exists (key-only remote mode)"
-  set_fact:
-    vps_hardening_admin_password_hash: >-
-      {{
-        admin_password_hash
-        if (admin_password_hash | length > 0)
-        else (
-          lookup('password', '/dev/null chars=ascii_letters,digits')
-          | password_hash(
-              'sha512',
-              ((admin_user ~ inventory_hostname) | hash('sha256'))[:16]
-            )
-        )
-      }}
-  no_log: true
-  changed_when: false
-  when: admin_password is not defined
-  tags: [user]
-
-- name: "VPS Hardening | User | Create admin user"
-  user:
+- name: "VPS Hardening | User | Create key-only admin user"
+  ansible.builtin.user:
     name: "{{ admin_user }}"
     groups: "{{ admin_group }},docker"
     # append: no makes group membership convergent: a removed privileged group
@@ -47,9 +14,11 @@
     append: no
     state: present
     shell: "{{ admin_shell }}"
-    password: "{{ vps_hardening_admin_password_hash }}"
-    password_lock: false
-    update_password: "{{ 'always' if (admin_password is defined or (admin_password_hash | length > 0)) else 'on_create' }}"
+    # Empty is intentionally omitted: SSH password authentication is disabled
+    # and the account remains locked unless the operator supplied a hash.
+    password: "{{ admin_password_hash | default(omit, true) }}"
+    password_lock: "{{ admin_password_hash | default('') | length == 0 }}"
+    update_password: "{{ 'always' if (admin_password_hash | default('') | length > 0) else 'on_create' }}"
   no_log: true
   tags: [user]
 
@@ -68,7 +37,7 @@
   tags: [user]
 
 - name: "VPS Hardening | User | Configure passwordless sudo"
-  copy:
+  ansible.builtin.copy:
     dest: "/etc/sudoers.d/{{ admin_user }}"
     content: "{{ admin_user }} ALL=(ALL) NOPASSWD: ALL\n"
     validate: 'visudo -cf %s'

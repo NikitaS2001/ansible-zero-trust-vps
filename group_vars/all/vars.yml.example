@@ -1,5 +1,6 @@
 ---
 # Network
+wg_traffic_mode: "services_only"
 ssh_port: 2222
 wg_port: 51820
 wg_container_port: 51820
@@ -9,21 +10,16 @@ wg_client_dns: "10.66.0.2"
 
 # wg-easy initial setup (Unattended Setup via INIT_* env vars, first start only)
 # wg_public_host is required for remote deployment mode; the public installer
-# auto-detects the public IP instead. Set wg_easy_admin_password to enable the
-# automated initial setup (otherwise the wg-easy setup wizard appears on first
-# login and must be completed manually).
+# auto-detects the public IP instead. All credential material comes from the
+# encrypted vault file; plaintext password variables are rejected.
+admin_password_hash: "{{ vault_admin_password_hash }}"
 wg_easy_admin_user: "admin"
-wg_easy_admin_password: ""
+wg_easy_bootstrap_secret: "{{ vault_wg_easy_bootstrap_secret }}"
 wg_public_host: ""
 wg_allowed_ips:
   - "10.8.0.0/24"
   - "10.66.0.2/32"
   - "10.66.0.3/32"
-# Set to true to allocate IPv6 addresses for clients and tunnel IPv6 traffic
-# (client configs get ::/0). Requires a host with global IPv6 connectivity;
-# the playbook refuses IPv6 mode on IPv4-only hosts.
-wg_enable_ipv6: false
-
 # Docker network
 docker_network_subnet: "10.66.0.0/24"
 adguard_container_ip: "10.66.0.2"
@@ -50,8 +46,6 @@ docker_apt_distribution: "{{ ansible_facts['distribution'] | lower }}"
 docker_apt_release: "{{ ansible_facts['distribution_release'] }}"
 docker_apt_arch_map:
   x86_64: amd64
-  aarch64: arm64
-  armv7l: armhf
 docker_apt_arch: "{{ docker_apt_arch_map[ansible_facts['architecture']] | default(ansible_facts['architecture']) }}"
 docker_apt_gpg_url: "https://download.docker.com/linux/{{ docker_apt_distribution }}/gpg"
 docker_apt_repo_url: "https://download.docker.com/linux/{{ docker_apt_distribution }}"

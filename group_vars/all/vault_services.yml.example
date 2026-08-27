@@ -1,3 +1,5 @@
 # Copy this file to group_vars/all/vault_services.yml, replace placeholders,
-# then encrypt the copied file with ansible-vault.
+# chmod it to 0600, then encrypt it with ansible-vault. Never commit plaintext.
+vault_admin_password_hash: "$6$replace-with-random-sha512-crypt-hash"
 vault_adguard_password_hash: "$2y$10$replace-with-bcrypt-hash-only"
+vault_wg_easy_bootstrap_secret: "replace-with-random-secret-at-least-12-characters"

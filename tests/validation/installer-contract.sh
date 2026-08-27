@@ -11,6 +11,37 @@ fail() {
     exit 1
 }
 
+run_toolchain_contract() {
+    local toolchain_block
+    local normalized_toolchain
+    local normalized_without_cleanup
+    local pip_command_count
+    local pip_mutation_count
+    local expected_cleanup="\"\${VENV_DIR}/bin/pip\" uninstall --quiet --yes ansible"
+    local expected_toolchain="\"\${VENV_DIR}/bin/pip\" install --quiet \"ansible-core==2.19.11\" \"passlib==1.7.4\" \"bcrypt==4.0.1\" ${expected_cleanup}"
+    toolchain_block="$(sed -n '/^install_ansible_toolchain() {/,/^}$/p' "${ROOT_DIR}/install.sh")"
+    normalized_toolchain="$(printf '%s\n' "${toolchain_block}" | sed '/^[[:space:]]*#/d' | tr '\n' ' ' | sed -E 's/\\//g; s/[[:space:]]+/ /g')"
+    normalized_without_cleanup="${normalized_toolchain/"${expected_cleanup}"/}"
+    pip_command_count="$(printf '%s\n' "${normalized_toolchain}" | grep -Eo '(^|[[:space:]])"?([^[:space:]]*/)?pip[0-9]*"?([[:space:]]|$)' | wc -l | tr -d '[:space:]')"
+    pip_mutation_count="$(printf '%s\n' "${normalized_toolchain}" | grep -Eo 'pip"?[[:space:]]+(install|uninstall)' | wc -l | tr -d '[:space:]')"
+
+    [[ "${pip_command_count}" == 2 ]] \
+        || fail 'installer toolchain must contain exactly two pip commands'
+    [[ "${pip_mutation_count}" == 2 ]] \
+        || fail 'installer toolchain must contain exactly one install and one cleanup mutation'
+    [[ "${normalized_toolchain}" == *"${expected_toolchain} }"* ]] \
+        || fail 'installer toolchain must contain only the exact install and ansible cleanup commands'
+    [[ "${toolchain_block}" != *'--upgrade pip'* ]] \
+        || fail 'installer toolchain must not upgrade pip without a pin'
+    if printf '%s\n' "${normalized_toolchain}" | grep -Eq 'pip"?[[:space:]]+install[[:space:]]+(-[^[:space:]]*U|--upgrade)[[:space:]]+pip'; then
+        fail 'installer toolchain must not upgrade pip during dependency installation'
+    fi
+    if printf '%s\n' "${normalized_without_cleanup}" | grep -Eq '(^|[[:space:]])"?ansible([<>=[:space:]]|")|(^|[[:space:]])"?[^[:space:]]+[<>]=?'; then
+        fail 'installer toolchain must not install the ansible meta-package or range pins'
+    fi
+    printf '[PASS] toolchain-contract: direct runtime dependencies are exact and deterministic\n'
+}
+
 run_child_leak_sentinel() (
     export ZERO_TRUST_NONINTERACTIVE=1
     export ZERO_TRUST_ADMIN_PASSWORD='fixture-admin-value'
@@ -55,6 +86,43 @@ run_child_leak_sentinel() (
 
     main
     printf '[PASS] child-leak-sentinel: guarded main removes inherited secrets before the first child\n'
+)
+
+run_existing_state_main() (
+    local fixture_dir
+    fixture_dir="$(command mktemp -d)"
+    trap 'rm -rf "${fixture_dir}"' EXIT
+    touch "${fixture_dir}/.installer-vault.incomplete"
+
+    # shellcheck source=../../install.sh
+    source "${ROOT_DIR}/install.sh"
+    trap 'rm -rf "${fixture_dir}"' EXIT
+    VAULT_DIR="${fixture_dir}"
+    VAULT_MARKER="${fixture_dir}/.installer-vault.incomplete"
+    VAULT_PASS_FILE="${fixture_dir}/installer-vault.pass"
+    VAULT_FILE="${fixture_dir}/installer-vault.yml"
+
+    validate_release_source() { :; }
+    require_root() { :; }
+    require_supported_os() { :; }
+    require_supported_platform() { :; }
+    require_minimum_memory() { :; }
+    report_existing_swap() { :; }
+    open_tty() { fail 'existing-state rerun opened an interactive prompt'; }
+    collect_configuration() { fail 'existing-state rerun collected fresh configuration'; }
+    collect_existing_configuration() { :; }
+    install_prerequisites() { :; }
+    resolve_wg_host() { fail 'existing-state rerun resolved a replacement endpoint'; }
+    checkout_release() { :; }
+    install_ansible_toolchain() { :; }
+    install_collections() { :; }
+    run_ansible_pull() { :; }
+    print_summary() { :; }
+
+    main </dev/null
+    [[ "${REUSE_INSTALLER_STATE}" == true ]] \
+        || fail 'existing installer state did not select immutable rerun mode'
+    printf '[PASS] existing-state rerun bypasses prompts and fresh input collection\n'
 )
 
 run_suffix_summary() (
@@ -344,7 +412,7 @@ init_source_policy_fixture() {
     SOURCE_FIXTURE_INSTALL_ROOT="${SOURCE_FIXTURE_DIR}/install-root"
     SOURCE_FIXTURE_INSTALLER="${SOURCE_FIXTURE_DIR}/install.sh"
     SOURCE_FIXTURE_KEY="${SOURCE_FIXTURE_DIR}/signing-key"
-    SOURCE_FIXTURE_TAG='v1.2.1'
+    SOURCE_FIXTURE_TAG='v1.3.0'
 
     git init --quiet "${SOURCE_FIXTURE_REPO}"
     git -C "${SOURCE_FIXTURE_REPO}" config user.name 'Release Fixture'
@@ -443,10 +511,13 @@ git -C "${REPO_DIR}" status --porcelain >/dev/null
 if git -C "${REPO_DIR}" config --get installer.local-hostile >/dev/null; then printf "visible\\n"; else printf "absent\\n"; fi >"${INSTALL_ROOT}/ansible-pull.local-config"
 EOF
         chmod +x "${VENV_DIR}/bin/ansible-pull"
-        prepare_extra_vars_file() {
-            EXTRA_VARS_FILE="${INSTALL_ROOT}/extra-vars.yml"
-            : >"${EXTRA_VARS_FILE}"
+        prepare_installer_vault() {
+            VAULT_PASS_FILE="${INSTALL_ROOT}/vault.pass"
+            VAULT_FILE="${INSTALL_ROOT}/vault.yml"
+            : >"${VAULT_PASS_FILE}"
+            : >"${VAULT_FILE}"
         }
+        fsync_path() { :; }
         run_ansible_pull
         pull_sha="$(awk "previous == \"-C\" { print; exit } { previous=\$0 }" "${INSTALL_ROOT}/ansible-pull.args")"
         pull_no_replace="$(<"${INSTALL_ROOT}/ansible-pull.git-no-replace")"
@@ -695,12 +766,13 @@ run_source_policy_rejections() (
     printf '[PASS] source-policy-rejections: all policy failures rejected with immutable state\n'
 )
 
-case "${1:-}" in
-    --case)
-        case "${2:-}" in
+    case "${1:-}" in
+        --case)
+            case "${2:-}" in
+            toolchain) run_toolchain_contract ;;
             child-leak-sentinel) run_child_leak_sentinel ;;
             piped-entry-guard) run_piped_entry_guard ;;
-            env-clean) run_env_clean ;;
+            env-clean) bash "${ROOT_DIR}/tests/validation/secret-installer-contract.sh" ;;
             signed-release) run_signed_release ;;
             rejected-release-matrix) run_rejected_release_matrix ;;
             source-policy) run_source_policy ;;
@@ -717,11 +789,12 @@ case "${1:-}" in
         esac
         ;;
     '')
-        run_env_clean
+        run_toolchain_contract
+        bash "${ROOT_DIR}/tests/validation/secret-installer-contract.sh"
         run_suffix_internal
         run_suffix_home_arpa
-        run_suffix_home_arpa
         run_child_leak_sentinel
+        run_existing_state_main
         run_piped_entry_guard
         run_signed_release
         run_rejected_release_matrix
@@ -735,5 +808,5 @@ case "${1:-}" in
         run_inherited_git_config_isolation
         printf '[PASS] installer contract aggregate\n'
         ;;
-    *) fail 'usage: installer-contract.sh [--case env-clean|signed-release|rejected-release-matrix|source-policy|source-policy-rejections|replacement-object-isolation|checkout-hook-isolation|local-git-config-isolation|injected-clone-hook-isolation|ansible-pull-git-config-isolation|inherited-git-config-isolation|suffix-internal|suffix-home-arpa|child-leak-sentinel|piped-entry-guard]' ;;
+    *) fail 'usage: installer-contract.sh [--case toolchain|env-clean|signed-release|rejected-release-matrix|source-policy|source-policy-rejections|replacement-object-isolation|checkout-hook-isolation|local-git-config-isolation|injected-clone-hook-isolation|ansible-pull-git-config-isolation|inherited-git-config-isolation|suffix-internal|suffix-home-arpa|child-leak-sentinel|piped-entry-guard]' ;;
 esac
