@@ -201,7 +201,7 @@ if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
         'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils resolvconf >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
     run_remote_stdin "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" \
-        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' WG_TRAFFIC_MODE='${TRAFFIC_MODE}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN}' bash -s" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_PORT='${WG_PORT_IN}' WG_TRAFFIC_MODE='${TRAFFIC_MODE}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN}' bash -s" \
         < "${E2E_DIR}/client-in-guest.sh"
 fi
 

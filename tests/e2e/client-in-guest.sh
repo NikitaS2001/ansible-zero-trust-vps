@@ -6,14 +6,16 @@
 # Env:
 #   WG_PASSWORD   wg-easy panel password (required)
 #   WG_USER       panel username (default admin)
-#   WG_ENDPOINT   endpoint to use in the client config (default 127.0.0.1:<wg port>)
+#   WG_ENDPOINT   endpoint to use in the client config (default: wg-easy container)
+#   WG_PORT       container WireGuard UDP port (default 51820)
 #   ROOT_CA       path to the fetched Caddy root CA (default installer path)
 #   WG_TRAFFIC_MODE  services_only or full_tunnel (default services_only)
 set -euo pipefail
 
 : "${WG_PASSWORD:?WG_PASSWORD is required}"
 WG_USER="${WG_USER:-admin}"
-WG_ENDPOINT="${WG_ENDPOINT:-127.0.0.1:51820}"
+WG_ENDPOINT="${WG_ENDPOINT:-}"
+WG_PORT="${WG_PORT:-51820}"
 ROOT_CA="${ROOT_CA:-/opt/zero-trust-vps-installer/repo/fetched_certs/localhost/root.crt}"
 WG_TRAFFIC_MODE="${WG_TRAFFIC_MODE:-services_only}"
 CLIENT_NAME="e2e-client-$(date +%s)"
@@ -28,6 +30,16 @@ command -v wg-quick >/dev/null || { echo "[FAIL] wireguard-tools are required" >
 [[ -e /dev/net/tun ]] || { echo "[FAIL] /dev/net/tun is missing" >&2; exit 1; }
 [[ "${WG_TRAFFIC_MODE}" == services_only || "${WG_TRAFFIC_MODE}" == full_tunnel ]] \
     || { echo "[FAIL] WG_TRAFFIC_MODE must be services_only or full_tunnel" >&2; exit 1; }
+if [[ -z "${WG_ENDPOINT}" ]]; then
+    endpoint_host="$(
+        docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' wg-easy
+    )"
+    [[ "${endpoint_host}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || {
+        echo "[FAIL] could not determine the wg-easy container endpoint" >&2
+        exit 1
+    }
+    WG_ENDPOINT="${endpoint_host}:${WG_PORT}"
+fi
 
 cleanup() {
     sudo wg-quick down /tmp/zt-e2e.conf >/dev/null 2>&1 || true
