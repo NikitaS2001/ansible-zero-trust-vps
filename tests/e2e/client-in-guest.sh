@@ -206,7 +206,8 @@ grep -Eq '^AllowedIPs = 0\.0\.0\.0/0, ?::/0$' /tmp/zt-e2e.conf || {
 # The API commits before the runtime WireGuard peer is guaranteed to be
 # visible. Wait for that boundary so a slow guest cannot race wg-quick.
 client_public_key="$(
-    awk -F ' *= *' '$1 == "PrivateKey" { print $2; exit }' /tmp/zt-e2e.conf | wg pubkey
+    sed -n 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*//p' \
+        /tmp/zt-e2e.conf | tr -d '\r' | wg pubkey
 )"
 peer_ready=false
 for _ in $(seq 1 30); do
