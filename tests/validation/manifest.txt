@@ -7,3 +7,4 @@ workflow-contract.sh|--self-test
 check-tooling.sh|
 qemu-source-contract.sh|
 qemu-packet-contract.sh|
+sbom-contract.sh|

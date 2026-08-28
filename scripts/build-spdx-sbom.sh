@@ -34,6 +34,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from urllib.parse import quote
 
 root, tag, sha, output = sys.argv[1:]
 
@@ -42,6 +43,27 @@ def git(*arguments: str, text: bool = True):
 
 def tagged(path: str) -> str:
     return git("show", f"{sha}:{path}")
+
+installer = tagged("install.sh")
+runtime_command = re.search(
+    r'^\s*"\$\{VENV_DIR\}/bin/pip"\s+install\s+--quiet\s+\\\n'
+    r'(?P<arguments>(?:\s*"[^"\n]+"\s*)+)$',
+    installer,
+    re.MULTILINE,
+)
+if runtime_command is None:
+    raise SystemExit("SBOM FAIL: exact installer runtime command not found")
+runtime_pins = []
+for argument in re.findall(r'"([^"\n]+)"', runtime_command.group("arguments")):
+    match = re.fullmatch(
+        r"(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)==(?P<version>[^=\s]+)",
+        argument,
+    )
+    if match is None:
+        raise SystemExit(f"SBOM FAIL: installer runtime is not pinned exactly: {argument}")
+    runtime_pins.append((match.group("name"), match.group("version")))
+if not runtime_pins:
+    raise SystemExit("SBOM FAIL: no exact installer runtime dependencies found")
 
 requirements = tagged("requirements.yml")
 raw_collections = re.findall(
@@ -106,6 +128,20 @@ source["checksums"] = [
 ]
 
 dependencies = []
+for name, version in runtime_pins:
+    normalized_name = re.sub(r"[-_.]+", "-", name).lower()
+    package = base_package(
+        "SPDXRef-Python-" + re.sub(r"[^A-Za-z0-9.-]", "-", normalized_name),
+        name,
+        version,
+        "NOASSERTION",
+    )
+    package["externalRefs"] = [{
+        "referenceCategory": "PACKAGE-MANAGER",
+        "referenceType": "purl",
+        "referenceLocator": f"pkg:pypi/{normalized_name}@{quote(version, safe='')}",
+    }]
+    dependencies.append(package)
 for name, version in collections:
     package = base_package(
         "SPDXRef-Collection-" + re.sub(r"[^A-Za-z0-9.-]", "-", name),
