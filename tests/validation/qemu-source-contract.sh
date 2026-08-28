@@ -69,5 +69,10 @@ grep -Fq -- '--extra-vars @/etc/zero-trust-vps/installer-vault.yml' \
     printf 'qemu-source-contract: direct playbook runs must load encrypted installer state\n' >&2
     exit 1
 }
+grep -Fq 'if ! sudo test -s /etc/zero-trust-vps/installer-vault.yml; then' \
+    "${ROOT_DIR}/tests/e2e/run-public-install.sh" || {
+    printf 'qemu-source-contract: public VPS reruns must omit fresh credential inputs\n' >&2
+    exit 1
+}
 
 printf 'qemu-source-contract: source filter and credential-free rerun PASS\n'

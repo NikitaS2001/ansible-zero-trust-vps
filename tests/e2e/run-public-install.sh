@@ -105,22 +105,27 @@ installer_path=\$(mktemp /tmp/zero-trust-vps-install.XXXXXX)
 trap 'rm -f "\${installer_path}"' EXIT
 curl -fsSL '${INSTALL_URL}' -o "\${installer_path}"
 chmod 0700 "\${installer_path}"
-sudo env \\
-    ZERO_TRUST_NONINTERACTIVE=1 \\
-    ZERO_TRUST_DEV_MODE='${INSTALL_DEV_MODE}' \\
-    ZERO_TRUST_REPO_URL=https://github.com/NikitaS2001/ansible-zero-trust-vps.git \\
-    ZERO_TRUST_RELEASE_REF='${INSTALL_REF}' \\
-    ZERO_TRUST_SSH_PORT='${SSH_PORT_IN}' \\
-    ZERO_TRUST_WG_PORT='${WG_PORT_IN}' \\
-    ZERO_TRUST_ADMIN_USER='${ADMIN_USER}' \\
-    ZERO_TRUST_ADMIN_PASSWORD='${ADMIN_PASS}' \\
-    ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}' \\
-    ZERO_TRUST_WG_PASSWORD='${WG_PASS}' \\
-    ZERO_TRUST_WG_TRAFFIC_MODE='${TRAFFIC_MODE}' \\
-    ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX='${INTERNAL_DOMAIN_SUFFIX}' \\
-    ZERO_TRUST_INTERNAL_DOMAINS='${INTERNAL_DOMAINS}' \\
-    ZERO_TRUST_SSH_PUBKEY='${ADMIN_PUBKEY}' \\
-    bash "\${installer_path}"
+installer_env=(
+    ZERO_TRUST_NONINTERACTIVE=1
+    ZERO_TRUST_DEV_MODE='${INSTALL_DEV_MODE}'
+    ZERO_TRUST_REPO_URL=https://github.com/NikitaS2001/ansible-zero-trust-vps.git
+    ZERO_TRUST_RELEASE_REF='${INSTALL_REF}'
+)
+if ! sudo test -s /etc/zero-trust-vps/installer-vault.yml; then
+    installer_env+=(
+        ZERO_TRUST_SSH_PORT='${SSH_PORT_IN}'
+        ZERO_TRUST_WG_PORT='${WG_PORT_IN}'
+        ZERO_TRUST_ADMIN_USER='${ADMIN_USER}'
+        ZERO_TRUST_ADMIN_PASSWORD='${ADMIN_PASS}'
+        ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}'
+        ZERO_TRUST_WG_PASSWORD='${WG_PASS}'
+        ZERO_TRUST_WG_TRAFFIC_MODE='${TRAFFIC_MODE}'
+        ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX='${INTERNAL_DOMAIN_SUFFIX}'
+        ZERO_TRUST_INTERNAL_DOMAINS='${INTERNAL_DOMAINS}'
+        ZERO_TRUST_SSH_PUBKEY='${ADMIN_PUBKEY}'
+    )
+fi
+sudo env "\${installer_env[@]}" bash "\${installer_path}"
 INNER_EOF
 )
 run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
