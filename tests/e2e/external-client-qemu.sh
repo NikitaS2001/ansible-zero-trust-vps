@@ -68,6 +68,7 @@ FULL_TUNNEL="${FULL_TUNNEL:-1}"
 KEEP_PEER="${KEEP_PEER:-0}"
 F3_LITERAL_DNS="${F3_LITERAL_DNS:-0}"
 CLIENT_IP="10.8.0.5"
+CLIENT_IPV6="fd42:42:42::5"
 
 [[ -f "${VPS_SSH_KEY}" ]] || fail "VPS_SSH_KEY must name a controller private key"
 [[ -f "${VPS_KNOWN_HOSTS}" ]] || fail "VPS_KNOWN_HOSTS is required"
@@ -266,10 +267,11 @@ with sqlite3.connect(db_path) as db:
         pre_shared_key, expires_at, allowed_ips, server_allowed_ips,
         persistent_keepalive, mtu, dns, server_endpoint, enabled
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (1, "wg0", "zt-f3-restore", "10.8.0.5", "", "", "", "", "",
+        (1, "wg0", "zt-f3-restore", "10.8.0.5", "fd42:42:42::5", "", "", "", "",
          private_key, public_key, preshared_key, None,
          json.dumps([item.strip() for item in allowed.split(",")]),
-         json.dumps(["10.8.0.5/32"]), 25, 1420, json.dumps(["10.66.0.2"]), None, 1),
+         json.dumps(["10.8.0.5/32", "fd42:42:42::5/128"]), 25, 1420,
+         json.dumps(["10.66.0.2"]), None, 1),
     )
 PY
 sudo rm -f -- /var/tmp/zt-f3-peer-registration
@@ -289,7 +291,7 @@ grep -q 'BEGIN CERTIFICATE' "${ROOT_CA}" || fail "root CA could not be fetched"
 cat > "${TMP_DIR}/client.conf" <<EOF
 [Interface]
 PrivateKey = ${CLIENT_PRIV}
-Address = ${CLIENT_IP}/32
+Address = ${CLIENT_IP}/32, ${CLIENT_IPV6}/128
 DNS = 10.66.0.2
 
 [Peer]
@@ -327,7 +329,7 @@ run_remote_stdin "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
 # --- in-VM verification -----------------------------------------------------------
 echo "[E2E] installing wireguard-tools and bringing the tunnel up"
 run_remote_stdin "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
-    "sudo bash -s" <<'RREMOTE'
+    "sudo F3_LITERAL_DNS='${F3_LITERAL_DNS}' bash -s" <<'RREMOTE'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update -qq >/dev/null
@@ -336,10 +338,14 @@ sudo apt-get install -y -qq curl wireguard-tools dnsutils openssl >/dev/null 2>&
 sudo wg-quick up /tmp/zt-ext.conf
 sleep 4
 
-# F3 addresses Caddy through the WireGuard server IP. The translation remains
-# inside the disposable client, so the request still traverses the live tunnel.
-sudo iptables -t nat -A OUTPUT -d 10.8.0.1/32 -p tcp --dport 443 \
-    -j DNAT --to-destination 10.66.0.3
+caddy_target=10.66.0.3
+if [[ "${F3_LITERAL_DNS}" == 1 ]]; then
+    # The F3 fixture addresses Caddy through the WireGuard server IP. Keep its
+    # translation inside the disposable client so traffic traverses the tunnel.
+    caddy_target=10.8.0.1
+    sudo iptables -t nat -A OUTPUT -d "${caddy_target}/32" -p tcp --dport 443 \
+        -j DNAT --to-destination 10.66.0.3
+fi
 
 if ! ping -c 2 -W 4 10.66.0.2 >/dev/null 2>&1; then
     echo "[FAIL] AdGuard on the VPS (10.66.0.2) is not reachable over the real internet tunnel" >&2
@@ -351,9 +357,10 @@ echo "--- DNS via the VPS AdGuard (10.66.0.2) ---"
 for d in "${WG_INTERNAL_DOMAIN:-wg.internal}" "${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}"; do
     echo "  ${d} -> $(dig +short @10.66.0.2 "${d}" | tr '\n' ' ')"
 done
-[[ "$(dig +short @10.66.0.2 "${WG_INTERNAL_DOMAIN:-wg.internal}" A)" == 10.8.0.1 ]] || { echo "[FAIL] F3 DNS address is wrong" >&2; exit 1; }
+[[ "$(dig +short @10.66.0.2 "${WG_INTERNAL_DOMAIN:-wg.internal}" A)" == "${caddy_target}" ]] \
+    || { echo "[FAIL] Caddy DNS address is wrong" >&2; exit 1; }
 
-if ! curl -fsS --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:10.8.0.1" --cacert /tmp/root.crt \
+if ! curl -fsS --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:${caddy_target}" --cacert /tmp/root.crt \
     "https://${WG_INTERNAL_DOMAIN:-wg.internal}/" -o /dev/null; then
     echo "[FAIL] https://${WG_INTERNAL_DOMAIN:-wg.internal} not reachable over the real internet tunnel" >&2
     exit 1
@@ -363,7 +370,7 @@ echo "[PASS] https://${WG_INTERNAL_DOMAIN:-wg.internal} reachable (trusted VPS p
 for policy_path in /cnf /cnf/ /cnf/probe; do
     headers="$(mktemp)"
     status="$(curl -ksS -D "${headers}" \
-        --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:10.8.0.1" \
+        --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:${caddy_target}" \
         "https://${WG_INTERNAL_DOMAIN:-wg.internal}${policy_path}" \
         -o /dev/null -w '%{http_code}')"
     [[ "${status}" == 404 ]] || { echo "[FAIL] ${policy_path} returned ${status}" >&2; exit 1; }
@@ -379,7 +386,7 @@ done
 echo "[PASS] CVE route policy rejected all protected paths"
 
 session_status="$(curl -ksS -o /dev/null -w '%{http_code}' \
-    --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:10.8.0.1" \
+    --resolve "${WG_INTERNAL_DOMAIN:-wg.internal}:443:${caddy_target}" \
     "https://${WG_INTERNAL_DOMAIN:-wg.internal}/api/session")"
 [[ "${session_status}" == 401 ]] || { echo "[FAIL] unauthenticated session returned ${session_status}" >&2; exit 1; }
 echo "[PASS] unauthenticated session rejected"
