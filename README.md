@@ -49,6 +49,18 @@ removes, enables, disables, or tunes swap or zram.
 > new key-authenticated login before disconnecting. Keep provider console or
 > rescue access available.
 
+## Quick start
+
+Run the latest release installer from an interactive root-capable SSH session:
+
+```bash
+curl -fsSL https://github.com/NikitaS2001/ansible-zero-trust-vps/releases/latest/download/install.sh | sudo bash
+```
+
+The installer verifies the signed release tag before running Ansible. To also
+verify the downloaded installer artifact and its GitHub attestation before
+execution, use the longer path below.
+
 ## Verified quick start
 
 Install [GitHub CLI](https://cli.github.com/) on the VPS and authenticate it so
