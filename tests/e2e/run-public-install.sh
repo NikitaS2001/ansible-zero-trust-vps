@@ -86,7 +86,7 @@ run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
 require_wrong_host_key_rejected "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}"
 require_wrong_scp_host_key_rejected "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}"
 SWAP_BEFORE="$(run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
-    "${KNOWN_HOSTS}" "awk 'NR > 1 { print \\$1, \\$2, \\$3, \\$5 }' /proc/swaps")"
+    "${KNOWN_HOSTS}" "awk 'NR > 1 { print \$1, \$2, \$3, \$5 }' /proc/swaps")"
 
 # The harness downloads the installer before privileged execution; minimal
 # Debian images ship neither curl nor sudo by default.
@@ -165,7 +165,7 @@ VAULT_PAIR_AFTER="$(run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PO
 [[ "${VAULT_PAIR_BEFORE}" == "${VAULT_PAIR_AFTER}" ]] || fail "credential-free rerun changed the encrypted installer state"
 pass "credential-free installer rerun preserved encrypted secrets"
 SWAP_AFTER="$(run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
-    "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" "awk 'NR > 1 { print \\$1, \\$2, \\$3, \\$5 }' /proc/swaps")"
+    "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" "awk 'NR > 1 { print \$1, \$2, \$3, \$5 }' /proc/swaps")"
 [[ "${SWAP_BEFORE}" == "${SWAP_AFTER}" ]] || fail "installer changed provider swap configuration"
 pass "provider swap configuration unchanged"
 run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
