@@ -54,5 +54,10 @@ existing_env="$("${ROOT_DIR}/tests/e2e/qemu-install.sh" --self-test-installer-en
     printf 'qemu-source-contract: retry paths are not explicitly existing-state reruns\n' >&2
     exit 1
 }
+grep -Fq "'sudo cat /opt/zero-trust-vps/.wg-traffic-mode'" \
+    "${ROOT_DIR}/tests/e2e/common.sh" || {
+    printf 'qemu-source-contract: traffic mode must be read with privilege\n' >&2
+    exit 1
+}
 
 printf 'qemu-source-contract: source filter and credential-free rerun PASS\n'

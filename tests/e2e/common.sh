@@ -316,11 +316,14 @@ verify_deployment() {
 # verify_traffic_mode target port key expected_mode
 verify_traffic_mode() {
     local target="$1" port="$2" key="$3" expected_mode="$4"
+    local actual_mode
 
     [[ "${expected_mode}" == services_only || "${expected_mode}" == full_tunnel ]] \
         || fail "invalid expected traffic mode: ${expected_mode}"
-    run_remote "${target}" "${port}" "${key}" \
-        "sudo test \"\$(cat /opt/zero-trust-vps/.wg-traffic-mode)\" = '${expected_mode}'" \
+    actual_mode="$(run_remote "${target}" "${port}" "${key}" \
+        'sudo cat /opt/zero-trust-vps/.wg-traffic-mode')" \
+        || fail "could not read deployed traffic mode"
+    [[ "${actual_mode}" == "${expected_mode}" ]] \
         || fail "deployed traffic mode does not match ${expected_mode}"
 
     if [[ "${expected_mode}" == services_only ]]; then
