@@ -280,12 +280,13 @@ run_compose_deployment() {
     local adguard_domain="${6:-${ADGUARD_INTERNAL_DOMAIN:-adguard.internal}}"
     local docker_path="${7:-${E2E_DOCKER_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}}"
     run_remote "${target}" "${port}" "${key}" \
-        "cd /opt/zero-trust-vps-installer/repo && sudo env PATH='${docker_path}' \
-        /opt/zero-trust-vps-installer/venv/bin/ansible-playbook \
+        "sudo env PATH='${docker_path}' sh -c 'cd /opt/zero-trust-vps-installer/repo && \
+        exec /opt/zero-trust-vps-installer/venv/bin/ansible-playbook \
         -i inventory/localhost.yml site.yml --tags compose \
-        -e internal_domain_suffix='${suffix}' \
-        -e wg_internal_domain='${wg_domain}' \
-        -e adguard_internal_domain='${adguard_domain}'"
+        -e internal_domain_suffix=\"\$1\" \
+        -e wg_internal_domain=\"\$2\" \
+        -e adguard_internal_domain=\"\$3\"' \
+        sh '${suffix}' '${wg_domain}' '${adguard_domain}'"
 }
 
 install_reload_audit() {

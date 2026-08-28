@@ -203,6 +203,25 @@ grep -Eq '^AllowedIPs = 0\.0\.0\.0/0, ?::/0$' /tmp/zt-e2e.conf || {
     exit 1
 }
 
+# The API commits before the runtime WireGuard peer is guaranteed to be
+# visible. Wait for that boundary so a slow guest cannot race wg-quick.
+client_public_key="$(
+    awk -F ' *= *' '$1 == "PrivateKey" { print $2; exit }' /tmp/zt-e2e.conf | wg pubkey
+)"
+peer_ready=false
+for _ in $(seq 1 30); do
+    if sudo docker exec wg-easy wg show wg0 peers | grep -Fqx "${client_public_key}"; then
+        peer_ready=true
+        break
+    fi
+    sleep 1
+done
+unset client_public_key
+[[ "${peer_ready}" == true ]] || {
+    echo "[FAIL] created WireGuard client did not reach the server runtime" >&2
+    exit 1
+}
+
 curl -4 --noproxy '*' --connect-timeout 8 --max-time 15 \
     -fsSk 'https://1.1.1.1/cdn-cgi/trace' -o /dev/null || {
     echo "[FAIL] IPv4 direct-egress control failed before WireGuard" >&2
@@ -224,7 +243,25 @@ fi
 
 # 3. bring the tunnel up
 sudo wg-quick up /tmp/zt-e2e.conf
-sleep 3
+
+# Force packets through the client interface and require a real handshake
+# before testing services that are also locally routable from this guest.
+handshake_ready=false
+for _ in $(seq 1 15); do
+    ping -I zt-e2e -c 1 -W 1 10.66.0.2 >/dev/null 2>&1 || true
+    latest_handshake="$(wg show zt-e2e latest-handshakes | awk '{print $NF}' | sort -rn | head -1)"
+    handshake_now="$(date +%s)"
+    if [[ "${latest_handshake}" =~ ^[1-9][0-9]*$ ]] \
+        && ((latest_handshake <= handshake_now && handshake_now - latest_handshake < 180)); then
+        handshake_ready=true
+        break
+    fi
+    sleep 2
+done
+[[ "${handshake_ready}" == true ]] || {
+    echo "[FAIL] WireGuard client could not establish a handshake" >&2
+    exit 1
+}
 
 # 4. verify: AdGuard DNS, then internal HTTPS with the trusted root CA
 if ! ping -c 2 -W 3 10.66.0.2 >/dev/null 2>&1; then

@@ -59,5 +59,10 @@ grep -Fq "'sudo cat /opt/zero-trust-vps/.wg-traffic-mode'" \
     printf 'qemu-source-contract: traffic mode must be read with privilege\n' >&2
     exit 1
 }
+grep -Fq "sh -c 'cd /opt/zero-trust-vps-installer/repo" \
+    "${ROOT_DIR}/tests/e2e/qemu-install.sh" || {
+    printf 'qemu-source-contract: root-only installer checkout must be entered with privilege\n' >&2
+    exit 1
+}
 
 printf 'qemu-source-contract: source filter and credential-free rerun PASS\n'
