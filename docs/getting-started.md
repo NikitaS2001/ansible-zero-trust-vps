@@ -5,9 +5,10 @@ one fresh VPS. Remote Ansible is intended for an existing controller workflow.
 
 ## Before installation
 
-Use a fresh Debian 12 or Ubuntu 24.04 amd64 VPS with at least 1 GiB of physical
-RAM. Confirm `/dev/net/tun`, WireGuard, iptables/NAT, outbound network access,
-and a recovery console. Existing swap is diagnostic-only and is never changed.
+Use a fresh Debian 12 or Ubuntu 24.04 amd64 VPS on a 1 GB or larger plan, with
+at least 900 MiB of RAM visible to the OS. Confirm `/dev/net/tun`, WireGuard,
+iptables/NAT, outbound network access, and a recovery console. Existing swap is
+diagnostic-only and is never changed.
 
 > [!WARNING]
 > Open the planned SSH and WireGuard ports in the provider firewall before

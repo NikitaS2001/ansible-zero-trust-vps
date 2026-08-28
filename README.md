@@ -33,7 +33,7 @@ tool, or high-availability platform.
 ## Requirements
 
 - A fresh Debian 12 or Ubuntu 24.04 VPS on amd64.
-- At least 1 GiB of physical RAM.
+- A 1 GB VPS plan with at least 900 MiB of RAM visible to the OS.
 - Root access for the first installation and an interactive SSH terminal.
 - `/dev/net/tun`, WireGuard, Docker-compatible iptables/NAT, and outbound
   access to the required package and image registries.

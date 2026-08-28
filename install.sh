@@ -16,6 +16,7 @@ readonly OFFICIAL_SIGNER_FINGERPRINT="SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIA
 readonly INSTALL_ROOT="/opt/zero-trust-vps-installer"
 readonly REPO_DIR="${INSTALL_ROOT}/repo"
 readonly VENV_DIR="${INSTALL_ROOT}/venv"
+readonly MIN_AVAILABLE_MEMORY_MIB=900
 
 VAULT_DIR="/etc/zero-trust-vps"
 VAULT_PASS_FILE="${VAULT_DIR}/installer-vault.pass"
@@ -183,7 +184,8 @@ Non-interactive mode for automated testing:
 On rerun, the encrypted installer state is authoritative. Omit credential
 inputs; any supplied non-secret input must match its persisted value.
 
-This installer supports amd64 hosts with at least 1024 MiB of physical RAM.
+This installer supports amd64 hosts with at least 900 MiB of RAM visible to
+the OS, which normally corresponds to a 1 GB VPS plan.
 Existing swap is reported for diagnostics and is never changed.
 
 The public quickstart should use a tagged release, never main.
@@ -242,15 +244,15 @@ require_supported_platform() {
         || error "Unsupported platform architecture '${arch}'. This installer supports amd64 only."
 }
 
-physical_memory_mib() {
+available_memory_mib() {
     awk '/^MemTotal:/ { print int($2 / 1024); exit }' /proc/meminfo
 }
 
 require_minimum_memory() {
     local memory_mib
-    memory_mib="$(physical_memory_mib)"
-    [[ "${memory_mib}" =~ ^[0-9]+$ && "${memory_mib}" -ge 1024 ]] \
-        || error "At least 1024 MiB of physical RAM is required. Detected ${memory_mib:-unknown} MiB."
+    memory_mib="$(available_memory_mib)"
+    [[ "${memory_mib}" =~ ^[0-9]+$ && "${memory_mib}" -ge "${MIN_AVAILABLE_MEMORY_MIB}" ]] \
+        || error "At least ${MIN_AVAILABLE_MEMORY_MIB} MiB of RAM visible to the OS is required (normally a 1 GB VPS plan). Detected ${memory_mib:-unknown} MiB."
 }
 
 report_existing_swap() {

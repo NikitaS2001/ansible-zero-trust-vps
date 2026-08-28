@@ -239,10 +239,10 @@ printf 'Filename\tType\tSize\tUsed\tPriority\n/dev/provider-swap file 1048576 0 
 swap_before="$(sha256sum "${swap_fixture}")"
 ( report_existing_swap() { awk 'NR > 1 { print }' "${swap_fixture}" >/dev/null; }; report_existing_swap )
 [[ "${swap_before}" == "$(sha256sum "${swap_fixture}")" ]] || fail 'swap reporting changed provider swap'
-if (physical_memory_mib() { printf '1023\n'; }; require_minimum_memory) >/dev/null 2>&1; then
-    fail 'host below 1024 MiB was accepted'
+if (available_memory_mib() { printf '899\n'; }; require_minimum_memory) >/dev/null 2>&1; then
+    fail 'host below 900 MiB was accepted'
 fi
-(physical_memory_mib() { printf '1024\n'; }; require_minimum_memory)
+(available_memory_mib() { printf '900\n'; }; require_minimum_memory)
 if (platform_arch() { printf 'aarch64\n'; }; require_supported_platform) >/dev/null 2>&1; then
     fail 'non-amd64 host was accepted'
 fi
@@ -282,7 +282,7 @@ if (
     require_root() { :; }
     require_supported_os() { :; }
     platform_arch() { printf 'x86_64\n'; }
-    physical_memory_mib() { printf '1023\n'; }
+    available_memory_mib() { printf '899\n'; }
     install_prerequisites() { printf 'mutation\n' >>"${mutation_trace}"; }
     main
 ) >/dev/null 2>&1; then
@@ -320,4 +320,4 @@ if grep -Eq 'ZERO_TRUST_(ADMIN_PASSWORD|ADGUARD_PASSWORD|WG_PASSWORD|SSH_PUBKEY)
     fail 'public E2E rerun still supplies credential inputs'
 fi
 
-printf '[PASS] installer state: atomic vault, immutable-input rerun, random hashes, legacy rejection, amd64/1024MiB, swap unchanged\n'
+printf '[PASS] installer state: atomic vault, immutable-input rerun, random hashes, legacy rejection, amd64/900MiB, swap unchanged\n'

@@ -37,7 +37,8 @@ root login, validates SSH before cutover, applies UFW default-deny rules, and
 installs Fail2Ban. The previous SSH path is retained until the new path is
 proven, with rollback on failure.
 
-The roles require 1 GiB of physical RAM. Existing swap is observed only for
+The roles require at least 900 MiB of RAM visible to the OS, normally a 1 GB
+VPS plan after hypervisor reservations. Existing swap is observed only for
 diagnostics and is never modified. Package upgrades are opt-in.
 
 ## Secrets

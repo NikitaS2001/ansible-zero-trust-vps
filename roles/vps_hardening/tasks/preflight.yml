@@ -26,13 +26,14 @@
     quiet: true
   tags: [always, preflight]
 
-- name: "VPS Hardening | Preflight | Require at least 1024 MiB of physical RAM"
+- name: "VPS Hardening | Preflight | Require at least 900 MiB of available RAM"
   ansible.builtin.assert:
     that:
-      - ansible_facts.memtotal_mb | default(ansible_memtotal_mb | default(0)) | int >= 1024
+      - ansible_facts.memtotal_mb | default(ansible_memtotal_mb | default(0)) | int >= 900
     fail_msg: >-
-      This role requires at least 1024 MiB of physical RAM. Increase the VPS memory allocation before
-      deployment; the role does not create or modify swap or zram.
+      This role requires at least 900 MiB of RAM visible to the OS, which normally corresponds to a
+      1 GB VPS plan. Increase the VPS memory allocation before deployment; the role does not create
+      or modify swap or zram.
     quiet: true
   tags: [always, preflight]
 

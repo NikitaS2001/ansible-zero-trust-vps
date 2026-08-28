@@ -40,7 +40,8 @@ role tasks.
 
 ## Preconditions and effects
 
-- Target: Debian 12 or Ubuntu 24.04 on amd64 with at least 1 GiB physical RAM.
+- Target: Debian 12 or Ubuntu 24.04 on amd64, on a 1 GB or larger VPS plan
+  with at least 900 MiB of RAM visible to the OS.
 - The public installer reports existing swap for diagnostics; this role never
   changes swap or zram.
 - `sudo` is installed before the managed user is created.

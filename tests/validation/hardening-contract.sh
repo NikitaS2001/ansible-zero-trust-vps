@@ -201,14 +201,14 @@ run_rejection_fixture() {
 }
 
 validate_memory_preflight() {
-    run_rejection_fixture memory-preflight-packages-tag 1023 packages '' Debian 12 12 x86_64
-    grep -Fq 'requires at least 1024 MiB of physical RAM' \
+    run_rejection_fixture memory-preflight-packages-tag 899 packages '' Debian 12 12 x86_64
+    grep -Fq 'requires at least 900 MiB of RAM visible to the OS' \
         "${RUNTIME_LOG_DIR}/memory-preflight-packages-tag.log" \
         || fail 'packages-tag fixture omitted the expected memory diagnostic'
 }
 
 validate_plaintext_rejection() {
-    run_rejection_fixture plaintext-password-preflight 1024 preflight legacy-test-password Debian 12 12 x86_64
+    run_rejection_fixture plaintext-password-preflight 900 preflight legacy-test-password Debian 12 12 x86_64
     local artifact_path="${RUNTIME_LOG_DIR}/plaintext-password-preflight.log"
     grep -Fq 'admin_password is no longer accepted' "${artifact_path}" \
         || fail 'plaintext rejection fixture omitted the expected diagnostic'
@@ -243,7 +243,7 @@ main() {
     validate_platform_policy
     require_before "${ROLE_DIR}/tasks/main.yml" 'Include preflight checks' 'Include package setup'
     require_before "${ROLE_DIR}/tasks/main.yml" 'Include package setup' 'Include user setup'
-    require_before "${ROLE_DIR}/tasks/preflight.yml" 'Require at least 1024 MiB of physical RAM' 'Check TUN device'
+    require_before "${ROLE_DIR}/tasks/preflight.yml" 'Require at least 900 MiB of available RAM' 'Check TUN device'
     grep -Fq -- '- sudo' "${ROLE_DIR}/tasks/packages.yml" || fail 'sudo is not installed before user mutation'
     grep -Fq -- "validate: 'visudo -cf %s'" "${ROLE_DIR}/tasks/user.yml" \
         || fail 'sudoers drop-in is not validated with visudo'

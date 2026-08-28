@@ -96,5 +96,6 @@ apply the configured apt upgrade mode. Image and upstream installer references
 are digest/checksum pinned in role defaults; update them through a reviewed code
 change rather than local overrides.
 
-Neither role manages swap or zram. A host below 1 GiB of physical RAM is
-rejected even if it has swap.
+Neither role manages swap or zram. A host with less than 900 MiB of RAM visible
+to the OS is rejected even if it has swap; this threshold normally corresponds
+to a 1 GB VPS plan after hypervisor reservations.

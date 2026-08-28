@@ -39,8 +39,8 @@ arch="$(run 'uname -m')"
 echo "[ok] architecture: amd64"
 
 memory_mib="$(run 'awk '\''/^MemTotal:/ { print int($2 / 1024); exit }'\'' /proc/meminfo')"
-[[ "${memory_mib}" =~ ^[0-9]+$ && "${memory_mib}" -ge 1024 ]] \
-    || fail "at least 1024 MiB physical RAM is required: ${memory_mib:-unknown} MiB"
+[[ "${memory_mib}" =~ ^[0-9]+$ && "${memory_mib}" -ge 900 ]] \
+    || fail "at least 900 MiB of RAM visible to the OS is required: ${memory_mib:-unknown} MiB"
 echo "[ok] physical memory: ${memory_mib} MiB"
 
 run 'awk '\''BEGIN { print "[info] existing swap (diagnostic only; installation must not change it):" } { print }'\'' /proc/swaps'
