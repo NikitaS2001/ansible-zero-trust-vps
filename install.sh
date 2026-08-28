@@ -1089,6 +1089,7 @@ prepare_installer_vault() {
             load_installer_inputs
             unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
             unset INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY
+            require_traffic_egress
             return
         fi
         error "Interrupted installer vault transaction is incomplete or invalid; committed paths were preserved for manual recovery."
@@ -1101,14 +1102,15 @@ prepare_installer_vault() {
         load_installer_inputs
         unset ADMIN_PASSWORD ADGUARD_PASSWORD WG_PASSWORD SSH_PUBKEY
         unset INHERITED_ADMIN_PASSWORD INHERITED_ADGUARD_PASSWORD INHERITED_WG_PASSWORD INHERITED_SSH_PUBKEY
+        require_traffic_egress
         return
     fi
+    require_traffic_egress
     create_installer_vault
 }
 
 run_ansible_pull() {
     prepare_installer_vault
-    require_traffic_egress
 
     if [[ "${RESOLVED_RELEASE_REF}" != "${RELEASE_REF}" ]]; then
         info "Running ansible-pull from ${REPO_URL} at ${RELEASE_REF} (resolved to ${RESOLVED_RELEASE_REF})..."

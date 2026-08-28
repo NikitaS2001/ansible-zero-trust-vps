@@ -143,6 +143,20 @@ adguard_two="$(sed -n 's/^vault_adguard_password_hash: //p' <<<"${plain_two}")"
 [[ "${admin_one}" != "${admin_two}" && "${adguard_one}" != "${adguard_two}" ]] \
     || fail 'fresh installs reused deterministic hashes'
 
+state_egress="${TMP}/egress"
+configure_fixture "${state_egress}"
+set_inputs
+WG_TRAFFIC_MODE='full_tunnel'
+WG_TRAFFIC_MODE_INPUT='full_tunnel'
+if (curl() { [[ " $* " != *' -6 '* ]]; }; prepare_installer_vault) >/dev/null 2>&1; then
+    fail 'fresh full-tunnel state was committed without IPv6 egress'
+fi
+[[ ! -e "${VAULT_PASS_FILE}" && ! -e "${VAULT_FILE}" && ! -e "${VAULT_MARKER}" ]] \
+    || fail 'failed full-tunnel preflight persisted immutable installer state'
+printf '[PASS] full-tunnel preflight rejected before immutable state commit\n'
+
+configure_fixture "${state_two}"
+
 if (WG_TRAFFIC_MODE_INPUT=full_tunnel; prepare_installer_vault) >/dev/null 2>&1; then
     fail 'implicit traffic-mode transition was accepted on rerun'
 fi

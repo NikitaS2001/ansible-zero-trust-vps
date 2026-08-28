@@ -74,6 +74,17 @@ grep -Fq 'if ! sudo test -s /etc/zero-trust-vps/installer-vault.yml; then' \
     printf 'qemu-source-contract: public VPS reruns must omit fresh credential inputs\n' >&2
     exit 1
 }
+installer_release_ref="$(sed -n 's/^readonly OFFICIAL_RELEASE_REF="\([^"]*\)"$/\1/p' \
+    "${ROOT_DIR}/install.sh")"
+# Fixture intentionally matches the literal command substitution in the E2E source.
+# shellcheck disable=SC2016
+grep -Fq 'INSTALLER_RELEASE_REF="$(sed -n' "${ROOT_DIR}/tests/e2e/qemu-install.sh" \
+    || { printf 'qemu-source-contract: production release assertion is not installer-derived\n' >&2; exit 1; }
+# shellcheck disable=SC2016
+grep -Fq 'Verified signed release tag ${INSTALLER_RELEASE_REF' \
+    "${ROOT_DIR}/tests/e2e/qemu-install.sh" \
+    || { printf 'qemu-source-contract: production provenance does not use installer release ref %s\n' \
+        "${installer_release_ref}" >&2; exit 1; }
 grep -Fq '"fd42:42:42::5/128"' \
     "${ROOT_DIR}/tests/e2e/external-client-qemu.sh" || {
     printf 'qemu-source-contract: external peer fixture must provide valid dual-stack addresses\n' >&2

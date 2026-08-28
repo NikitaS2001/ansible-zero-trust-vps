@@ -34,6 +34,11 @@ ADGUARD_INTERNAL_DOMAIN="${ADGUARD_INTERNAL_DOMAIN:-adguard.${INTERNAL_DOMAIN_SU
 # shellcheck source=tests/e2e/common.sh
 source "${E2E_DIR}/common.sh"
 
+INSTALLER_RELEASE_REF="$(sed -n 's/^readonly OFFICIAL_RELEASE_REF="\([^"]*\)"$/\1/p' "${ROOT_DIR}/install.sh")"
+[[ "${INSTALLER_RELEASE_REF}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || fail "could not derive the production release ref from install.sh"
+readonly INSTALLER_RELEASE_REF
+
 list_existing_source_paths() {
     local source_root="$1" path
     while IFS= read -r -d '' path; do
@@ -194,7 +199,7 @@ run_repository_installer() {
         grep -Fq "NON-PRODUCTION DEVELOPMENT MODE" "${installer_log}" || \
             fail "development installer warning was not emitted"
     else
-        grep -Eq "Verified signed release tag v1\\.2\\.1 for nikitasmadych2001@gmail\\.com at [0-9a-f]{40}\\." \
+        grep -Eq "Verified signed release tag ${INSTALLER_RELEASE_REF//./\\.} for nikitasmadych2001@gmail\\.com at [0-9a-f]{40}\\." \
             "${installer_log}" || fail "production installer provenance was not emitted"
         ! grep -Fq "NON-PRODUCTION DEVELOPMENT MODE" "${installer_log}" || \
             fail "production installer emitted the development warning"
