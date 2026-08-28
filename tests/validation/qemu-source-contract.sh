@@ -64,5 +64,10 @@ grep -Fq "sh -c 'cd /opt/zero-trust-vps-installer/repo" \
     printf 'qemu-source-contract: root-only installer checkout must be entered with privilege\n' >&2
     exit 1
 }
+grep -Fq -- '--extra-vars @/etc/zero-trust-vps/installer-vault.yml' \
+    "${ROOT_DIR}/tests/e2e/qemu-install.sh" || {
+    printf 'qemu-source-contract: direct playbook runs must load encrypted installer state\n' >&2
+    exit 1
+}
 
 printf 'qemu-source-contract: source filter and credential-free rerun PASS\n'

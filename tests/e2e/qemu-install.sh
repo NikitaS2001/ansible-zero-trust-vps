@@ -283,6 +283,8 @@ run_compose_deployment() {
         "sudo env PATH='${docker_path}' sh -c 'cd /opt/zero-trust-vps-installer/repo && \
         exec /opt/zero-trust-vps-installer/venv/bin/ansible-playbook \
         -i inventory/localhost.yml site.yml --tags compose \
+        --vault-password-file /etc/zero-trust-vps/installer-vault.pass \
+        --extra-vars @/etc/zero-trust-vps/installer-vault.yml \
         -e internal_domain_suffix=\"\$1\" \
         -e wg_internal_domain=\"\$2\" \
         -e adguard_internal_domain=\"\$3\"' \
