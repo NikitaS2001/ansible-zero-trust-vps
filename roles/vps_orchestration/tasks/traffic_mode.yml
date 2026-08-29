@@ -397,7 +397,7 @@
           cp --archive {{ (vps_orchestration_traffic_transaction.path + '/persisted-mode') | quote }} "${destination}.new"
           mv -f "${destination}.new" "${destination}"
         else
-          find "${destination}" -delete
+          find "${destination}" -delete 2>/dev/null || [[ ! -e "${destination}" ]]
         fi
       args:
         executable: /bin/bash

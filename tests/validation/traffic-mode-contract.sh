@@ -241,6 +241,8 @@ grep -Fq 'interrupted traffic-mode transaction requires operator recovery' "${TM
 find "${PROJECT}/.wg-traffic-mode.new" -delete
 
 cp "${DB}" "${TMP}/before-rollback.db"
+cp "${PROJECT}/.wg-traffic-mode" "${TMP}/before-rollback.marker"
+rollback_start_count_before="$(<"${TRAFFIC_TEST_START_COUNT}")"
 touch "${TMP}/fail-readiness"
 export TRAFFIC_TEST_FAIL_READINESS="${TMP}/fail-readiness"
 if ansible-playbook "${TMP}/playbook.yml" >"${TMP}/rollback.log" 2>&1; then
@@ -249,9 +251,54 @@ if ansible-playbook "${TMP}/playbook.yml" >"${TMP}/rollback.log" 2>&1; then
 fi
 unset TRAFFIC_TEST_FAIL_READINESS
 cmp "${DB}" "${TMP}/before-rollback.db"
-[[ "$(<"${PROJECT}/.wg-traffic-mode")" == full_tunnel ]]
+cmp "${PROJECT}/.wg-traffic-mode" "${TMP}/before-rollback.marker"
+rollback_start_count_after="$(<"${TRAFFIC_TEST_START_COUNT}")"
+[[ "$((rollback_start_count_after - rollback_start_count_before))" == 2 ]]
 [[ -z "$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' -print -quit)" ]]
 grep -Fq 'original wg-easy state was restored' "${TMP}/rollback.log"
+
+cp "${DB}" "${TMP}/before-absent-marker-rollback.db"
+find "${PROJECT}/.wg-traffic-mode" -delete
+absent_marker_start_count_before="$(<"${TRAFFIC_TEST_START_COUNT}")"
+touch "${TMP}/fail-readiness"
+export TRAFFIC_TEST_FAIL_READINESS="${TMP}/fail-readiness"
+if ansible-playbook "${TMP}/playbook.yml" >"${TMP}/absent-marker-rollback.log" 2>&1; then
+  echo 'absent-marker readiness failure unexpectedly succeeded' >&2
+  exit 1
+fi
+unset TRAFFIC_TEST_FAIL_READINESS
+cmp "${DB}" "${TMP}/before-absent-marker-rollback.db"
+[[ ! -e "${PROJECT}/.wg-traffic-mode" ]]
+absent_marker_start_count_after="$(<"${TRAFFIC_TEST_START_COUNT}")"
+absent_marker_restart_delta="$((absent_marker_start_count_after - absent_marker_start_count_before))"
+absent_marker_transaction_count="$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' | wc -l)"
+if [[ "${absent_marker_restart_delta}" != 2 || "${absent_marker_transaction_count}" != 0 ]] \
+  || ! grep -Fq 'original wg-easy state was restored' "${TMP}/absent-marker-rollback.log"; then
+  printf '[FAIL] absent_marker_rollback=marker_absent:%s,restart_delta:%s,transaction_residue:%s,rollback_complete:%s\n' \
+    "$([[ ! -e "${PROJECT}/.wg-traffic-mode" ]] && printf true || printf false)" \
+    "${absent_marker_restart_delta}" \
+    "${absent_marker_transaction_count}" \
+    "$(grep -Fq 'original wg-easy state was restored' "${TMP}/absent-marker-rollback.log" && printf true || printf false)" >&2
+  exit 1
+fi
+
+cp "${DB}" "${TMP}/before-absent-marker-partial-snapshot.db"
+absent_partial_start_count_before="$(<"${TRAFFIC_TEST_START_COUNT}")"
+touch "${TMP}/fail-absent-marker-partial-snapshot"
+export TRAFFIC_TEST_FAIL_SNAPSHOT="${TMP}/fail-absent-marker-partial-snapshot"
+if ansible-playbook "${TMP}/playbook.yml" >"${TMP}/absent-marker-partial-snapshot.log" 2>&1; then
+  echo 'absent-marker partial snapshot failure unexpectedly succeeded' >&2
+  exit 1
+fi
+unset TRAFFIC_TEST_FAIL_SNAPSHOT
+cmp "${DB}" "${TMP}/before-absent-marker-partial-snapshot.db"
+[[ ! -e "${PROJECT}/.wg-traffic-mode" ]]
+absent_partial_start_count_after="$(<"${TRAFFIC_TEST_START_COUNT}")"
+absent_partial_restart_delta="$((absent_partial_start_count_after - absent_partial_start_count_before))"
+[[ "${absent_partial_restart_delta}" == 1 ]]
+[[ -z "$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' -print -quit)" ]]
+printf 'full_tunnel\n' >"${PROJECT}/.wg-traffic-mode"
+chmod 0600 "${PROJECT}/.wg-traffic-mode"
 
 cp "${DB}" "${TMP}/before-rollback-failure.db"
 touch "${TMP}/fail-readiness"
@@ -299,6 +346,11 @@ printf '[PASS] marker_drift=reconciled_from_database\n'
 printf '[PASS] converged_live_validation=exec_delta:%s; runtime_drift_repair=mutation_delta:%s\n' "${live_check_delta}" "${runtime_drift_mutation_delta}"
 printf '[PASS] existing_peer_catch_all=overridden_by_global_firewall_ips\n'
 printf '[PASS] readiness=actual_wg0; rollback=whole_volume_and_marker_restored\n'
+printf '[PASS] existing_marker_rollback=byte_restored,restart_delta:%s,transaction_residue:0\n' "$((rollback_start_count_after - rollback_start_count_before))"
+printf '[PASS] absent_marker_rollback=marker_absent:true,restart_delta:%s,transaction_residue:%s,rollback_complete:true\n' \
+  "${absent_marker_restart_delta}" "${absent_marker_transaction_count}"
+printf '[PASS] absent_marker_partial_snapshot=source_untouched,marker_absent:true,restart_delta:%s,transaction_residue:0\n' \
+  "${absent_partial_restart_delta}"
 printf '[PASS] post_marker_fault=db_sha256:%s,marker_sha256:%s,transactions:%s\n' "${post_marker_db_sha}" "${post_marker_state_sha}" "${post_marker_transaction_count}"
 printf '[PASS] partial_snapshot=source_untouched,no_restore_from_incomplete_copy; commit_residue=rejected\n'
 printf '[PASS] rollback_restart_failure=private_complete_snapshot_retained_for_operator_recovery\n'
