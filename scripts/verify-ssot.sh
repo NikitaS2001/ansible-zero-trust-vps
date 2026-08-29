@@ -16,7 +16,9 @@ python3 - "${ROOT_DIR}" <<'PY'
 from __future__ import annotations
 
 import re
+import shlex
 import sys
+from os import environ
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -40,6 +42,18 @@ def read(relative: str) -> str:
         return ""
 
 
+def read_override(variable: str, relative: str) -> str:
+    override = environ.get(variable)
+    if not override:
+        return read(relative)
+    path = Path(override)
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        errors.append(f"cannot read {variable}={path}: {error}")
+        return ""
+
+
 def github_slug(heading: str) -> str:
     value = re.sub(r"<[^>]+>", "", heading.strip().lower())
     value = re.sub(r"[^\w\- ]", "", value, flags=re.UNICODE)
@@ -59,7 +73,190 @@ actual_docs = {path.name for path in (root / "docs").glob("*.md")}
 check(required_docs <= actual_docs,
       f"docs/ is missing required pages: {sorted(required_docs - actual_docs)}")
 
-readme = read("README.md")
+readme = read_override("VERIFY_SSOT_README_PATH", "README.md")
+
+release_url_pattern = re.compile(
+    r"https://github\.com/NikitaS2001/ansible-zero-trust-vps/releases/"
+    r"(?:latest/download|download/v[0-9]+\.[0-9]+\.[0-9]+)/install\.sh"
+)
+publication_marker = "<!-- release-installer: post-merge-maintainer-publication -->"
+release_statuses: dict[str, int] = {}
+status_fixture = environ.get("VERIFY_SSOT_RELEASE_STATUS_FIXTURE")
+if status_fixture:
+    try:
+        status_lines = Path(status_fixture).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        errors.append(f"cannot read release URL status fixture {status_fixture}: {error}")
+        status_lines = []
+    for line_number, line in enumerate(status_lines, start=1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(f"({release_url_pattern.pattern}) ([1-5][0-9]{{2}})", line)
+        if not match:
+            errors.append(f"status fixture malformed row {line_number}: {line}")
+            continue
+        url, raw_status = match.groups()
+        if url in release_statuses:
+            errors.append(f"{url} duplicate status fixture row")
+            continue
+        release_statuses[url] = int(raw_status)
+
+
+def strip_shell_comment(command: str) -> str:
+    quote = ""
+    escaped = False
+    for index, character in enumerate(command):
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and quote != "'":
+            escaped = True
+            continue
+        if character in {"'", '"'}:
+            if not quote:
+                quote = character
+            elif quote == character:
+                quote = ""
+            continue
+        if character == "#" and not quote and (index == 0 or command[index - 1].isspace()):
+            return command[:index]
+    return command
+
+
+def has_unquoted_continuation(line: str) -> bool:
+    trimmed = line.rstrip()
+    if not trimmed.endswith("\\"):
+        return False
+    quote = ""
+    escaped = False
+    terminal_unquoted = False
+    for index, character in enumerate(trimmed):
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and quote != "'":
+            terminal_unquoted = index == len(trimmed) - 1 and not quote
+            escaped = True
+            continue
+        if character in {"'", '"'}:
+            if not quote:
+                quote = character
+            elif quote == character:
+                quote = ""
+    return terminal_unquoted
+
+
+def logical_commands(lines: list[str]) -> list[str]:
+    commands: list[str] = []
+    pending = ""
+    for line in lines:
+        if has_unquoted_continuation(line):
+            pending += line.rstrip()[:-1] + " "
+            continue
+        commands.append(pending + line)
+        pending = ""
+    if pending:
+        commands.append(pending)
+    return commands
+
+
+def check_release_command(command: str, marker_present: bool, relative: Path) -> None:
+    executable = strip_shell_comment(command)
+    urls = release_url_pattern.findall(executable)
+    if not urls:
+        return
+    ambiguous = any(item in executable for item in ("$", "<<", ">>", "<(", ">(", ";", "&&", "||"))
+    try:
+        lexer = shlex.shlex(executable, posix=True, punctuation_chars="|;&<>()")
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        tokens = list(lexer)
+    except ValueError:
+        tokens = []
+        ambiguous = True
+    if any(token in {";", "&", "&&", "||", "<", ">", "<<", ">>", "(", ")"} for token in tokens):
+        ambiguous = True
+    if ambiguous:
+        for url in dict.fromkeys(urls):
+            errors.append(f"{relative}: {url} unsupported/ambiguous executable syntax")
+        return
+
+    stages: list[list[str]] = [[]]
+    for token in tokens:
+        if token == "|":
+            stages.append([])
+        else:
+            stages[-1].append(token)
+    findings: list[str] = []
+    for index, stage in enumerate(stages[:-1]):
+        if not stage or stage[0] not in {"curl", "wget"}:
+            continue
+        stage_urls = [token for token in stage if release_url_pattern.fullmatch(token)]
+        consumer = stages[index + 1]
+        if consumer in (["bash"], ["sh"], ["sudo", "bash"], ["sudo", "sh"]):
+            findings.extend(stage_urls)
+
+    if not findings and "|" in tokens and any(token in {"curl", "wget", "bash", "sh"} for token in tokens):
+        for url in dict.fromkeys(urls):
+            errors.append(f"{relative}: {url} unsupported/ambiguous executable syntax")
+        return
+    for url in dict.fromkeys(findings):
+        if not marker_present:
+            errors.append(f"{relative}: {url} missing structural marker")
+        status = release_statuses.get(url)
+        if status is None:
+            errors.append(f"{relative}: {url} HTTP missing")
+        elif not 200 <= status < 300:
+            errors.append(f"{relative}: {url} HTTP {status}")
+
+
+def check_release_installer_blocks(text: str, relative: Path) -> None:
+    in_fence = False
+    shell_fence = False
+    fence = ""
+    marker_present = False
+    block: list[str] = []
+    lines = text.splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        if not in_fence:
+            shell_match = re.fullmatch(r"((?:`{3,}|~{3,}))(bash|sh|shell)[ \t]*", line)
+            if shell_match:
+                in_fence = True
+                shell_fence = True
+                fence = shell_match.group(1)
+                marker_present = line_number > 1 and lines[line_number - 2] == publication_marker
+                block = []
+            else:
+                fence_match = re.match(r"((?:`{3,}|~{3,}))", line)
+                if not fence_match:
+                    continue
+                fence = fence_match.group(1)
+                if re.match(r"(?:`{3,}|~{3,})(?:bash|sh|shell)\b", line):
+                    errors.append(f"{relative}: malformed executable-doc input at line {line_number}")
+                in_fence = True
+                shell_fence = False
+            continue
+        if line.rstrip() == fence:
+            if shell_fence:
+                for command in logical_commands(block):
+                    check_release_command(command, marker_present, relative)
+            in_fence = False
+            shell_fence = False
+            block = []
+        elif shell_fence:
+            block.append(line)
+    if in_fence and shell_fence:
+        errors.append(f"{relative}: malformed executable-doc input: unclosed shell fence")
+
+
+if environ.get("VERIFY_SSOT_README_PATH"):
+    check_release_installer_blocks(readme, Path("README.md"))
+    if errors:
+        for error in errors:
+            print(f"[FAIL] {error}", file=sys.stderr)
+        raise SystemExit(1)
+    print("[PASS] release installer fixture contract")
+    raise SystemExit(0)
 
 start_marker = "<!-- ssot:verified-quickstart:start -->"
 end_marker = "<!-- ssot:verified-quickstart:end -->"
@@ -164,7 +361,8 @@ code_blocks = 0
 local_links = 0
 for path in markdown_files:
     relative = path.relative_to(root)
-    text = read(str(relative))
+    text = readme if relative == Path("README.md") else read(str(relative))
+    check_release_installer_blocks(text, relative)
     check(re.search(r"[\u0400-\u04ff]", text) is None,
           f"{relative} contains Cyrillic; public documentation is English")
 
