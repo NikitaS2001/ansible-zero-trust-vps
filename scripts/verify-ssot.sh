@@ -98,25 +98,6 @@ if status_fixture:
 release_url_pattern = re.compile(
     r"https://github\.com/NikitaS2001/ansible-zero-trust-vps/releases/(?:latest/download|download/v[0-9]+\.[0-9]+\.[0-9]+)/[A-Za-z0-9._-]+"
 )
-affirmative_release_context_pattern = re.compile(
-    r"\b(?:only\s+)?(?:after|once)\b[^\n]{0,240}"
-    r"\b(?:publish(?:es|ed|ing)?|publication)\b[^\n]{0,240}\b(?:tag|release)\b",
-    re.IGNORECASE,
-)
-release_context_negation_pattern = re.compile(
-    r"\b(?:not|never|do\s+not|don't|before|until|pre[- ]release)\b",
-    re.IGNORECASE,
-)
-
-
-def preceding_markdown_context(text: str, offset: int) -> str:
-    line_start = text.rfind("\n", 0, offset) + 1
-    before_line = text[:line_start]
-    fence_start = before_line.rfind("\n```")
-    if fence_start >= 0:
-        before_line = before_line[:fence_start]
-    paragraph = before_line.rstrip().rsplit("\n\n", 1)[-1]
-    return f"{paragraph}\n{text[line_start:offset]}"
 
 
 for match in release_url_pattern.finditer(readme):
@@ -128,13 +109,10 @@ for match in release_url_pattern.finditer(readme):
     executable = re.search(r"\b(?:curl|wget)\b.*\|\s*(?:sudo\s+)?(?:ba)?sh\b", line)
     if not executable:
         continue
-    context = preceding_markdown_context(readme, match.start())
     status = release_statuses.get(match.group(0))
-    unavailable = f" (status fixture reports HTTP {status})" if status and status >= 400 else ""
-    check(affirmative_release_context_pattern.search(context) is not None
-          and release_context_negation_pattern.search(context) is None,
-          "README.md advertises executable release URL without an immediately preceding affirmative post-publication context"
-          f"{unavailable}: {match.group(0)}")
+    check(status is not None and 200 <= status < 300,
+          "README.md advertises executable release URL without a 2xx availability status fixture"
+          f" (status fixture reports HTTP {status if status is not None else 'missing'}): {match.group(0)}")
 
 start_marker = "<!-- ssot:verified-quickstart:start -->"
 end_marker = "<!-- ssot:verified-quickstart:end -->"
