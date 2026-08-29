@@ -49,19 +49,19 @@ removes, enables, disables, or tunes swap or zram.
 > new key-authenticated login before disconnecting. Keep provider console or
 > rescue access available.
 
-## Pre-publication setup
+## Quick start
 
-The `v1.3.0` tag and GitHub release assets become available only after the
-maintainer merges this work and publishes that release. Until publication, do
-not use `releases/latest` asset paths or a release installer; prepare the VPS
-and follow the [remote Ansible path](docs/getting-started.md#remote-ansible-deployment)
-from a tagged checkout instead.
+Run the latest release installer from an interactive root-capable SSH session:
 
-## Verified release installation (after publication)
+```bash
+curl -fsSL https://github.com/NikitaS2001/ansible-zero-trust-vps/releases/latest/download/install.sh | sudo bash
+```
 
-Only after the maintainer publishes the `v1.3.0` tag and GitHub release, use
-the verified local installation path below. At that point the `v1.3.0` assets
-and `releases/latest` asset paths are available.
+The installer verifies the signed release tag before running Ansible. To also
+verify the downloaded installer artifact and its GitHub attestation before
+execution, use the longer path below.
+
+## Verified quick start
 
 Install [GitHub CLI](https://cli.github.com/) on the VPS and authenticate it so
 GitHub can verify the release attestation. Run these commands from a directory
