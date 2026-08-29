@@ -214,34 +214,65 @@ if pin < 0 or playbook < 0 or pin >= playbook:
     )
 PY
 
-    local auth_call expected_key expected_known_host fixture_dir helper_file http_log port run_log run_rc
+    local auth_call expected_key expected_known_hosts fixture_dir flow_file helper_file http_log port preplay_count run_log run_rc
     fixture_dir="${RUNTIME_LOG_DIR}/authenticated-host-key"
     mkdir -p "${fixture_dir}"
     helper_file="${fixture_dir}/helper.sh"
+    flow_file="${fixture_dir}/flow.sh"
     sed -n '/^record_authenticated_guest_host_key() {$/,/^}$/p' \
         "${ROOT_DIR}/tests/e2e/qemu-remote-install.sh" >"${helper_file}"
+    sed -n '/^run_successful_cutover() {$/,/^}$/p' \
+        "${ROOT_DIR}/tests/e2e/qemu-remote-install.sh" >"${flow_file}"
     [[ -s ${helper_file} ]] || fail 'remote QEMU harness lacks authenticated guest host-key derivation'
+    [[ -s ${flow_file} ]] || fail 'remote QEMU harness lacks the successful cutover flow'
     expected_key="ssh-ed25519 task14-${fixture_dir##*.} authenticated-guest"
     AUTH_CALL_LOG="${fixture_dir}/auth-call.log" \
+    FLOW_LOG="${fixture_dir}/flow.log" \
     EXPECTED_KEY="${expected_key}" \
     TMP_DIR="${fixture_dir}" \
     QEMU_SSH_PORT=28223 \
+    QEMU_ADMIN_PORT=28222 \
+    QEMU_CLEANUP_PORT=28224 \
+    E2E_SSH_PORT=2222 \
         bash -Eeuo pipefail -c '
             fail() { printf "fixture failure: %s\n" "$*" >&2; return 1; }
             run_remote_authenticated() {
-                printf "%s|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" "$5" >"${AUTH_CALL_LOG}"
-                printf "%s\n" "${EXPECTED_KEY}"
+                if [[ $1 == root@127.0.0.1 ]]; then
+                    printf "%s|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" "$5" >>"${AUTH_CALL_LOG}"
+                    printf "%s\n" "${EXPECTED_KEY}"
+                    return
+                fi
+                [[ $1 == sysadmin@127.0.0.1 && $2 == "${QEMU_ADMIN_PORT}" ]] || return 92
+                printf "port %s\n" "${E2E_SSH_PORT}"
             }
             ssh-keyscan() { fail "unauthenticated ssh-keyscan was called"; }
+            record_ssh_host_key() { fail "unauthenticated host-key scanner was called"; }
+            write_direct_inventory() { :; }
+            write_group_vars() { :; }
+            echo() { :; }
+            run_playbook() {
+                wc -l <"${TMP_DIR}/known_hosts" >"${FLOW_LOG}"
+                return 0
+            }
+            pass() { :; }
+            require_authenticated_ssh_closed() { :; }
             source "$1"
-            record_authenticated_guest_host_key "127.0.0.1" 28222
-        ' fixture "${helper_file}"
-    auth_call="$(<"${fixture_dir}/auth-call.log")"
-    [[ ${auth_call} == "root@127.0.0.1|28223|${fixture_dir}/id_ed25519|${fixture_dir}/known_hosts|cat /etc/ssh/ssh_host_ed25519_key.pub" ]] \
+            source "$2"
+            run_successful_cutover
+        ' fixture "${helper_file}" "${flow_file}"
+    preplay_count="$(<"${fixture_dir}/flow.log")"
+    [[ ${preplay_count} == 2 ]] \
+        || fail 'both hardened forwards must be pinned before the cutover playbook starts'
+    auth_call="$(sort "${fixture_dir}/auth-call.log" | uniq -c)"
+    [[ ${auth_call} == "      2 root@127.0.0.1|28223|${fixture_dir}/id_ed25519|${fixture_dir}/known_hosts|cat /etc/ssh/ssh_host_ed25519_key.pub" ]] \
         || fail 'hardened endpoint key was not read through the authenticated guest connection'
-    expected_known_host="[127.0.0.1]:28222 ${expected_key}"
-    [[ "$(<"${fixture_dir}/known_hosts")" == "${expected_known_host}" ]] \
-        || fail 'authenticated guest ED25519 key was not pinned for the hardened admin endpoint'
+    expected_known_hosts="[127.0.0.1]:28222 ${expected_key}"$'\n'"[127.0.0.1]:28224 ${expected_key}"
+    [[ "$(<"${fixture_dir}/known_hosts")" == "${expected_known_hosts}" ]] \
+        || fail 'admin and cleanup forwards must each have exactly one authenticated guest ED25519 key'
+    if grep -Eq '^[[:space:]]*record_ssh_host_key .*\$\{QEMU_(ADMIN|CLEANUP)_PORT\}' \
+        "${ROOT_DIR}/tests/e2e/qemu-remote-install.sh"; then
+        fail 'hardened admin and cleanup forwards must never use unauthenticated host-key scanning'
+    fi
 
     fixture_dir="${RUNTIME_LOG_DIR}/ssh-http-listener"
     fixture_dir="${RUNTIME_LOG_DIR}/ssh-http-listener"

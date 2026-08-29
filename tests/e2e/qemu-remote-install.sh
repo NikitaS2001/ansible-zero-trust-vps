@@ -278,6 +278,7 @@ run_successful_cutover() {
     write_direct_inventory
     write_group_vars "${E2E_SSH_PORT}"
     record_authenticated_guest_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}"
+    record_authenticated_guest_host_key "127.0.0.1" "${QEMU_CLEANUP_PORT}"
     echo "[E2E] Running SSH/UFW hardening cutover..."
     if ! run_playbook "${playbook_log}" "${TMP_DIR}/hardening.yml" \
         --tags packages,user,ufw,ssh; then
@@ -371,7 +372,6 @@ run_ufw_backend_probes() {
     local absent_log="${TMP_DIR}/ufw-absent.log"
     local failure_log="${TMP_DIR}/ufw-failure.log"
     local ready=false
-    record_ssh_host_key "127.0.0.1" "${QEMU_CLEANUP_PORT}" "${TMP_DIR}/known_hosts"
     write_cleanup_inventory
     cat >"${TMP_DIR}/ssh-cleanup.yml" <<EOF
 ---
@@ -479,6 +479,8 @@ fi
 if [[ "${DO_SSH_CUTOVER}" == "true" || "${DO_UFW_BACKEND_FAILURE}" == "true" ]]; then
     run_successful_cutover
 elif [[ "${DO_SSH_ROLLBACK}" != "true" ]]; then
+    record_authenticated_guest_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}"
+    record_authenticated_guest_host_key "127.0.0.1" "${QEMU_CLEANUP_PORT}"
     echo "[E2E] Running the complete playbook in remote mode..."
     if ! run_playbook "${TMP_DIR}/full-ansible.log" "${ROOT_DIR}/site.yml"; then
         fail "remote-mode playbook failed"
@@ -486,7 +488,6 @@ elif [[ "${DO_SSH_ROLLBACK}" != "true" ]]; then
 fi
 
 if [[ "${DO_SSH_CUTOVER}" == "true" ]]; then
-    record_ssh_host_key 127.0.0.1 "${QEMU_CLEANUP_PORT}" "${TMP_DIR}/known_hosts"
     write_cleanup_inventory
     if ! run_playbook "${TMP_DIR}/full-after-cutover.log" "${ROOT_DIR}/site.yml"; then
         fail "remote-mode playbook failed after authenticated SSH cutover"
@@ -499,7 +500,6 @@ fi
 
 if [[ "${DO_SSH_ROLLBACK}" != "true" && "${DO_UFW_BACKEND_FAILURE}" != "true" ]]; then
     echo "[E2E] Verifying the deployed stack on the hardened SSH port ${QEMU_ADMIN_PORT}"
-    record_ssh_host_key 127.0.0.1 "${QEMU_ADMIN_PORT}" "${TMP_DIR}/known_hosts"
     require_wrong_host_key_rejected "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
         "${TMP_DIR}/id_ed25519"
     export E2E_SSH_PORT E2E_WG_PORT
