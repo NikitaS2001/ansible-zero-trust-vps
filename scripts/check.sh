@@ -7,6 +7,13 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly ROOT_DIR
 readonly VENV_DIR="${ROOT_DIR}/.venv"
 declare -a PREPARED_EXAMPLES=()
+readonly -a REQUIRED_VALIDATION_CONTRACTS=(
+    secret-installer-contract.sh
+    traffic-mode-contract.sh
+    hardening-contract.sh
+    orchestration-core.sh
+    ufw-docker-idempotency.sh
+)
 
 cleanup_prepared_examples() {
     local path
@@ -68,15 +75,32 @@ EOF
 }
 
 run_validation_manifest() {
-    local entry script arguments
+    local contract count entry script arguments
     local -a command
-    while IFS= read -r entry || [[ -n ${entry} ]]; do
+    for contract in "${REQUIRED_VALIDATION_CONTRACTS[@]}"; do
+        count="$(awk -F'|' -v contract="${contract}" \
+            '$1 == contract { count++ } END { print count + 0 }' \
+            tests/validation/manifest.txt)"
+        case ${count} in
+            0)
+                printf 'check: missing required validation contract: %s\n' "${contract}" >&2
+                return 1
+                ;;
+            1) ;;
+            *)
+                printf 'check: duplicate required validation contract: %s\n' "${contract}" >&2
+                return 1
+                ;;
+        esac
+    done
+
+    while IFS= read -r -u 3 entry || [[ -n ${entry} ]]; do
         script=${entry%%|*}
         arguments=${entry#*|}
         command=("tests/validation/${script}")
         [[ -z ${arguments} ]] || command+=("${arguments}")
         "${command[@]}"
-    done <tests/validation/manifest.txt
+    done 3<tests/validation/manifest.txt
 }
 
 run_quick() {
