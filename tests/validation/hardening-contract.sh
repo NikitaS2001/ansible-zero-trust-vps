@@ -7,8 +7,12 @@ readonly ROOT_DIR
 ROLE_DIR="${ROOT_DIR}/roles/vps_hardening"
 readonly ROLE_DIR
 RUNTIME_LOG_DIR=""
+SSH_CUTOVER_HTTP_PID=""
+SSH_CUTOVER_TCP_OUTCOME=""
+SSH_CUTOVER_AUTH_OUTCOME=""
 
 cleanup() {
+    [[ -z ${SSH_CUTOVER_HTTP_PID} ]] || kill "${SSH_CUTOVER_HTTP_PID}" 2>/dev/null || true
     [[ -z ${RUNTIME_LOG_DIR} || ! -d ${RUNTIME_LOG_DIR} ]] || find "${RUNTIME_LOG_DIR}" -depth -delete
 }
 
@@ -71,7 +75,7 @@ role_dir = Path(os.environ["HARDENING_ROLE_DIR"])
 bare_modules = {
     "apt", "assert", "command", "copy", "debug", "fail", "group",
     "include_tasks", "meta", "service", "set_fact", "stat", "template",
-    "user", "wait_for",
+    "user", "wait_for", "wait_for_connection",
 }
 errors = []
 
@@ -131,6 +135,90 @@ validate_platform_policy() {
         || fail 'role lacks Ubuntu 24.04 validation'
     grep -Fq "== 'x86_64'" "${ROLE_DIR}/tasks/preflight.yml" \
         || fail 'role lacks amd64 architecture validation'
+}
+
+validate_authenticated_ssh_cutover() {
+    HARDENING_SSH_TASKS="${ROLE_DIR}/tasks/ssh.yml" python3 - <<'PY'
+from pathlib import Path
+import os
+import yaml
+
+tasks = yaml.safe_load(Path(os.environ["HARDENING_SSH_TASKS"]).read_text(encoding="utf-8"))
+ordered = []
+
+def flatten(items: object) -> None:
+    if not isinstance(items, list):
+        return
+    for task in items:
+        if not isinstance(task, dict):
+            continue
+        ordered.append(task)
+        flatten(task.get("block"))
+        flatten(task.get("rescue"))
+
+flatten(tasks)
+authenticated = [task for task in ordered if "ansible.builtin.wait_for_connection" in task]
+if len(authenticated) != 1:
+    raise SystemExit("SSH cutover must require exactly one authenticated wait_for_connection proof")
+proof = authenticated[0]
+variables = proof.get("vars", {})
+if variables.get("ansible_user") != "{{ admin_user }}" or variables.get("ansible_port") != "{{ ssh_port }}":
+    raise SystemExit("SSH cutover proof must authenticate as admin_user on ssh_port")
+cleanup = next(task for task in ordered if task.get("name", "").startswith("SSH | Cleanup |"))
+if ordered.index(proof) >= ordered.index(cleanup):
+    raise SystemExit("authenticated SSH proof must run before old-port UFW deletion")
+PY
+
+    local fixture_dir http_log port run_log run_rc
+    fixture_dir="${RUNTIME_LOG_DIR}/ssh-http-listener"
+    mkdir -p "${fixture_dir}"
+    port="$(python3 - <<'PY'
+import socket
+with socket.socket() as listener:
+    listener.bind(("127.0.0.1", 0))
+    print(listener.getsockname()[1])
+PY
+)"
+    http_log="${fixture_dir}/http.log"
+    python3 -m http.server --bind 127.0.0.1 "${port}" >"${http_log}" 2>&1 &
+    SSH_CUTOVER_HTTP_PID="$!"
+    for _ in {1..20}; do
+        if python3 - "${port}" 2>/dev/null <<'PY'
+import socket
+import sys
+with socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.2):
+    pass
+PY
+        then
+            SSH_CUTOVER_TCP_OUTCOME=0
+            break
+        fi
+        sleep 0.1
+    done
+    [[ ${SSH_CUTOVER_TCP_OUTCOME} == 0 ]] || fail 'HTTP fixture did not accept a TCP connection'
+    cat >"${fixture_dir}/playbook.yml" <<'YAML'
+---
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Require authenticated SSH rather than a TCP listener
+      ansible.builtin.wait_for_connection:
+        timeout: 3
+        connect_timeout: 1
+        sleep: 1
+YAML
+    run_log="${fixture_dir}/authenticated-ssh.log"
+    set +e
+    timeout 10 ansible-playbook -i 'http-fixture,' "${fixture_dir}/playbook.yml" \
+        -e ansible_connection=ssh -e ansible_host=127.0.0.1 -e "ansible_port=${port}" \
+        -e ansible_user=admin >"${run_log}" 2>&1
+    run_rc=$?
+    set -e
+    SSH_CUTOVER_AUTH_OUTCOME="${run_rc}"
+    kill "${SSH_CUTOVER_HTTP_PID}" 2>/dev/null || true
+    wait "${SSH_CUTOVER_HTTP_PID}" 2>/dev/null || true
+    SSH_CUTOVER_HTTP_PID=""
+    [[ ${run_rc} -ne 0 ]] || fail 'HTTP listener unexpectedly passed authenticated SSH validation'
 }
 
 run_rejection_fixture() {
@@ -241,6 +329,7 @@ main() {
     validate_plaintext_password_policy
     validate_always_preflight
     validate_platform_policy
+    validate_authenticated_ssh_cutover
     require_before "${ROLE_DIR}/tasks/main.yml" 'Include preflight checks' 'Include package setup'
     require_before "${ROLE_DIR}/tasks/main.yml" 'Include package setup' 'Include user setup'
     require_before "${ROLE_DIR}/tasks/preflight.yml" 'Require at least 900 MiB of available RAM' 'Check TUN device'
@@ -251,7 +340,7 @@ main() {
     validate_plaintext_rejection
     validate_platform_rejection
 
-    printf '%s\n' '{"argument_specs":true,"fqcn":true,"platform_preflight_always":true,"packages_tag_platform_rejection":true,"ram_preflight_always":true,"packages_tag_memory_rejection":true,"plaintext_password_rejected":true,"swap_static_guard":true,"swap_unchanged_on_rejection":true,"sudo_before_user":true}'
+    printf '%s\n' "{\"argument_specs\":true,\"fqcn\":true,\"ssh_http_tcp_outcome\":${SSH_CUTOVER_TCP_OUTCOME},\"ssh_authenticated_outcome\":${SSH_CUTOVER_AUTH_OUTCOME},\"platform_preflight_always\":true,\"packages_tag_platform_rejection\":true,\"ram_preflight_always\":true,\"packages_tag_memory_rejection\":true,\"plaintext_password_rejected\":true,\"swap_static_guard\":true,\"swap_unchanged_on_rejection\":true,\"sudo_before_user\":true}"
 }
 
 main "$@"

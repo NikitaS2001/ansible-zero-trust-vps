@@ -63,6 +63,17 @@
       become: false
       when: (hostvars[inventory_hostname].ansible_connection | default("ssh")) != "local"
       tags: [ssh]
+
+    - name: "SSH | Verify | Authenticate admin on new port"
+      ansible.builtin.wait_for_connection:
+        timeout: 30
+        connect_timeout: 5
+        sleep: 1
+      vars:
+        ansible_port: "{{ ssh_port }}"
+        ansible_user: "{{ admin_user }}"
+      when: (hostvars[inventory_hostname].ansible_connection | default("ssh")) != "local"
+      tags: [ssh]
   rescue:
     - name: "SSH | Rescue | Restore previous sshd_config"
       ansible.builtin.copy:
