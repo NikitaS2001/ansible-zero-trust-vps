@@ -144,10 +144,67 @@
       {{ vps_orchestration_traffic_desired_routes if wg_traffic_mode == 'services_only' else none }}
   tags: [traffic_mode]
 
+- name: "Traffic mode | Select live policy validation"
+  ansible.builtin.set_fact:
+    vps_orchestration_traffic_live_validation: |
+      set -euo pipefail
+      validate_services_only_chain() {
+        local family="$1" allowed="$2" rules
+        rules="$(timeout 10 docker exec wg-easy "${family}" -S WG_CLIENTS)"
+        python3 - "${allowed}" "${rules}" <<'PY'
+      import json
+      import shlex
+      import sys
+
+      allowed = set(json.loads(sys.argv[1]))
+      rules = sys.argv[2].splitlines()
+      if not rules or rules[-1] != "-A WG_CLIENTS -j DROP":
+          raise SystemExit(1)
+      for rule in rules[1:-1]:
+          tokens = shlex.split(rule)
+          if (
+              tokens[:2] != ["-A", "WG_CLIENTS"]
+              or "-s" not in tokens
+              or "-d" not in tokens
+              or tokens[-2:] != ["-j", "ACCEPT"]
+              or tokens[tokens.index("-d") + 1] not in allowed
+          ):
+              raise SystemExit(1)
+      PY
+      }
+      for attempt in $(seq 1 {{ vps_orchestration_traffic_mode_readiness_retries }}); do
+        if timeout 10 docker exec wg-easy wg show wg0 >/dev/null; then
+          if [[ {{ wg_traffic_mode | quote }} == services_only ]]; then
+            timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS \
+              && timeout 10 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS \
+              && validate_services_only_chain iptables {{ wg_services_only_ipv4_destinations | to_json | quote }} \
+              && validate_services_only_chain ip6tables {{ wg_services_only_ipv6_destinations | to_json | quote }} \
+              && exit 0
+          else
+            ! timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null \
+              && ! timeout 10 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null \
+              && exit 0
+          fi
+        fi
+        sleep 2
+      done
+      exit 1
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Inspect live wg0 and pre-NAT firewall state"
+  ansible.builtin.shell: "{{ vps_orchestration_traffic_live_validation }}"
+  args:
+    executable: /bin/bash
+  register: vps_orchestration_traffic_live_policy
+  changed_when: false
+  failed_when: false
+  tags: [traffic_mode]
+
 - name: "Traffic mode | Decide whether reconciliation is required"
   ansible.builtin.set_fact:
     vps_orchestration_traffic_reconcile: >-
       {{ vps_orchestration_current_traffic_mode != wg_traffic_mode
+         or vps_orchestration_traffic_live_policy.rc != 0
          or vps_orchestration_traffic_policy.routes != vps_orchestration_traffic_desired_routes
          or (vps_orchestration_traffic_policy.firewall_enabled | int)
             != (vps_orchestration_traffic_desired_firewall | int)
@@ -262,49 +319,7 @@
       changed_when: true
 
     - name: "Traffic mode | Require wg0 and expected pre-NAT firewall state"
-      ansible.builtin.shell: |
-        set -euo pipefail
-        validate_services_only_chain() {
-          local family="$1" allowed="$2" rules
-          rules="$(timeout 10 docker exec wg-easy "${family}" -S WG_CLIENTS)"
-          python3 - "${allowed}" "${rules}" <<'PY'
-        import json
-        import shlex
-        import sys
-
-        allowed = set(json.loads(sys.argv[1]))
-        rules = sys.argv[2].splitlines()
-        if not rules or rules[-1] != "-A WG_CLIENTS -j DROP":
-            raise SystemExit(1)
-        for rule in rules[1:-1]:
-            tokens = shlex.split(rule)
-            if (
-                tokens[:2] != ["-A", "WG_CLIENTS"]
-                or "-s" not in tokens
-                or "-d" not in tokens
-                or tokens[-2:] != ["-j", "ACCEPT"]
-                or tokens[tokens.index("-d") + 1] not in allowed
-            ):
-                raise SystemExit(1)
-        PY
-        }
-        for attempt in $(seq 1 {{ vps_orchestration_traffic_mode_readiness_retries }}); do
-          if timeout 10 docker exec wg-easy wg show wg0 >/dev/null; then
-            if [[ {{ wg_traffic_mode | quote }} == services_only ]]; then
-              timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS \
-                && timeout 10 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS \
-                && validate_services_only_chain iptables {{ wg_services_only_ipv4_destinations | to_json | quote }} \
-                && validate_services_only_chain ip6tables {{ wg_services_only_ipv6_destinations | to_json | quote }} \
-                && exit 0
-            else
-              ! timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null \
-                && ! timeout 10 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null \
-                && exit 0
-            fi
-          fi
-          sleep 2
-        done
-        exit 1
+      ansible.builtin.shell: "{{ vps_orchestration_traffic_live_validation }}"
       args:
         executable: /bin/bash
       changed_when: false

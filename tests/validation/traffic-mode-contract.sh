@@ -46,6 +46,7 @@ case "${1:-}" in
     if [[ -n "${TRAFFIC_TEST_FAIL_START_AFTER:-}" && "${count}" -gt "${TRAFFIC_TEST_FAIL_START_AFTER}" ]]; then
       exit 72
     fi
+    [[ ! -e "${TRAFFIC_TEST_RUNTIME_DRIFT:-/nonexistent}" ]] || find "${TRAFFIC_TEST_RUNTIME_DRIFT}" -delete
     ;;
   exec)
     shift 2
@@ -59,6 +60,7 @@ with sqlite3.connect(sys.argv[1]) as db:
     print(db.execute("SELECT firewall_enabled FROM interfaces_table WHERE name='wg0'").fetchone()[0])
 PY
 )"
+    [[ ! -e "${TRAFFIC_TEST_RUNTIME_DRIFT:-/nonexistent}" ]] || firewall=0
     family="${1:-}"
     shift
     if [[ "${1:-}" == -C ]]; then
@@ -148,8 +150,25 @@ grep -Fq 'docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS' "${LOG}"
 grep -Fq 'docker exec wg-easy ip6tables -S WG_CLIENTS' "${LOG}"
 
 before_mutations="$(grep -Ec '^docker (stop|start) ' "${LOG}" || true)"
+before_live_checks="$(grep -Ec '^docker exec ' "${LOG}" || true)"
 ansible-playbook "${TMP}/playbook.yml" >"${TMP}/rerun.log"
 [[ "$(grep -Ec '^docker (stop|start) ' "${LOG}" || true)" == "${before_mutations}" ]]
+after_live_checks="$(grep -Ec '^docker exec ' "${LOG}" || true)"
+if [[ "${after_live_checks}" -le "${before_live_checks}" ]]; then
+  echo "converged rerun skipped live firewall validation: exec_before=${before_live_checks} exec_after=${after_live_checks}" >&2
+  exit 1
+fi
+live_check_delta="$((after_live_checks - before_live_checks))"
+
+export TRAFFIC_TEST_RUNTIME_DRIFT="${TMP}/runtime-drift"
+touch "${TRAFFIC_TEST_RUNTIME_DRIFT}"
+before_mutations="$(grep -Ec '^docker (stop|start) ' "${LOG}" || true)"
+ansible-playbook "${TMP}/playbook.yml" >"${TMP}/runtime-drift.log"
+[[ ! -e "${TRAFFIC_TEST_RUNTIME_DRIFT}" ]]
+after_mutations="$(grep -Ec '^docker (stop|start) ' "${LOG}" || true)"
+[[ "${after_mutations}" -gt "${before_mutations}" ]]
+runtime_drift_mutation_delta="$((after_mutations - before_mutations))"
+unset TRAFFIC_TEST_RUNTIME_DRIFT
 
 python3 - "${DB}" <<'PY'
 import json,sqlite3,sys
@@ -249,6 +268,7 @@ PY
 printf '[PASS] services_only=private_routes,firewall_enabled,WG_CLIENTS_v4_v6_terminal_drop\n'
 printf '[PASS] full_tunnel=default_routes,firewall_disabled\n'
 printf '[PASS] marker_drift=reconciled_from_database\n'
+printf '[PASS] converged_live_validation=exec_delta:%s; runtime_drift_repair=mutation_delta:%s\n' "${live_check_delta}" "${runtime_drift_mutation_delta}"
 printf '[PASS] existing_peer_catch_all=overridden_by_global_firewall_ips\n'
 printf '[PASS] readiness=actual_wg0; rollback=whole_volume_and_marker_restored\n'
 printf '[PASS] partial_snapshot=source_untouched,no_restore_from_incomplete_copy; commit_residue=rejected\n'
