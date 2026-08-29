@@ -219,7 +219,7 @@ def check_release_installer_blocks(text: str, relative: Path) -> None:
     fence = ""
     marker_present = False
     block: list[str] = []
-    lines = text.split("\n")
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     for line_number, line in enumerate(lines, start=1):
         syntax_line = line.removesuffix("\r")
         if not in_fence:
