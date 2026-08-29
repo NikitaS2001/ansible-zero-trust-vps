@@ -7,12 +7,22 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly ROOT_DIR
 readonly VENV_DIR="${ROOT_DIR}/.venv"
 declare -a PREPARED_EXAMPLES=()
-readonly -a REQUIRED_VALIDATION_CONTRACTS=(
-    secret-installer-contract.sh
-    traffic-mode-contract.sh
-    hardening-contract.sh
-    orchestration-core.sh
-    ufw-docker-idempotency.sh
+readonly -a REQUIRED_VALIDATION_MANIFEST=(
+    'ansible-runtime.sh|'
+    'backup-sandbox.sh|'
+    'installer-contract.sh|'
+    'secret-installer-contract.sh|'
+    'restore-sandbox.sh|'
+    'compose-render.sh|'
+    'traffic-mode-contract.sh|'
+    'hardening-contract.sh|'
+    'orchestration-core.sh|'
+    'ufw-docker-idempotency.sh|'
+    'workflow-contract.sh|--self-test'
+    'check-tooling.sh|'
+    'qemu-source-contract.sh|'
+    'qemu-packet-contract.sh|'
+    'sbom-contract.sh|'
 )
 
 cleanup_prepared_examples() {
@@ -75,24 +85,31 @@ EOF
 }
 
 run_validation_manifest() {
-    local contract count entry script arguments
+    local expected_entry count entry script arguments
     local -a command
-    for contract in "${REQUIRED_VALIDATION_CONTRACTS[@]}"; do
-        count="$(awk -F'|' -v contract="${contract}" \
-            '$1 == contract { count++ } END { print count + 0 }' \
+    for expected_entry in "${REQUIRED_VALIDATION_MANIFEST[@]}"; do
+        count="$(awk -v expected_entry="${expected_entry}" \
+            '$0 == expected_entry { count++ } END { print count + 0 }' \
             tests/validation/manifest.txt)"
         case ${count} in
             0)
-                printf 'check: missing required validation contract: %s\n' "${contract}" >&2
+                printf 'check: missing required validation manifest entry: %s\n' "${expected_entry}" >&2
                 return 1
                 ;;
             1) ;;
             *)
-                printf 'check: duplicate required validation contract: %s\n' "${contract}" >&2
+                printf 'check: duplicate required validation manifest entry: %s\n' "${expected_entry}" >&2
                 return 1
                 ;;
         esac
     done
+
+    count="$(awk 'END { print NR + 0 }' tests/validation/manifest.txt)"
+    if [[ ${count} -ne ${#REQUIRED_VALIDATION_MANIFEST[@]} ]]; then
+        printf 'check: validation manifest must contain exactly %s entries (found %s)\n' \
+            "${#REQUIRED_VALIDATION_MANIFEST[@]}" "${count}" >&2
+        return 1
+    fi
 
     while IFS= read -r -u 3 entry || [[ -n ${entry} ]]; do
         script=${entry%%|*}
