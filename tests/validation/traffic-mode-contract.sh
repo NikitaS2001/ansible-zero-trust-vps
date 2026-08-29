@@ -99,6 +99,16 @@ fi
 exec /usr/bin/cp "$@"
 SH
 chmod 0755 "${BIN}/cp"
+cat >"${BIN}/python3" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == -c && "${2:-}" == *'os.replace(temporary, destination)'* && -e "${TRAFFIC_TEST_FAIL_AFTER_MARKER:-/nonexistent}" ]]; then
+  /usr/bin/python3 "$@"
+  exit 73
+fi
+exec /usr/bin/python3 "$@"
+SH
+chmod 0755 "${BIN}/python3"
 
 cat >"${TMP}/playbook.yml" <<YAML
 ---
@@ -190,6 +200,24 @@ ansible-playbook "${TMP}/playbook.yml" -e wg_traffic_mode=full_tunnel >"${TMP}/f
 [[ "$(<"${PROJECT}/.wg-traffic-mode")" == full_tunnel ]]
 [[ "$(read_policy)" == '{"client": null, "firewall": 0, "routes": ["0.0.0.0/0", "::/0"]}' ]]
 
+cp "${DB}" "${TMP}/before-post-marker-fault.db"
+post_marker_db_sha="$(sha256sum "${DB}" | cut -d' ' -f1)"
+post_marker_state_sha="$(sha256sum "${PROJECT}/.wg-traffic-mode" | cut -d' ' -f1)"
+export TRAFFIC_TEST_FAIL_AFTER_MARKER="${TMP}/fail-after-marker"
+touch "${TRAFFIC_TEST_FAIL_AFTER_MARKER}"
+if ansible-playbook "${TMP}/playbook.yml" >"${TMP}/post-marker-fault.log" 2>&1; then
+  echo 'post-marker fault unexpectedly succeeded' >&2
+  exit 1
+fi
+unset TRAFFIC_TEST_FAIL_AFTER_MARKER
+cmp "${DB}" "${TMP}/before-post-marker-fault.db"
+if [[ "$(<"${PROJECT}/.wg-traffic-mode")" != full_tunnel ]]; then
+  echo "post-marker rollback left marker=$(<"${PROJECT}/.wg-traffic-mode") with full_tunnel DB" >&2
+  exit 1
+fi
+[[ -z "$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' -print -quit)" ]]
+post_marker_transaction_count="$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' | wc -l)"
+
 cp "${DB}" "${TMP}/before-snapshot.db"
 wg_before_snapshot="$(sha256sum "${PROJECT}/volumes/wg-easy/wg0.conf")"
 touch "${TMP}/fail-snapshot"
@@ -271,6 +299,7 @@ printf '[PASS] marker_drift=reconciled_from_database\n'
 printf '[PASS] converged_live_validation=exec_delta:%s; runtime_drift_repair=mutation_delta:%s\n' "${live_check_delta}" "${runtime_drift_mutation_delta}"
 printf '[PASS] existing_peer_catch_all=overridden_by_global_firewall_ips\n'
 printf '[PASS] readiness=actual_wg0; rollback=whole_volume_and_marker_restored\n'
+printf '[PASS] post_marker_fault=db_sha256:%s,marker_sha256:%s,transactions:%s\n' "${post_marker_db_sha}" "${post_marker_state_sha}" "${post_marker_transaction_count}"
 printf '[PASS] partial_snapshot=source_untouched,no_restore_from_incomplete_copy; commit_residue=rejected\n'
 printf '[PASS] rollback_restart_failure=private_complete_snapshot_retained_for_operator_recovery\n'
 printf '[PASS] incompatible_schema=failed_before_mutation; host_nat_policy=absent\n'

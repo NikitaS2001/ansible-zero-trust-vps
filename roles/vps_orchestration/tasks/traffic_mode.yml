@@ -224,6 +224,17 @@
         state: directory
       register: vps_orchestration_traffic_transaction
 
+    - name: "Traffic mode | Preserve persisted mode bytes"
+      ansible.builtin.command:
+        argv:
+          - cp
+          - --archive
+          - --reflink=auto
+          - "{{ project_root }}/.wg-traffic-mode"
+          - "{{ vps_orchestration_traffic_transaction.path }}/persisted-mode"
+      when: vps_orchestration_traffic_mode_state.stat.exists
+      changed_when: true
+
     - name: "Traffic mode | Stop wg-easy for a consistent snapshot"
       ansible.builtin.command: timeout 30 docker stop --time 20 wg-easy
       changed_when: true
@@ -373,6 +384,21 @@
         set -euo pipefail
         find {{ project_root | quote }}/volumes/wg-easy -mindepth 1 -delete
         cp --archive {{ vps_orchestration_traffic_transaction.path | quote }}/wg-easy/. {{ project_root | quote }}/volumes/wg-easy/
+      args:
+        executable: /bin/bash
+      when: vps_orchestration_traffic_snapshot.stat.isreg | default(false)
+      changed_when: true
+
+    - name: "Traffic mode | Restore persisted mode bytes"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        destination={{ (project_root + '/.wg-traffic-mode') | quote }}
+        if [[ {{ vps_orchestration_traffic_mode_state.stat.exists | bool | ternary('true', 'false') }} == true ]]; then
+          cp --archive {{ (vps_orchestration_traffic_transaction.path + '/persisted-mode') | quote }} "${destination}.new"
+          mv -f "${destination}.new" "${destination}"
+        else
+          find "${destination}" -delete
+        fi
       args:
         executable: /bin/bash
       when: vps_orchestration_traffic_snapshot.stat.isreg | default(false)
