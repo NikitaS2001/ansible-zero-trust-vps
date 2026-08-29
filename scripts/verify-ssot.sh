@@ -98,19 +98,25 @@ if status_fixture:
 release_url_pattern = re.compile(
     r"https://github\.com/NikitaS2001/ansible-zero-trust-vps/releases/(?:latest/download|download/v[0-9]+\.[0-9]+\.[0-9]+)/[A-Za-z0-9._-]+"
 )
-release_lifecycle_pattern = re.compile(
-    r"\b(?:pre[- ]release|post[- ](?:publication|merge))\b"
-    r"|\b(?:only|valid|available)\b[^\n]{0,160}\b(?:after|once)\b[^\n]{0,160}\b(?:tag|release|publication|published)\b"
-    r"|\b(?:after|once)\b[^\n]{0,160}\b(?:tag|release|publication|published)\b[^\n]{0,160}\b(?:only|valid|available)\b",
+affirmative_release_context_pattern = re.compile(
+    r"\b(?:only\s+)?(?:after|once)\b[^\n]{0,240}"
+    r"\b(?:publish(?:es|ed|ing)?|publication)\b[^\n]{0,240}\b(?:tag|release)\b",
+    re.IGNORECASE,
+)
+release_context_negation_pattern = re.compile(
+    r"\b(?:not|never|do\s+not|don't|before|until|pre[- ]release)\b",
     re.IGNORECASE,
 )
 
 
-def markdown_section(text: str, offset: int) -> str:
-    heading_matches = list(re.finditer(r"^#{1,6}\s+.*$", text, re.MULTILINE))
-    start = max((match.start() for match in heading_matches if match.start() <= offset), default=0)
-    end = next((match.start() for match in heading_matches if match.start() > offset), len(text))
-    return text[start:end]
+def preceding_markdown_context(text: str, offset: int) -> str:
+    line_start = text.rfind("\n", 0, offset) + 1
+    before_line = text[:line_start]
+    fence_start = before_line.rfind("\n```")
+    if fence_start >= 0:
+        before_line = before_line[:fence_start]
+    paragraph = before_line.rstrip().rsplit("\n\n", 1)[-1]
+    return f"{paragraph}\n{text[line_start:offset]}"
 
 
 for match in release_url_pattern.finditer(readme):
@@ -122,11 +128,12 @@ for match in release_url_pattern.finditer(readme):
     executable = re.search(r"\b(?:curl|wget)\b.*\|\s*(?:sudo\s+)?(?:ba)?sh\b", line)
     if not executable:
         continue
-    section = markdown_section(readme, match.start())
+    context = preceding_markdown_context(readme, match.start())
     status = release_statuses.get(match.group(0))
     unavailable = f" (status fixture reports HTTP {status})" if status and status >= 400 else ""
-    check(release_lifecycle_pattern.search(section) is not None,
-          "README.md advertises executable release URL without an explicit pre-release or post-publication qualifier"
+    check(affirmative_release_context_pattern.search(context) is not None
+          and release_context_negation_pattern.search(context) is None,
+          "README.md advertises executable release URL without an immediately preceding affirmative post-publication context"
           f"{unavailable}: {match.group(0)}")
 
 start_marker = "<!-- ssot:verified-quickstart:start -->"
