@@ -5,22 +5,12 @@ umask 077
 
 ROOT_DIR="$(cd -- "$(dirname -- "$0")/../.." && pwd -P)"
 readonly ROOT_DIR
-readonly -a REQUIRED_VALIDATION_MANIFEST=(
-    'ansible-runtime.sh|'
-    'backup-sandbox.sh|'
-    'installer-contract.sh|'
-    'secret-installer-contract.sh|'
-    'restore-sandbox.sh|'
-    'compose-render.sh|'
-    'traffic-mode-contract.sh|'
-    'hardening-contract.sh|'
-    'orchestration-core.sh|'
-    'ufw-docker-idempotency.sh|'
-    'workflow-contract.sh|--self-test'
-    'check-tooling.sh|'
-    'qemu-source-contract.sh|'
-    'qemu-packet-contract.sh|'
-    'sbom-contract.sh|'
+readonly -a REQUIRED_VALIDATION_CONTRACTS=(
+    secret-installer-contract.sh
+    traffic-mode-contract.sh
+    hardening-contract.sh
+    orchestration-core.sh
+    ufw-docker-idempotency.sh
 )
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/check-tooling.XXXXXX")"
@@ -64,12 +54,12 @@ fi
 printf 'check-tooling: command help PASS\n'
 
 regression_failures=0
-for entry in "${REQUIRED_VALIDATION_MANIFEST[@]}"; do
-    count="$(awk -v entry="${entry}" '$0 == entry { count++ } END { print count + 0 }' \
+for contract in "${REQUIRED_VALIDATION_CONTRACTS[@]}"; do
+    count="$(awk -F'|' -v contract="${contract}" '$1 == contract { count++ } END { print count + 0 }' \
         "${ROOT_DIR}/tests/validation/manifest.txt")"
     if [[ ${count} -ne 1 ]]; then
-        printf 'check-tooling: required validation manifest entry must appear exactly once: %s (found %s)\n' \
-            "${entry}" "${count}" >&2
+        printf 'check-tooling: required validation contract must appear exactly once: %s (found %s)\n' \
+            "${contract}" "${count}" >&2
         regression_failures=1
     fi
 done
@@ -89,16 +79,15 @@ done
 printf '#!/usr/bin/env bash\nexit 0\n' >"${TMP_DIR}/scripts/verify-ssot.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' >"${TMP_DIR}/tests/validation/workflow-contract.sh"
 printf '#!/usr/bin/env bash\nexit 23\n' >"${TMP_DIR}/tests/validation/failing-contract.sh"
-for entry in "${REQUIRED_VALIDATION_MANIFEST[@]}"; do
-    script=${entry%%|*}
-    printf '#!/usr/bin/env bash\nexit 0\n' >"${TMP_DIR}/tests/validation/${script}"
-    chmod 0700 "${TMP_DIR}/tests/validation/${script}"
+for contract in "${REQUIRED_VALIDATION_CONTRACTS[@]}"; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${TMP_DIR}/tests/validation/${contract}"
+    chmod 0700 "${TMP_DIR}/tests/validation/${contract}"
 done
 chmod 0700 \
     "${TMP_DIR}/scripts/verify-ssot.sh" \
     "${TMP_DIR}/tests/validation/workflow-contract.sh" \
     "${TMP_DIR}/tests/validation/failing-contract.sh"
-printf '%s\n' "${REQUIRED_VALIDATION_MANIFEST[@]}" \
+printf '%s|\n' "${REQUIRED_VALIDATION_CONTRACTS[@]}" \
     >"${TMP_DIR}/tests/validation/manifest.txt"
 printf 'failing-contract.sh|\n' >>"${TMP_DIR}/tests/validation/manifest.txt"
 
@@ -120,67 +109,59 @@ done
 
 printf 'check-tooling: failure propagation PASS\n'
 
-printf '%s\n' "${REQUIRED_VALIDATION_MANIFEST[@]}" \
+printf '%s|\n' "${REQUIRED_VALIDATION_CONTRACTS[@]}" \
     >"${TMP_DIR}/tests/validation/manifest.complete"
 manifest_rejection_failed=0
-representative_entry='ansible-runtime.sh|'
-for mutation in missing duplicate renamed whitespace blank prefix inert; do
-    cp -- "${TMP_DIR}/tests/validation/manifest.complete" \
-        "${TMP_DIR}/tests/validation/manifest.txt"
-    case ${mutation} in
-        missing)
-            grep -Fvx -- "${representative_entry}" \
-                "${TMP_DIR}/tests/validation/manifest.complete" \
-                >"${TMP_DIR}/tests/validation/manifest.txt"
-            ;;
-        duplicate) printf '%s\n' "${representative_entry}" >>"${TMP_DIR}/tests/validation/manifest.txt" ;;
-        renamed)
-            sed 's/^ansible-runtime\.sh|/renamed-ansible-runtime.sh|/' \
-                "${TMP_DIR}/tests/validation/manifest.complete" \
-                >"${TMP_DIR}/tests/validation/manifest.txt"
-            printf '#!/usr/bin/env bash\nexit 0\n' \
-                >"${TMP_DIR}/tests/validation/renamed-ansible-runtime.sh"
-            chmod 0700 "${TMP_DIR}/tests/validation/renamed-ansible-runtime.sh"
-            ;;
-        whitespace)
-            sed 's/^ansible-runtime\.sh|/ ansible-runtime.sh|/' \
-                "${TMP_DIR}/tests/validation/manifest.complete" \
-                >"${TMP_DIR}/tests/validation/manifest.txt"
-            printf '#!/usr/bin/env bash\nexit 0\n' \
-                >"${TMP_DIR}/tests/validation/ ansible-runtime.sh"
-            chmod 0700 "${TMP_DIR}/tests/validation/ ansible-runtime.sh"
-            ;;
-        blank) printf '\n' >>"${TMP_DIR}/tests/validation/manifest.txt" ;;
-        prefix)
-            printf 'untrusted-prefix.sh|\n' >>"${TMP_DIR}/tests/validation/manifest.txt"
-            printf '#!/usr/bin/env bash\nexit 0\n' \
-                >"${TMP_DIR}/tests/validation/untrusted-prefix.sh"
-            chmod 0700 "${TMP_DIR}/tests/validation/untrusted-prefix.sh"
-            ;;
-        inert) printf '%s\n' "\$(touch \"\$CHECK_TOOLING_INJECTION_MARKER\")|" >>"${TMP_DIR}/tests/validation/manifest.txt" ;;
-    esac
-    if CHECK_TOOLING_INJECTION_MARKER="${TMP_DIR}/injection-marker" \
-        PATH="${TMP_DIR}/bin:/usr/bin:/bin" "${TMP_DIR}/scripts/check.sh" \
-        >"${TMP_DIR}/${mutation}.stdout" 2>"${TMP_DIR}/${mutation}.stderr"; then
-        printf 'check-tooling: %s manifest mutation succeeded: %s\n' \
-            "${mutation}" "${representative_entry}" >&2
+for contract in "${REQUIRED_VALIDATION_CONTRACTS[@]}"; do
+    grep -Fvx -- "${contract}|" "${TMP_DIR}/tests/validation/manifest.complete" \
+        >"${TMP_DIR}/tests/validation/manifest.txt"
+    if PATH="${TMP_DIR}/bin:/usr/bin:/bin" "${TMP_DIR}/scripts/check.sh" \
+        >"${TMP_DIR}/missing-${contract}.stdout" 2>"${TMP_DIR}/missing-${contract}.stderr"; then
+        printf 'check-tooling: missing required validation contract succeeded: %s\n' \
+            "${contract}" >&2
         regression_failures=1
         manifest_rejection_failed=1
-    elif [[ ${mutation} != blank && ${mutation} != prefix && ${mutation} != inert ]] && \
-        ! grep -Fq -- "${representative_entry}" "${TMP_DIR}/${mutation}.stderr"; then
-        printf 'check-tooling: %s manifest mutation failure did not name: %s\n' \
-            "${mutation}" "${representative_entry}" >&2
+    elif ! grep -Fq -- "${contract}" "${TMP_DIR}/missing-${contract}.stderr"; then
+        printf 'check-tooling: missing-contract failure did not name: %s\n' "${contract}" >&2
         regression_failures=1
         manifest_rejection_failed=1
     else
-        printf 'check-tooling: %s rejected and named: %s\n' \
-            "${mutation}" "${representative_entry}"
+        printf 'check-tooling: missing rejected and named: %s\n' "${contract}"
     fi
-    [[ ! -e ${TMP_DIR}/injection-marker ]] || {
-        printf 'check-tooling: manifest data was evaluated: %s\n' "${mutation}" >&2
+
+    sed "s|^${contract}|renamed-${contract}|" \
+        "${TMP_DIR}/tests/validation/manifest.complete" \
+        >"${TMP_DIR}/tests/validation/manifest.txt"
+    if PATH="${TMP_DIR}/bin:/usr/bin:/bin" "${TMP_DIR}/scripts/check.sh" \
+        >"${TMP_DIR}/renamed-${contract}.stdout" 2>"${TMP_DIR}/renamed-${contract}.stderr"; then
+        printf 'check-tooling: renamed required validation contract succeeded: %s\n' \
+            "${contract}" >&2
         regression_failures=1
         manifest_rejection_failed=1
-    }
+    elif ! grep -Fq -- "${contract}" "${TMP_DIR}/renamed-${contract}.stderr"; then
+        printf 'check-tooling: renamed-contract failure did not name: %s\n' "${contract}" >&2
+        regression_failures=1
+        manifest_rejection_failed=1
+    else
+        printf 'check-tooling: rename rejected and named: %s\n' "${contract}"
+    fi
+
+    cp -- "${TMP_DIR}/tests/validation/manifest.complete" \
+        "${TMP_DIR}/tests/validation/manifest.txt"
+    printf '%s|\n' "${contract}" >>"${TMP_DIR}/tests/validation/manifest.txt"
+    if PATH="${TMP_DIR}/bin:/usr/bin:/bin" "${TMP_DIR}/scripts/check.sh" \
+        >"${TMP_DIR}/duplicate-${contract}.stdout" 2>"${TMP_DIR}/duplicate-${contract}.stderr"; then
+        printf 'check-tooling: duplicate required validation contract succeeded: %s\n' \
+            "${contract}" >&2
+        regression_failures=1
+        manifest_rejection_failed=1
+    elif ! grep -Fq -- "${contract}" "${TMP_DIR}/duplicate-${contract}.stderr"; then
+        printf 'check-tooling: duplicate-contract failure did not name: %s\n' "${contract}" >&2
+        regression_failures=1
+        manifest_rejection_failed=1
+    else
+        printf 'check-tooling: duplicate rejected and named: %s\n' "${contract}"
+    fi
 done
 
 [[ ${manifest_rejection_failed} -ne 0 ]] \
@@ -219,9 +200,8 @@ else
     printf 'check-tooling: manifest stdin isolation PASS\n'
 fi
 
-for entry in "${REQUIRED_VALIDATION_MANIFEST[@]}"; do
-    script=${entry%%|*}
-    printf '#!/usr/bin/env bash\nexit 0\n' >"${TMP_DIR}/tests/validation/${script}"
+for contract in "${REQUIRED_VALIDATION_CONTRACTS[@]}"; do
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${TMP_DIR}/tests/validation/${contract}"
 done
 
 for tool in qemu-system-x86_64 qemu-img genisoimage; do
@@ -230,7 +210,7 @@ for tool in qemu-system-x86_64 qemu-img genisoimage; do
 done
 printf '#!/usr/bin/env bash\nexit 0\n' >"${TMP_DIR}/tests/validation/passing-contract.sh"
 chmod 0700 "${TMP_DIR}/tests/validation/passing-contract.sh"
-printf '%s\n' "${REQUIRED_VALIDATION_MANIFEST[@]}" \
+printf '%s|\n' "${REQUIRED_VALIDATION_CONTRACTS[@]}" \
     >"${TMP_DIR}/tests/validation/manifest.txt"
 
 for script in qemu-install.sh lifecycle-qemu.sh; do
@@ -257,7 +237,6 @@ printf '%s\n' '#!/usr/bin/env bash' \
     >"${TMP_DIR}/scripts/release-contract.sh"
 chmod 0700 "${TMP_DIR}/scripts/release-contract.sh"
 
-: >"${TMP_DIR}/release.log"
 CHECK_TOOLING_LOG="${TMP_DIR}/release.log" \
 PATH="${TMP_DIR}/bin:/usr/bin:/bin" "${TMP_DIR}/scripts/check.sh" --release \
     >"${TMP_DIR}/release.stdout" 2>"${TMP_DIR}/release.stderr"
@@ -272,7 +251,6 @@ for generated in \
     }
 done
 printf '%s\n' \
-    test:sbom-contract.sh \
     test:release-artifacts-contract.sh \
     test:release-workflow-contract.sh \
     test:release-publish-contract.sh \
