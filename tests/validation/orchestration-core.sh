@@ -35,7 +35,7 @@ if grep -q 'linux-modules-extra' "${ROLE}/tasks/netfilter_modules.yml"; then
     exit 1
 fi
 for module in iptable_filter ip6table_filter iptable_nat ip6table_nat xt_MASQUERADE xt_comment xt_tcpudp; do
-    grep -q "^      ${module}$" "${ROLE}/tasks/netfilter_modules.yml"
+    grep -q "^[[:space:]]*- ${module}$" "${ROLE}/tasks/netfilter_modules.yml"
 done
 
 printf '[PASS] argument_specs, FQCN, vault-only bootstrap, private volumes, host netfilter, minimal container capabilities, transaction boundaries\n'
