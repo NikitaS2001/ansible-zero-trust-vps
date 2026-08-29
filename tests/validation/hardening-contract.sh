@@ -138,12 +138,16 @@ validate_platform_policy() {
 }
 
 validate_authenticated_ssh_cutover() {
-    HARDENING_SSH_TASKS="${ROLE_DIR}/tasks/ssh.yml" python3 - <<'PY'
+    HARDENING_DEFAULTS="${ROLE_DIR}/defaults/main.yml" \
+    HARDENING_SSH_TASKS="${ROLE_DIR}/tasks/ssh.yml" \
+    REMOTE_HARNESS="${ROOT_DIR}/tests/e2e/qemu-remote-install.sh" python3 - <<'PY'
 from pathlib import Path
 import os
 import yaml
 
+defaults = yaml.safe_load(Path(os.environ["HARDENING_DEFAULTS"]).read_text(encoding="utf-8"))
 tasks = yaml.safe_load(Path(os.environ["HARDENING_SSH_TASKS"]).read_text(encoding="utf-8"))
+harness = Path(os.environ["REMOTE_HARNESS"]).read_text(encoding="utf-8")
 ordered = []
 
 def flatten(items: object) -> None:
@@ -157,19 +161,89 @@ def flatten(items: object) -> None:
         flatten(task.get("rescue"))
 
 flatten(tasks)
+controller_port = defaults.get("vps_hardening_controller_ssh_port")
+if controller_port != "{{ ssh_port }}":
+    raise SystemExit(
+        "controller-facing hardened SSH port must default to the guest ssh_port"
+    )
+tcp_proof = next(
+    task for task in ordered
+    if task.get("name") == "SSH | Verify | Wait for sshd on new port"
+)
+if tcp_proof.get("ansible.builtin.wait_for", {}).get("port") != (
+    "{{ vps_hardening_controller_ssh_port }}"
+):
+    raise SystemExit("delegated TCP proof must use the controller-facing hardened SSH port")
 authenticated = [task for task in ordered if "ansible.builtin.wait_for_connection" in task]
 if len(authenticated) != 1:
     raise SystemExit("SSH cutover must require exactly one authenticated wait_for_connection proof")
 proof = authenticated[0]
 variables = proof.get("vars", {})
-if variables.get("ansible_user") != "{{ admin_user }}" or variables.get("ansible_port") != "{{ ssh_port }}":
-    raise SystemExit("SSH cutover proof must authenticate as admin_user on ssh_port")
+if variables.get("ansible_user") != "{{ admin_user }}" or variables.get("ansible_port") != (
+    "{{ vps_hardening_controller_ssh_port }}"
+):
+    raise SystemExit(
+        "SSH cutover proof must authenticate as admin_user on the controller-facing hardened SSH port"
+    )
 cleanup = next(task for task in ordered if task.get("name", "").startswith("SSH | Cleanup |"))
 if ordered.index(proof) >= ordered.index(cleanup):
     raise SystemExit("authenticated SSH proof must run before old-port UFW deletion")
+update = next(
+    task for task in ordered
+    if task.get("name") == "SSH | Update | Set ansible connection for remainder"
+)
+if update.get("ansible.builtin.set_fact", {}).get("ansible_port") != (
+    "{{ vps_hardening_controller_ssh_port }}"
+):
+    raise SystemExit(
+        "durable post-cutover connection must retain the controller-facing hardened SSH port"
+    )
+
+if "vps_hardening_controller_ssh_port: ${QEMU_ADMIN_PORT}" not in harness:
+    raise SystemExit("remote QEMU harness must pass QEMU_ADMIN_PORT to the role controller proof")
+cutover_start = harness.index("run_successful_cutover() {")
+cutover_end = harness.index("\n}\n\nrun_rollback_probe()", cutover_start)
+cutover = harness[cutover_start:cutover_end]
+pin = cutover.find(
+    'record_authenticated_guest_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}"'
+)
+playbook = cutover.find('run_playbook "${playbook_log}"')
+if pin < 0 or playbook < 0 or pin >= playbook:
+    raise SystemExit(
+        "strict known_hosts must pin the hardened admin endpoint before ansible-playbook starts"
+    )
 PY
 
-    local fixture_dir http_log port run_log run_rc
+    local auth_call expected_key expected_known_host fixture_dir helper_file http_log port run_log run_rc
+    fixture_dir="${RUNTIME_LOG_DIR}/authenticated-host-key"
+    mkdir -p "${fixture_dir}"
+    helper_file="${fixture_dir}/helper.sh"
+    sed -n '/^record_authenticated_guest_host_key() {$/,/^}$/p' \
+        "${ROOT_DIR}/tests/e2e/qemu-remote-install.sh" >"${helper_file}"
+    [[ -s ${helper_file} ]] || fail 'remote QEMU harness lacks authenticated guest host-key derivation'
+    expected_key="ssh-ed25519 task14-${fixture_dir##*.} authenticated-guest"
+    AUTH_CALL_LOG="${fixture_dir}/auth-call.log" \
+    EXPECTED_KEY="${expected_key}" \
+    TMP_DIR="${fixture_dir}" \
+    QEMU_SSH_PORT=28223 \
+        bash -Eeuo pipefail -c '
+            fail() { printf "fixture failure: %s\n" "$*" >&2; return 1; }
+            run_remote_authenticated() {
+                printf "%s|%s|%s|%s|%s\n" "$1" "$2" "$3" "$4" "$5" >"${AUTH_CALL_LOG}"
+                printf "%s\n" "${EXPECTED_KEY}"
+            }
+            ssh-keyscan() { fail "unauthenticated ssh-keyscan was called"; }
+            source "$1"
+            record_authenticated_guest_host_key "127.0.0.1" 28222
+        ' fixture "${helper_file}"
+    auth_call="$(<"${fixture_dir}/auth-call.log")"
+    [[ ${auth_call} == "root@127.0.0.1|28223|${fixture_dir}/id_ed25519|${fixture_dir}/known_hosts|cat /etc/ssh/ssh_host_ed25519_key.pub" ]] \
+        || fail 'hardened endpoint key was not read through the authenticated guest connection'
+    expected_known_host="[127.0.0.1]:28222 ${expected_key}"
+    [[ "$(<"${fixture_dir}/known_hosts")" == "${expected_known_host}" ]] \
+        || fail 'authenticated guest ED25519 key was not pinned for the hardened admin endpoint'
+
+    fixture_dir="${RUNTIME_LOG_DIR}/ssh-http-listener"
     fixture_dir="${RUNTIME_LOG_DIR}/ssh-http-listener"
     mkdir -p "${fixture_dir}"
     port="$(python3 - <<'PY'
@@ -340,7 +414,7 @@ main() {
     validate_plaintext_rejection
     validate_platform_rejection
 
-    printf '%s\n' "{\"argument_specs\":true,\"fqcn\":true,\"ssh_http_tcp_outcome\":${SSH_CUTOVER_TCP_OUTCOME},\"ssh_authenticated_outcome\":${SSH_CUTOVER_AUTH_OUTCOME},\"platform_preflight_always\":true,\"packages_tag_platform_rejection\":true,\"ram_preflight_always\":true,\"packages_tag_memory_rejection\":true,\"plaintext_password_rejected\":true,\"swap_static_guard\":true,\"swap_unchanged_on_rejection\":true,\"sudo_before_user\":true}"
+    printf '%s\n' "{\"argument_specs\":true,\"fqcn\":true,\"ssh_controller_port_contract\":true,\"ssh_strict_admin_key_preseed\":true,\"ssh_http_tcp_outcome\":${SSH_CUTOVER_TCP_OUTCOME},\"ssh_authenticated_outcome\":${SSH_CUTOVER_AUTH_OUTCOME},\"platform_preflight_always\":true,\"packages_tag_platform_rejection\":true,\"ram_preflight_always\":true,\"packages_tag_memory_rejection\":true,\"plaintext_password_rejected\":true,\"swap_static_guard\":true,\"swap_unchanged_on_rejection\":true,\"sudo_before_user\":true}"
 }
 
 main "$@"

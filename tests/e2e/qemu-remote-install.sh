@@ -149,6 +149,19 @@ pass "pre-cutover authenticated root SSH"
 
 # --- controller side: inventory + group_vars + vault --------------------------
 # These paths are gitignored in the repo, exactly like a real remote deploy.
+record_authenticated_guest_host_key() {
+    local destination_host="$1" destination_port="$2"
+    local destination guest_key
+    destination="[${destination_host}]:${destination_port}"
+    guest_key="$(run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+        'cat /etc/ssh/ssh_host_ed25519_key.pub')"
+    [[ "${guest_key}" == ssh-ed25519\ * && "${guest_key}" != *$'\n'* ]] || \
+        fail "authenticated guest returned a malformed ED25519 host key"
+    printf '%s %s\n' "${destination}" "${guest_key}" >>"${TMP_DIR}/known_hosts"
+    chmod 0600 "${TMP_DIR}/known_hosts"
+}
+
 write_direct_inventory() {
     cat >"${ROOT_DIR}/inventory/hosts.yml" <<EOF
 ---
@@ -190,6 +203,7 @@ write_group_vars() {
 # Network
 wg_traffic_mode: "${ZERO_TRUST_WG_TRAFFIC_MODE:-services_only}"
 ssh_port: ${configured_ssh_port}
+vps_hardening_controller_ssh_port: ${QEMU_ADMIN_PORT}
 wg_port: ${E2E_WG_PORT}
 wg_container_port: ${E2E_WG_PORT}
 wg_vpn_subnet: "10.8.0.0/24"
@@ -263,6 +277,7 @@ run_successful_cutover() {
     local playbook_log="${TMP_DIR}/cutover-ansible.log"
     write_direct_inventory
     write_group_vars "${E2E_SSH_PORT}"
+    record_authenticated_guest_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}"
     echo "[E2E] Running SSH/UFW hardening cutover..."
     if ! run_playbook "${playbook_log}" "${TMP_DIR}/hardening.yml" \
         --tags packages,user,ufw,ssh; then
@@ -270,7 +285,6 @@ run_successful_cutover() {
             "${playbook_log}" >&2
         fail "SSH/UFW hardening cutover failed"
     fi
-    record_ssh_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/known_hosts"
     local sshd_effective
     sshd_effective="$(run_remote_authenticated "sysadmin@127.0.0.1" \
         "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \

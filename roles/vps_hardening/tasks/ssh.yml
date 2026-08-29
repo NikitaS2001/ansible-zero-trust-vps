@@ -56,7 +56,7 @@
 
     - name: "SSH | Verify | Wait for sshd on new port"
       ansible.builtin.wait_for:
-        port: "{{ ssh_port }}"
+        port: "{{ vps_hardening_controller_ssh_port }}"
         host: "{{ hostvars[inventory_hostname].ansible_host }}"
         timeout: 30
       delegate_to: localhost
@@ -70,7 +70,7 @@
         connect_timeout: 5
         sleep: 1
       vars:
-        ansible_port: "{{ ssh_port }}"
+        ansible_port: "{{ vps_hardening_controller_ssh_port }}"
         ansible_user: "{{ admin_user }}"
       when: (hostvars[inventory_hostname].ansible_connection | default("ssh")) != "local"
       tags: [ssh]
@@ -126,7 +126,7 @@
 
 - name: "SSH | Update | Set ansible connection for remainder"  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    ansible_port: "{{ ssh_port }}"
+    ansible_port: "{{ vps_hardening_controller_ssh_port }}"
     ansible_user: "{{ admin_user }}"
   when: ansible_connection != "local"
   tags: [ssh]
