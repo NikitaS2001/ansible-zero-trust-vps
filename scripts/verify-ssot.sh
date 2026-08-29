@@ -48,7 +48,7 @@ def read_override(variable: str, relative: str) -> str:
         return read(relative)
     path = Path(override)
     try:
-        return path.read_text(encoding="utf-8")
+        return path.read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as error:
         errors.append(f"cannot read {variable}={path}: {error}")
         return ""
@@ -123,35 +123,38 @@ def strip_shell_comment(command: str) -> str:
     return command
 
 
-def has_unquoted_continuation(line: str) -> bool:
-    trimmed = line.rstrip()
-    if not trimmed.endswith("\\"):
-        return False
-    quote = ""
-    escaped = False
-    terminal_unquoted = False
-    for index, character in enumerate(trimmed):
-        if escaped:
-            escaped = False
-            continue
+def shell_line_state(line: str, initial_quote: str) -> tuple[str, bool]:
+    quote = initial_quote
+    index = 0
+    while index < len(line):
+        character = line[index]
+        if character == "#" and not quote and (index == 0 or line[index - 1].isspace()):
+            break
         if character == "\\" and quote != "'":
-            terminal_unquoted = index == len(trimmed) - 1 and not quote
-            escaped = True
+            if index == len(line) - 1:
+                return quote, True
+            index += 2
             continue
         if character in {"'", '"'}:
             if not quote:
                 quote = character
             elif quote == character:
                 quote = ""
-    return terminal_unquoted
+        index += 1
+    return quote, False
 
 
 def logical_commands(lines: list[str]) -> list[str]:
     commands: list[str] = []
     pending = ""
+    quote = ""
     for line in lines:
-        if has_unquoted_continuation(line):
-            pending += line.rstrip()[:-1] + " "
+        quote, continued = shell_line_state(line, quote)
+        if continued:
+            pending += line[:-1]
+            continue
+        if quote:
+            pending += line + "\n"
             continue
         commands.append(pending + line)
         pending = ""
@@ -165,7 +168,7 @@ def check_release_command(command: str, marker_present: bool, relative: Path) ->
     urls = release_url_pattern.findall(executable)
     if not urls:
         return
-    ambiguous = any(item in executable for item in ("$", "<<", ">>", "<(", ">(", ";", "&&", "||"))
+    ambiguous = any(item in executable for item in ("$", "<<", ">>", "<(", ">(", ";", "&&", "||", "\\\n"))
     try:
         lexer = shlex.shlex(executable, posix=True, punctuation_chars="|;&<>()")
         lexer.whitespace_split = True
@@ -216,27 +219,28 @@ def check_release_installer_blocks(text: str, relative: Path) -> None:
     fence = ""
     marker_present = False
     block: list[str] = []
-    lines = text.splitlines()
+    lines = text.split("\n")
     for line_number, line in enumerate(lines, start=1):
+        syntax_line = line.removesuffix("\r")
         if not in_fence:
-            shell_match = re.fullmatch(r"((?:`{3,}|~{3,}))(bash|sh|shell)[ \t]*", line)
+            shell_match = re.fullmatch(r"((?:`{3,}|~{3,}))(bash|sh|shell)[ \t]*", syntax_line)
             if shell_match:
                 in_fence = True
                 shell_fence = True
                 fence = shell_match.group(1)
-                marker_present = line_number > 1 and lines[line_number - 2] == publication_marker
+                marker_present = line_number > 1 and lines[line_number - 2].removesuffix("\r") == publication_marker
                 block = []
             else:
-                fence_match = re.match(r"((?:`{3,}|~{3,}))", line)
+                fence_match = re.match(r"((?:`{3,}|~{3,}))", syntax_line)
                 if not fence_match:
                     continue
                 fence = fence_match.group(1)
-                if re.match(r"(?:`{3,}|~{3,})(?:bash|sh|shell)\b", line):
+                if re.match(r"(?:`{3,}|~{3,})(?:bash|sh|shell)\b", syntax_line):
                     errors.append(f"{relative}: malformed executable-doc input at line {line_number}")
                 in_fence = True
                 shell_fence = False
             continue
-        if line.rstrip() == fence:
+        if syntax_line.rstrip() == fence:
             if shell_fence:
                 for command in logical_commands(block):
                     check_release_command(command, marker_present, relative)
@@ -362,7 +366,11 @@ local_links = 0
 for path in markdown_files:
     relative = path.relative_to(root)
     text = readme if relative == Path("README.md") else read(str(relative))
-    check_release_installer_blocks(text, relative)
+    try:
+        structural_text = readme if relative == Path("README.md") else path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeError):
+        structural_text = text
+    check_release_installer_blocks(structural_text, relative)
     check(re.search(r"[\u0400-\u04ff]", text) is None,
           f"{relative} contains Cyrillic; public documentation is English")
 
