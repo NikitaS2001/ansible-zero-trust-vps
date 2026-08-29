@@ -264,13 +264,37 @@
     - name: "Traffic mode | Require wg0 and expected pre-NAT firewall state"
       ansible.builtin.shell: |
         set -euo pipefail
+        validate_services_only_chain() {
+          local family="$1" allowed="$2" rules
+          rules="$(timeout 10 docker exec wg-easy "${family}" -S WG_CLIENTS)"
+          python3 - "${allowed}" "${rules}" <<'PY'
+        import json
+        import shlex
+        import sys
+
+        allowed = set(json.loads(sys.argv[1]))
+        rules = sys.argv[2].splitlines()
+        if not rules or rules[-1] != "-A WG_CLIENTS -j DROP":
+            raise SystemExit(1)
+        for rule in rules[1:-1]:
+            tokens = shlex.split(rule)
+            if (
+                tokens[:2] != ["-A", "WG_CLIENTS"]
+                or "-s" not in tokens
+                or "-d" not in tokens
+                or tokens[-2:] != ["-j", "ACCEPT"]
+                or tokens[tokens.index("-d") + 1] not in allowed
+            ):
+                raise SystemExit(1)
+        PY
+        }
         for attempt in $(seq 1 {{ vps_orchestration_traffic_mode_readiness_retries }}); do
           if timeout 10 docker exec wg-easy wg show wg0 >/dev/null; then
             if [[ {{ wg_traffic_mode | quote }} == services_only ]]; then
               timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS \
                 && timeout 10 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS \
-                && [[ "$(timeout 10 docker exec wg-easy iptables -S WG_CLIENTS | tail -n 1)" == "-A WG_CLIENTS -j DROP" ]] \
-                && [[ "$(timeout 10 docker exec wg-easy ip6tables -S WG_CLIENTS | tail -n 1)" == "-A WG_CLIENTS -j DROP" ]] \
+                && validate_services_only_chain iptables {{ wg_services_only_ipv4_destinations | to_json | quote }} \
+                && validate_services_only_chain ip6tables {{ wg_services_only_ipv6_destinations | to_json | quote }} \
                 && exit 0
             else
               ! timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null \

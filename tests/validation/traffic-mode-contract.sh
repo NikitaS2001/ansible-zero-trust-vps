@@ -67,9 +67,13 @@ PY
     fi
     if [[ "${1:-}" == -S && "${2:-}" == WG_CLIENTS && "${firewall}" == 1 ]]; then
       if [[ "${family}" == iptables ]]; then
-        printf '%s\n' '-N WG_CLIENTS' '-A WG_CLIENTS -s 10.8.0.2/32 -d 10.66.0.2/32 -j ACCEPT' '-A WG_CLIENTS -j DROP'
+        printf '%s\n' '-N WG_CLIENTS'
+        [[ -z "${TRAFFIC_TEST_BROAD_ACCEPT:-}" ]] || printf '%s\n' '-A WG_CLIENTS -s 0.0.0.0/0 -d 0.0.0.0/0 -j ACCEPT'
+        printf '%s\n' '-A WG_CLIENTS -s 10.8.0.2/32 -d 10.66.0.2/32 -j ACCEPT' '-A WG_CLIENTS -j DROP'
       else
-        printf '%s\n' '-N WG_CLIENTS' '-A WG_CLIENTS -s fd42:42:42::2/128 -d fd42:42:42::/64 -j ACCEPT' '-A WG_CLIENTS -j DROP'
+        printf '%s\n' '-N WG_CLIENTS'
+        [[ -z "${TRAFFIC_TEST_BROAD_ACCEPT:-}" ]] || printf '%s\n' '-A WG_CLIENTS -s ::/0 -d ::/0 -j ACCEPT'
+        printf '%s\n' '-A WG_CLIENTS -s fd42:42:42::2/128 -d fd42:42:42::/64 -j ACCEPT' '-A WG_CLIENTS -j DROP'
       fi
       exit
     fi
@@ -154,6 +158,12 @@ with sqlite3.connect(sys.argv[1]) as db:
     db.execute("UPDATE interfaces_table SET firewall_enabled=0 WHERE name='wg0'")
     db.execute("UPDATE clients_table SET firewall_ips=NULL")
 PY
+export TRAFFIC_TEST_BROAD_ACCEPT=1
+if ansible-playbook "${TMP}/playbook.yml" >"${TMP}/broad-accept.log" 2>&1; then
+  echo 'broad IPv4/IPv6 ACCEPT before terminal DROP unexpectedly passed readiness' >&2
+  exit 1
+fi
+unset TRAFFIC_TEST_BROAD_ACCEPT
 ansible-playbook "${TMP}/playbook.yml" >"${TMP}/drift.log"
 [[ "$(read_policy)" == '{"client": ["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32", "fd42:42:42::/64"], "firewall": 1, "routes": ["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32", "fd42:42:42::/64"]}' ]]
 
