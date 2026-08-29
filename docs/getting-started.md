@@ -15,10 +15,11 @@ diagnostic-only and is never changed.
 > deployment. Keep the original SSH session open and provider console access
 > available until login on the hardened port succeeds.
 
-## Verified public installer
+## Verified published installer
 
-Install and authenticate [GitHub CLI](https://cli.github.com/) on the VPS, then
-follow the repository's single [Verified quick start](../README.md#verified-quick-start).
+After the maintainer publishes the `v1.3.0` tag and GitHub release, install and
+authenticate [GitHub CLI](https://cli.github.com/) on the VPS, then follow the
+repository's single [Verified release installation](../README.md#verified-release-installation-after-publication).
 It downloads the exact release assets, verifies GitHub's attestation and the
 published checksum, and runs only the verified local installer bytes.
 

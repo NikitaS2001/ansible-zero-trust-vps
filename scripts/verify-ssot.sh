@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import sys
+from os import environ
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -40,6 +41,18 @@ def read(relative: str) -> str:
         return ""
 
 
+def read_override(variable: str, relative: str) -> str:
+    override = environ.get(variable)
+    if not override:
+        return read(relative)
+    path = Path(override)
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        errors.append(f"cannot read {variable}={path}: {error}")
+        return ""
+
+
 def github_slug(heading: str) -> str:
     value = re.sub(r"<[^>]+>", "", heading.strip().lower())
     value = re.sub(r"[^\w\- ]", "", value, flags=re.UNICODE)
@@ -59,7 +72,62 @@ actual_docs = {path.name for path in (root / "docs").glob("*.md")}
 check(required_docs <= actual_docs,
       f"docs/ is missing required pages: {sorted(required_docs - actual_docs)}")
 
-readme = read("README.md")
+readme = read_override("VERIFY_SSOT_README_PATH", "README.md")
+
+release_statuses: dict[str, int] = {}
+status_fixture = environ.get("VERIFY_SSOT_RELEASE_STATUS_FIXTURE")
+if status_fixture:
+    try:
+        status_lines = Path(status_fixture).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        errors.append(f"cannot read release URL status fixture {status_fixture}: {error}")
+        status_lines = []
+    for line_number, line in enumerate(status_lines, start=1):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(r"(https://github\.com/NikitaS2001/ansible-zero-trust-vps/releases/(?:latest/download|download/v[0-9]+\.[0-9]+\.[0-9]+)/[A-Za-z0-9._-]+) ([1-5][0-9]{2})", line)
+        if not match:
+            errors.append(f"release URL status fixture has malformed row {line_number}: {line}")
+            continue
+        url, status = match.groups()
+        if url in release_statuses:
+            errors.append(f"release URL status fixture repeats URL: {url}")
+            continue
+        release_statuses[url] = int(status)
+
+release_url_pattern = re.compile(
+    r"https://github\.com/NikitaS2001/ansible-zero-trust-vps/releases/(?:latest/download|download/v[0-9]+\.[0-9]+\.[0-9]+)/[A-Za-z0-9._-]+"
+)
+release_lifecycle_pattern = re.compile(
+    r"\b(?:pre[- ]release|post[- ](?:publication|merge))\b"
+    r"|\b(?:only|valid|available)\b[^\n]{0,160}\b(?:after|once)\b[^\n]{0,160}\b(?:tag|release|publication|published)\b"
+    r"|\b(?:after|once)\b[^\n]{0,160}\b(?:tag|release|publication|published)\b[^\n]{0,160}\b(?:only|valid|available)\b",
+    re.IGNORECASE,
+)
+
+
+def markdown_section(text: str, offset: int) -> str:
+    heading_matches = list(re.finditer(r"^#{1,6}\s+.*$", text, re.MULTILINE))
+    start = max((match.start() for match in heading_matches if match.start() <= offset), default=0)
+    end = next((match.start() for match in heading_matches if match.start() > offset), len(text))
+    return text[start:end]
+
+
+for match in release_url_pattern.finditer(readme):
+    line_start = readme.rfind("\n", 0, match.start()) + 1
+    line_end = readme.find("\n", match.end())
+    if line_end < 0:
+        line_end = len(readme)
+    line = readme[line_start:line_end]
+    executable = re.search(r"\b(?:curl|wget)\b.*\|\s*(?:sudo\s+)?(?:ba)?sh\b", line)
+    if not executable:
+        continue
+    section = markdown_section(readme, match.start())
+    status = release_statuses.get(match.group(0))
+    unavailable = f" (status fixture reports HTTP {status})" if status and status >= 400 else ""
+    check(release_lifecycle_pattern.search(section) is not None,
+          "README.md advertises executable release URL without an explicit pre-release or post-publication qualifier"
+          f"{unavailable}: {match.group(0)}")
 
 start_marker = "<!-- ssot:verified-quickstart:start -->"
 end_marker = "<!-- ssot:verified-quickstart:end -->"
