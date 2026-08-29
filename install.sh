@@ -845,26 +845,67 @@ write_installer_inputs() {
 read_installer_vault_inputs() {
     timeout "${VAULT_COMMAND_TIMEOUT}" "${VAULT_ANSIBLE_BIN}" view \
         --vault-password-file "${VAULT_PASS_FILE}" "${VAULT_FILE}" \
-        | awk -F: '
-            BEGIN {
-                size = split("ssh_port wg_port wg_container_port admin_user wg_public_host wg_internal_domain adguard_internal_domain internal_domain_suffix wg_traffic_mode", order, " ")
-                for (i = 1; i <= size; i++) wanted[order[i]] = 1
-            }
-            $1 in wanted {
-                count[$1]++
-                value=$0
-                sub(/^[^:]+:[[:space:]]*/, "", value)
-                gsub(/^[]"'\''[]|[]"'\''[]$/, "", value)
-                values[$1] = value
-            }
-            END {
-                for (i = 1; i <= size; i++) {
-                    key = order[i]
-                    if (count[key] != 1) exit 1
-                    print values[key]
-                }
-            }
-        '
+        | "${VAULT_PYTHON_BIN}" -c '
+import sys
+import yaml
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    pass
+
+def construct_unique_mapping(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.constructor.ConstructorError(None, None, "duplicate key", key_node.start_mark)
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    construct_unique_mapping,
+)
+schema = {
+    "ansible_connection",
+    "vps_orchestration_enable_ufw_before_ufw_docker",
+    "admin_password_hash",
+    "vault_adguard_password_hash",
+    "wg_easy_bootstrap_secret",
+    "wg_public_host",
+    "vault_admin_ssh_pubkey",
+    "wg_traffic_mode",
+    "vps_services_vault_path",
+    "ssh_port",
+    "wg_port",
+    "wg_container_port",
+    "admin_user",
+    "wg_internal_domain",
+    "adguard_internal_domain",
+    "internal_domain_suffix",
+}
+order = (
+    "ssh_port",
+    "wg_port",
+    "wg_container_port",
+    "admin_user",
+    "wg_public_host",
+    "wg_internal_domain",
+    "adguard_internal_domain",
+    "internal_domain_suffix",
+    "wg_traffic_mode",
+)
+try:
+    vault = yaml.load(sys.stdin, Loader=UniqueKeyLoader)
+except (TypeError, yaml.YAMLError):
+    sys.exit(1)
+if not isinstance(vault, dict) or set(vault) != schema:
+    sys.exit(1)
+for key in order:
+    value = vault[key]
+    if not isinstance(value, str):
+        sys.exit(1)
+    print(value)
+'
 }
 
 reject_changed_installer_input() {
@@ -980,8 +1021,7 @@ vault_file_is_private() {
 validate_installer_vault() {
     vault_file_is_private "${VAULT_PASS_FILE}" \
         && vault_file_is_private "${VAULT_FILE}" \
-        && timeout "${VAULT_COMMAND_TIMEOUT}" "${VAULT_ANSIBLE_BIN}" view \
-            --vault-password-file "${VAULT_PASS_FILE}" "${VAULT_FILE}" >/dev/null
+        && read_installer_vault_inputs >/dev/null
 }
 
 acquire_installer_lock() {

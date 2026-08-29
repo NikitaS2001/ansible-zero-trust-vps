@@ -81,6 +81,67 @@ assert_private_pair() {
     grep -Fq '$ANSIBLE_VAULT;' "${VAULT_FILE}" || fail 'vault payload is not encrypted'
 }
 
+run_whole_vault_schema_contract() {
+    local malformed_plain malformed_vault original_vault scenario state valid_plain
+    state="${TMP}/whole-vault-schema"
+    configure_fixture "${state}"
+    set_inputs
+    prepare_installer_vault
+    original_vault="${TMP}/original-installer-vault.yml"
+    cp -- "${VAULT_FILE}" "${original_vault}"
+    valid_plain="${TMP}/valid-installer-vault.yml"
+    view_vault >"${valid_plain}"
+    malformed_plain="${TMP}/malformed-installer-vault.yml"
+    malformed_vault="${TMP}/malformed-installer-vault.encrypted.yml"
+    for scenario in duplicate-bootstrap unknown-key duplicate-and-unknown duplicate-routing missing-routing malformed-endpoint; do
+        cp -- "${valid_plain}" "${malformed_plain}"
+        case "${scenario}" in
+            duplicate-bootstrap)
+                printf '%s\n' 'wg_easy_bootstrap_secret: "duplicate-wireguard-value"' >>"${malformed_plain}"
+                ;;
+            unknown-key)
+                printf '%s\n' 'unexpected_top_level_key: "must-be-rejected"' >>"${malformed_plain}"
+                ;;
+            duplicate-and-unknown)
+                printf '%s\n' 'wg_easy_bootstrap_secret: "duplicate-wireguard-value"' \
+                    'unexpected_top_level_key: "must-be-rejected"' >>"${malformed_plain}"
+                ;;
+            duplicate-routing)
+                printf '%s\n' 'ssh_port: "2222"' >>"${malformed_plain}"
+                ;;
+            missing-routing)
+                sed -i '/^wg_port:/d' "${malformed_plain}"
+                ;;
+            malformed-endpoint)
+                sed -i 's/^wg_public_host:.*/wg_public_host: "invalid endpoint"/' "${malformed_plain}"
+                ;;
+        esac
+        "${VAULT_ANSIBLE_BIN}" encrypt --vault-password-file "${VAULT_PASS_FILE}" \
+            --output "${malformed_vault}" "${malformed_plain}"
+        mv -- "${malformed_vault}" "${VAULT_FILE}"
+        chmod 0600 "${VAULT_FILE}"
+        clear_inputs
+        if (load_installer_inputs) >/dev/null 2>&1; then
+            fail "loader accepted malformed whole-vault scenario: ${scenario}"
+        fi
+        printf '[PASS] whole-vault-schema-rejection: %s\n' "${scenario}"
+    done
+
+    cp -- "${original_vault}" "${VAULT_FILE}"
+    chmod 0600 "${VAULT_FILE}"
+    clear_inputs
+    load_installer_inputs
+    printf '[PASS] whole-vault-schema: malformed vaults rejected; valid vault loads\n'
+}
+
+if [[ "${1:-}" == --case ]]; then
+    [[ "${2:-}" == whole-vault-schema ]] || fail "unknown case: ${2:-missing}"
+    run_whole_vault_schema_contract
+    exit 0
+fi
+
+run_whole_vault_schema_contract
+
 state_one="${TMP}/one"
 configure_fixture "${state_one}"
 set_inputs
