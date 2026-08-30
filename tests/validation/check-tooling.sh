@@ -11,6 +11,7 @@ readonly -a REQUIRED_VALIDATION_CONTRACTS=(
     hardening-contract.sh
     orchestration-core.sh
     ufw-docker-idempotency.sh
+    fixture-git-signing-contract.sh
 )
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/check-tooling.XXXXXX")"

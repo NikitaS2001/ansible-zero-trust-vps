@@ -13,6 +13,7 @@ readonly -a REQUIRED_VALIDATION_CONTRACTS=(
     hardening-contract.sh
     orchestration-core.sh
     ufw-docker-idempotency.sh
+    fixture-git-signing-contract.sh
 )
 
 cleanup_prepared_examples() {
