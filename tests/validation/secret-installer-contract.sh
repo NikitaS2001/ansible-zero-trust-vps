@@ -93,7 +93,7 @@ run_whole_vault_schema_contract() {
     view_vault >"${valid_plain}"
     malformed_plain="${TMP}/malformed-installer-vault.yml"
     malformed_vault="${TMP}/malformed-installer-vault.encrypted.yml"
-    for scenario in duplicate-bootstrap unknown-key duplicate-and-unknown duplicate-routing missing-routing malformed-endpoint; do
+    for scenario in duplicate-bootstrap unknown-key duplicate-and-unknown duplicate-routing missing-routing malformed-endpoint malformed-admin-hash-type malformed-control-type wrong-connection-control wrong-vault-path-control; do
         cp -- "${valid_plain}" "${malformed_plain}"
         case "${scenario}" in
             duplicate-bootstrap)
@@ -115,11 +115,30 @@ run_whole_vault_schema_contract() {
             malformed-endpoint)
                 sed -i 's/^wg_public_host:.*/wg_public_host: "invalid endpoint"/' "${malformed_plain}"
                 ;;
+            malformed-admin-hash-type)
+                sed -i 's/^admin_password_hash:.*/admin_password_hash: [malformed]/' "${malformed_plain}"
+                ;;
+            malformed-control-type)
+                sed -i 's/^vps_orchestration_enable_ufw_before_ufw_docker: "true"$/vps_orchestration_enable_ufw_before_ufw_docker: true/' "${malformed_plain}"
+                ;;
+            wrong-connection-control)
+                sed -i 's/^ansible_connection:.*/ansible_connection: "ssh"/' "${malformed_plain}"
+                ;;
+            wrong-vault-path-control)
+                sed -i 's|^vps_services_vault_path:.*|vps_services_vault_path: "/tmp/wrong-installer-vault.yml"|' "${malformed_plain}"
+                ;;
         esac
         "${VAULT_ANSIBLE_BIN}" encrypt --vault-password-file "${VAULT_PASS_FILE}" \
             --output "${malformed_vault}" "${malformed_plain}"
         mv -- "${malformed_vault}" "${VAULT_FILE}"
         chmod 0600 "${VAULT_FILE}"
+        case "${scenario}" in
+            malformed-admin-hash-type|malformed-control-type|wrong-connection-control|wrong-vault-path-control)
+                if validate_installer_vault >/dev/null 2>&1; then
+                    fail "validator accepted malformed whole-vault scenario: ${scenario}"
+                fi
+                ;;
+        esac
         clear_inputs
         if (load_installer_inputs) >/dev/null 2>&1; then
             fail "loader accepted malformed whole-vault scenario: ${scenario}"
@@ -131,6 +150,7 @@ run_whole_vault_schema_contract() {
     chmod 0600 "${VAULT_FILE}"
     clear_inputs
     load_installer_inputs
+    validate_installer_vault || fail 'validator rejected valid whole-vault fixture'
     printf '[PASS] whole-vault-schema: malformed vaults rejected; valid vault loads\n'
 }
 

@@ -843,6 +843,7 @@ write_installer_inputs() {
 }
 
 read_installer_vault_inputs() {
+    # shellcheck disable=SC2016
     timeout "${VAULT_COMMAND_TIMEOUT}" "${VAULT_ANSIBLE_BIN}" view \
         --vault-password-file "${VAULT_PASS_FILE}" "${VAULT_FILE}" \
         | "${VAULT_PYTHON_BIN}" -c '
@@ -900,12 +901,25 @@ except (TypeError, yaml.YAMLError):
     sys.exit(1)
 if not isinstance(vault, dict) or set(vault) != schema:
     sys.exit(1)
+if not all(isinstance(value, str) for value in vault.values()):
+    sys.exit(1)
+if vault["ansible_connection"] != "local":
+    sys.exit(1)
+if vault["vps_orchestration_enable_ufw_before_ufw_docker"] != "true":
+    sys.exit(1)
+if vault["vps_services_vault_path"] != sys.argv[1]:
+    sys.exit(1)
+if not vault["admin_password_hash"].startswith("$6$"):
+    sys.exit(1)
+if not vault["vault_adguard_password_hash"].startswith(("$2a$", "$2b$", "$2y$")):
+    sys.exit(1)
+if len(vault["wg_easy_bootstrap_secret"]) < 12:
+    sys.exit(1)
+if not vault["vault_admin_ssh_pubkey"]:
+    sys.exit(1)
 for key in order:
-    value = vault[key]
-    if not isinstance(value, str):
-        sys.exit(1)
-    print(value)
-'
+    print(vault[key])
+' "${VAULT_FILE}"
 }
 
 reject_changed_installer_input() {
