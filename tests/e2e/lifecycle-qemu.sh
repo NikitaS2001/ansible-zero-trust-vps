@@ -174,13 +174,34 @@ ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX=internal \
 ZERO_TRUST_INTERNAL_DOMAINS='wg.internal adguard.internal' \
 ZERO_TRUST_SSH_PUBKEY=${q_pubkey} ZERO_TRUST_WG_HOST=127.0.0.1"
 
-echo '[E2E] Installing immutable v1.2.1 baseline...'
-run_remote "${GUEST}" "${QEMU_SSH_PORT}" "${TMP_DIR}/id_ed25519" \
-    "sudo env ${installer_environment} ZERO_TRUST_RELEASE_REF=v1.2.1 bash /var/tmp/zt-v1.2.1-install.sh" \
-    2>&1 | tee "${ARTIFACT_DIR}/baseline-install.log"
-record_ssh_host_key 127.0.0.1 "${QEMU_ADMIN_PORT}" "${E2E_KNOWN_HOSTS}"
 TARGET='sysadmin@127.0.0.1'
-require_ssh_ready "${TARGET}" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
+
+run_baseline_install() {
+    local log_file=$1
+    local target=$2
+    local ssh_port=$3
+    run_remote "${target}" "${ssh_port}" "${TMP_DIR}/id_ed25519" \
+        "sudo env ${installer_environment} ZERO_TRUST_RELEASE_REF=v1.2.1 bash /var/tmp/zt-v1.2.1-install.sh" \
+        2>&1 | tee "${log_file}"
+}
+
+connect_as_admin() {
+    record_ssh_host_key 127.0.0.1 "${QEMU_ADMIN_PORT}" "${E2E_KNOWN_HOSTS}"
+    require_ssh_ready "${TARGET}" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" 60
+}
+
+# v1.2.1 validates Caddy through a mutable Docker tag without retrying its
+# image pull. Retry its unchanged installer once so transient registry failures
+# do not invalidate the upgrade lifecycle contract.
+echo '[E2E] Installing immutable v1.2.1 baseline...'
+if ! run_baseline_install "${ARTIFACT_DIR}/baseline-install.log" \
+    "${GUEST}" "${QEMU_SSH_PORT}"; then
+    echo '[E2E] Retrying immutable v1.2.1 baseline after validation failure...'
+    connect_as_admin
+    run_baseline_install "${ARTIFACT_DIR}/baseline-install-retry.log" \
+        "${TARGET}" "${QEMU_ADMIN_PORT}"
+fi
+connect_as_admin
 deployed_baseline="$(run_remote "${TARGET}" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" \
     'sudo git -C /opt/zero-trust-vps-installer/repo rev-parse HEAD')"
 [[ ${deployed_baseline} == "${BASELINE_SHA}" ]] || fail 'guest baseline does not match v1.2.1'
