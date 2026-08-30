@@ -11,6 +11,7 @@ readonly -a REQUIRED_VALIDATION_CONTRACTS=(
     hardening-contract.sh
     orchestration-core.sh
     ufw-docker-idempotency.sh
+    sbom-contract.sh
     fixture-git-signing-contract.sh
 )
 
@@ -252,6 +253,7 @@ for generated in \
     }
 done
 printf '%s\n' \
+    test:sbom-contract.sh \
     test:release-artifacts-contract.sh \
     test:release-workflow-contract.sh \
     test:release-publish-contract.sh \
