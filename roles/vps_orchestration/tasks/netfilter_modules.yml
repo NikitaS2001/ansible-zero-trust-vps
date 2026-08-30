@@ -1,0 +1,23 @@
+---
+- name: "Netfilter | Install | Ensure module loader is available"
+  ansible.builtin.apt:
+    name: kmod
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [docker, compose, traffic_mode]
+
+- name: "Netfilter | Runtime | Load and persist wg-easy legacy iptables modules"
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+    persistent: present
+  loop:
+    - iptable_filter
+    - ip6table_filter
+    - iptable_nat
+    - ip6table_nat
+    - xt_MASQUERADE
+    - xt_comment
+    - xt_tcpudp
+  tags: [docker, compose, traffic_mode]

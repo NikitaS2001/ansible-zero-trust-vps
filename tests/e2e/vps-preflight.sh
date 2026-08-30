@@ -34,6 +34,17 @@ os_id="$(run '. /etc/os-release; echo "$ID $VERSION_ID"')"
 [[ "${os_id}" == debian* || "${os_id}" == ubuntu* ]] || fail "unsupported OS: ${os_id}"
 echo "[ok] OS: ${os_id}"
 
+arch="$(run 'uname -m')"
+[[ "${arch}" == x86_64 ]] || fail "unsupported architecture: ${arch}; amd64 is required"
+echo "[ok] architecture: amd64"
+
+memory_mib="$(run 'awk '\''/^MemTotal:/ { print int($2 / 1024); exit }'\'' /proc/meminfo')"
+[[ "${memory_mib}" =~ ^[0-9]+$ && "${memory_mib}" -ge 900 ]] \
+    || fail "at least 900 MiB of RAM visible to the OS is required: ${memory_mib:-unknown} MiB"
+echo "[ok] physical memory: ${memory_mib} MiB"
+
+run 'awk '\''BEGIN { print "[info] existing swap (diagnostic only; installation must not change it):" } { print }'\'' /proc/swaps'
+
 run 'test -e /dev/net/tun' || fail "/dev/net/tun is missing (enable TUN in the provider panel)"
 echo "[ok] /dev/net/tun present"
 

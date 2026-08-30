@@ -1,38 +1,65 @@
 ---
-- name: "AdGuard | Config | Generate password hash"
-  set_fact:
-    vault_adguard_password_hash: >-
-      {{
-        adguard_password | password_hash(
-          'bcrypt',
-          ((adguard_internal_domain ~ inventory_hostname) | hash('sha256'))[:22],
-          ident='2y'
-        )
-      }}
+- name: "AdGuard | Config | Validate secret inputs"
+  ansible.builtin.assert:
+    that:
+      - adguard_password is not defined
+      - vault_adguard_password_hash | default('') is match('^\$2[aby]\$(0[4-9]|[12][0-9]|3[01])\$[./A-Za-z0-9]{53}$')
+    fail_msg: >-
+      Set only a nonempty, valid precomputed vault_adguard_password_hash.
+      Plaintext adguard_password and runtime password hashing are forbidden.
   no_log: true
   changed_when: false
-  when: adguard_password is defined
   tags: [adguard]
 
-- name: "AdGuard | Config | Fail when no admin password is configured"
-  fail:
-    msg: >-
-      No AdGuard admin password is configured. In public install mode the
-      installer collects adguard_password; in remote mode set
-      vault_adguard_password_hash in group_vars/all/vault_services.yml.
-      An empty hash would render an invalid AdGuardHome.yaml and lock the
-      admin out.
+- name: "AdGuard | Config | Inspect managed config path"
+  ansible.builtin.stat:
+    path: "{{ project_root }}/volumes/adguard/conf/AdGuardHome.yaml"
+    follow: false
+  register: vps_orchestration_adguard_config_path
+  no_log: true
+  tags: [adguard]
+
+- name: "AdGuard | Config | Reject unsafe managed config path"
+  ansible.builtin.assert:
+    that:
+      - not vps_orchestration_adguard_config_path.stat.exists or vps_orchestration_adguard_config_path.stat.isreg
+      - not vps_orchestration_adguard_config_path.stat.islnk | default(false)
+  no_log: true
+  changed_when: false
+  tags: [adguard]
+
+- name: "AdGuard | Config | Inspect managed secret backup artifacts"
+  ansible.builtin.find:
+    paths: "{{ project_root }}/volumes/adguard/conf"
+    recurse: false
+    hidden: true
+    file_type: any
+    use_regex: true
+    patterns: '^AdGuardHome\.yaml(\..*~|.*\.bak)$'
+  register: vps_orchestration_adguard_secret_backups
+  no_log: true
+  tags: [adguard]
+
+- name: "AdGuard | Config | Reject managed secret backup artifacts"
+  ansible.builtin.assert:
+    that:
+      - vps_orchestration_adguard_secret_backups.matched == 0
+    fail_msg: >-
+      Refusing to deploy while a managed AdGuardHome.yaml backup artifact
+      exists. Remove it securely after confirming its contents and rerun.
+  no_log: true
+  changed_when: false
   when:
-    - adguard_password is not defined
-    - vault_adguard_password_hash | default("") | length == 0
+    - vps_orchestration_adguard_secret_backups.matched | default(0) > 0
   tags: [adguard]
 
 - name: "AdGuard | Config | Deploy AdGuardHome.yaml before containers start"
-  template:
+  ansible.builtin.template:
     src: AdGuardHome.yaml.j2
     dest: "{{ project_root }}/volumes/adguard/conf/AdGuardHome.yaml"
-    backup: yes
+    backup: no
     mode: '0600'
+    owner: "{{ ansible_user_id | default(omit) }}"
   register: vps_orchestration_adguard_config
   no_log: true
   tags: [adguard]

@@ -1,19 +1,19 @@
 ---
 - name: "Verify | CA | Wait for Caddy Root CA generation"
-  wait_for:
+  ansible.builtin.wait_for:
     path: "{{ root_ca_path_on_host }}"
     timeout: 90
   tags: [verify]
 
 - name: "Verify | CA | Fetch Root CA certificate"
-  fetch:
+  ansible.builtin.fetch:
     src: "{{ root_ca_path_on_host }}"
     dest: "{{ fetched_certs_dir }}/{{ inventory_hostname }}/root.crt"
     flat: yes
   tags: [verify]
 
 - name: "Verify | UI | Wait for wg-easy bootstrap UI"
-  uri:
+  ansible.builtin.uri:
     url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/"
     status_code: [200, 302]
   register: vps_orchestration_wg_easy_ui
@@ -23,7 +23,7 @@
   tags: [verify]
 
 - name: "Verify | WG | Wait for the WireGuard interface in wg-easy"
-  command: docker exec wg-easy wg show
+  ansible.builtin.command: docker exec wg-easy wg show
   register: vps_orchestration_wg_show
   changed_when: false
   retries: 18
@@ -32,7 +32,7 @@
   tags: [verify]
 
 - name: "Verify | WG | Confirm wg-easy admin API enforces authentication"
-  uri:
+  ansible.builtin.uri:
     url: "http://127.0.0.1:{{ wg_easy_bootstrap_ui_port }}/api/session"
     status_code: 401
   register: vps_orchestration_wg_easy_session
@@ -42,7 +42,7 @@
   tags: [verify]
 
 - name: "Verify | Containers | Require running state"
-  command: docker inspect --format "{{ '{{ .State.Status }}' }}" {{ item }}
+  ansible.builtin.command: docker inspect --format "{{ '{{ .State.Status }}' }}" {{ item }}
   loop:
     - wg-easy
     - adguard
@@ -53,7 +53,7 @@
   tags: [verify]
 
 - name: "Verify | Containers | Inspect optional health status"
-  command: >-
+  ansible.builtin.command: >-
     docker inspect
     --format "{{ '{{ if .State.Health }}{{ .State.Health.Status }}{{ else }}none{{ end }}' }}"
     {{ item }}
@@ -71,7 +71,7 @@
   tags: [verify]
 
 - name: "Verify | WG | wg-easy container env is free of INIT_PASSWORD"
-  command: docker inspect wg-easy --format "{{ '{{ .Config.Env }}' }}"
+  ansible.builtin.command: docker inspect wg-easy --format "{{ '{{ .Config.Env }}' }}"
   register: vps_orchestration_wg_env_check
   changed_when: false
   failed_when: "'INIT_PASSWORD' in vps_orchestration_wg_env_check.stdout"
@@ -79,7 +79,7 @@
   tags: [verify]
 
 - name: "Verify | WG | wg-easy panel is bound to localhost only"
-  command: docker port wg-easy
+  ansible.builtin.command: docker port wg-easy
   register: vps_orchestration_wg_ports
   changed_when: false
   # Fail when any 51821/tcp mapping is published on anything other than
@@ -92,7 +92,7 @@
   tags: [verify]
 
 - name: "Verify | UI | Wait for AdGuard UI"
-  uri:
+  ansible.builtin.uri:
     url: "http://127.0.0.1:{{ adguard_bootstrap_ui_port }}/"
     status_code: 200
   register: vps_orchestration_adguard_status
@@ -102,7 +102,7 @@
   tags: [verify]
 
 - name: "Verify | SSH | Confirm SSH still accessible"
-  wait_for:
+  ansible.builtin.wait_for:
     host: "{{ ansible_host }}"
     port: "{{ ssh_port }}"
     timeout: 30
@@ -111,7 +111,7 @@
   tags: [verify]
 
 - name: "Verify | Security | Confirm 443 is closed externally"
-  wait_for:
+  ansible.builtin.wait_for:
     host: "{{ ansible_host }}"
     port: 443
     state: stopped
@@ -121,7 +121,7 @@
   tags: [verify]
 
 - name: "Verify | Summary | Print completion message"
-  debug:
+  ansible.builtin.debug:
     msg:
       - "✅ Zero-Trust VPN deployment complete!"
       - "📄 Root CA: {{ fetched_certs_dir }}/{{ inventory_hostname }}/root.crt"

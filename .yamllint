@@ -4,6 +4,8 @@ extends: default
 ignore: |
   .agents/
   .git/
+  .omo/
+  .venv/
   .sisyphus/
   fetched_certs/
   volumes/

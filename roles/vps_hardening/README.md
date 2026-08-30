@@ -1,127 +1,74 @@
-# vps_hardening
+# vps_hardening role
 
-Hardens a fresh VPS by installing and configuring UFW firewall, fail2ban
-brute-force protection, SSH key authentication, a non-root admin user, and
-kernel-level network hardening via sysctl.
+Applies the host baseline before service orchestration: minimum-host preflight,
+packages, a managed administrator, transactional SSH cutover, sysctl, UFW, and
+Fail2Ban.
 
-## Purpose
+Use this role through [`site.yml`](../../site.yml). The executable input contract
+is [`meta/main.yml`](meta/main.yml); defaults are in
+[`defaults/main.yml`](defaults/main.yml).
 
-This role brings a Debian/Ubuntu VPS to a secure baseline:
+## Stable inputs
 
-- Installs and enables UFW with default-deny incoming policy
-- Creates a non-root sudo user with SSH public-key authentication.
-  Re-runs set `admin_user` groups to `admin_group` plus `docker` (`append: no`)
-  and, by default, replace `authorized_keys` with `vault_admin_ssh_pubkey`.
-  Extra groups or keys on a live account disappear unless
-  `vps_hardening_authorized_keys_exclusive` is `false`.
-- Hardens the SSH daemon (non-standard port, key auth only, forwarding limited
-  to the configured localhost UI ports)
-- Applies kernel network sysctl settings (IP forwarding, rpfilter, etc.)
-- Installs and configures fail2ban to block brute-force SSH attackers
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `ssh_port` | `2222` | Hardened SSH TCP port |
+| `wg_port` | `51820` | WireGuard UDP port allowed by UFW |
+| `admin_user` | `sysadmin` | Managed non-root administrator |
+| `admin_group` | `sudo` | Privileged primary group |
+| `admin_shell` | `/bin/bash` | Login shell |
+| `admin_password_hash` | empty | Optional precomputed password hash; plaintext is rejected |
+| `vault_admin_ssh_pubkey` | empty | Managed administrator public key |
+| `vps_hardening_authorized_keys_exclusive` | `true` | Remove unmanaged administrator keys on convergence |
+| `ssh_service_name` | `ssh` | OpenSSH service unit |
+| `ssh_socket_name` | `ssh.socket` | OpenSSH socket unit when socket activation exists |
+| `ssh_allow_tcp_forwarding` | `yes` | OpenSSH forwarding policy |
+| `vps_hardening_manage_ssh_socket` | `true` | Let `sshd_config` own the hardened port |
+| `wg_easy_bootstrap_ui_port` | `51821` | Localhost wg-easy forwarding destination |
+| `adguard_bootstrap_ui_port` | `3000` | Localhost AdGuard forwarding destination |
+| `fail2ban_ignore_ips` | loopback only | Addresses exempt from Fail2Ban |
+| `fail2ban_bantime` | `3600` | Ban duration in seconds |
+| `fail2ban_findtime` | `600` | Retry observation window in seconds |
+| `fail2ban_maxretry` | `5` | Attempts allowed before a ban |
+| `vps_hardening_apply_package_upgrade` | `false` | Apply the selected apt upgrade before installation |
+| `vps_hardening_package_upgrade_mode` | `safe` | Supported apt upgrade policy |
+| `vps_hardening_enable_ufw_on_local_connection` | `false` | Installer-only opt-in for local Ansible |
 
-## Variables
+UI forwarding ports and Fail2Ban timing/retry values are also validated by the
+argument specification. Change them in normal group variables, not by editing
+role tasks.
 
-| Variable | Default | Description |
-|---|---|---|
-| `ssh_port` | `2222` | Hardened SSH listening port |
-| `wg_port` | `51820` | WireGuard UDP port (opened in UFW) |
-| `admin_user` | `sysadmin` | Name of the non-root admin account |
-| `admin_group` | `sudo` | Sudo-capable group for `admin_user` |
-| `admin_shell` | `/bin/bash` | Login shell for `admin_user` |
-| `admin_password_hash` | `""` | Precomputed admin password hash (optional; key auth is primary) |
-| `vault_admin_ssh_pubkey` | `""` | SSH public key content for `admin_user` (required for key auth) |
-| `vps_hardening_authorized_keys_exclusive` | `true` | Replace `authorized_keys` with only this managed key; extra keys are removed |
-| `ssh_service_name` | `ssh` | Name of the SSH service to restart |
-| `ssh_socket_name` | `ssh.socket` | Name of the systemd SSH socket unit when socket activation is present |
-| `ssh_allow_tcp_forwarding` | `"yes"` | Allow SSH TCP forwarding (`"yes"` or `"no"`) |
-| `vps_hardening_manage_ssh_socket` | `true` | Disable SSH socket activation so `sshd_config` owns the hardened port |
-| `wg_easy_bootstrap_ui_port` | `51821` | wg-easy UI port bound to localhost (for SSH tunnel access) |
-| `adguard_bootstrap_ui_port` | `3000` | AdGuard UI port bound to localhost (for SSH tunnel access) |
-| `fail2ban_ignore_ips` | `["127.0.0.1/8"]` | IPs ignored by fail2ban |
-| `fail2ban_bantime` | `3600` | fail2ban ban duration in seconds |
-| `fail2ban_findtime` | `600` | fail2ban find-time window in seconds |
-| `fail2ban_maxretry` | `5` | fail2ban retries before a ban |
-| `vps_hardening_apply_package_upgrade` | `false` | Whether to upgrade system packages |
-| `vps_hardening_package_upgrade_mode` | `"safe"` | Upgrade mode: `"safe"` (dist-upgrade --no-install-recommends) or `"full"` |
-| `vps_hardening_enable_ufw_on_local_connection` | `false` | Allow UFW enablement when Ansible connects locally, used by the public installer on the VPS |
+## Preconditions and effects
+
+- Target: Debian 12 or Ubuntu 24.04 on amd64, on a 1 GB or larger VPS plan
+  with at least 900 MiB of RAM visible to the OS.
+- The public installer reports existing swap for diagnostics; this role never
+  changes swap or zram.
+- `sudo` is installed before the managed user is created.
+- Password and root SSH login are disabled. Candidate SSH configuration and
+  reachability are validated before the old path is removed; failures restore
+  the previous state.
+- UFW defaults to deny incoming traffic and allows managed SSH and WireGuard
+  ports. Provider firewall configuration remains the operator's responsibility.
+- The administrator is reconciled to the privileged and Docker groups. Both
+  sudo and Docker access are root-equivalent.
+- The VPN subnet is not ignored by Fail2Ban by default.
+
+Check mode is not a reliable change predictor because safe cutover requires
+runtime probes. Test on a disposable host or use the E2E matrix instead.
 
 ## Tags
 
-| Tag | Purpose |
-|---|---|
-| `preflight` | Validate supported target environment |
-| `packages` | Install and upgrade system packages |
-| `user` | Create admin user and configure sudo |
-| `ssh` | Harden SSH daemon configuration |
-| `sysctl` | Apply kernel network hardening sysctl values |
-| `ufw` | Install and configure UFW firewall |
-| `fail2ban` | Install and configure fail2ban |
+| Tag | Boundary |
+| --- | --- |
+| `preflight` | Platform, memory, input, and secret validation |
+| `packages` | apt packages and optional upgrades |
+| `user` | Administrator, sudo, groups, and SSH key |
+| `ssh` | SSH candidate, cutover, proof, and rollback |
+| `sysctl` | Managed kernel settings |
+| `ufw` | Host firewall |
+| `fail2ban` | SSH brute-force protection |
+| `ssh_ufw_cleanup` | Proven-old-path cleanup |
 
-## Handlers
-
-| Handler | Listened Events | Action |
-|---|---|---|
-| Restart sshd | `restart sshd` | Restart the SSH service |
-| Reload sysctl | `reload sysctl` | Reapply sysctl settings system-wide |
-| Restart fail2ban | `restart fail2ban` | Restart fail2ban daemon |
-
-## Example Playbook
-
-```yaml
-- hosts: vps
-  become: true
-  roles:
-    - role: vps_hardening
-      vars:
-        ssh_port: 2222
-        wg_port: 51820
-        admin_user: sysadmin
-        admin_group: sudo
-        admin_shell: /bin/bash
-        vault_admin_ssh_pubkey: "ssh-ed25519 AAAA... operator@example"
-        ssh_allow_tcp_forwarding: "yes"
-        fail2ban_ignore_ips:
-          - "127.0.0.1/8"
-        vps_hardening_apply_package_upgrade: true
-        vps_hardening_package_upgrade_mode: safe
-```
-
-## First Setup Access
-
-After this role runs, access the wg-easy setup wizard through an SSH tunnel:
-
-```sh
-ssh -p 2222 -L 51821:127.0.0.1:51821 sysadmin@<vps-ip>
-# Open http://127.0.0.1:51821 in your browser
-```
-
-AdGuard admin UI (once `vps_orchestration` has also run):
-
-```sh
-ssh -p 2222 -L 3000:127.0.0.1:3000 sysadmin@<vps-ip>
-# Open http://127.0.0.1:3000 in your browser
-```
-
-## Firewall and release boundary
-
-UFW is managed by this role, but the provider firewall remains the operator's
-responsibility. Allow the current SSH port, hardened SSH port, and WireGuard
-UDP port at the provider before deployment; keep the existing authenticated
-session until a new key-authenticated login succeeds. The SSH tasks validate
-the candidate daemon configuration and restore the prior configuration when
-the new login cannot be proven.
-
-Disposable local and remote QEMU coverage establishes software merge readiness.
-It does not prove provider-firewall behavior, provider routing, or a live host
-lifecycle. Those remain operator responsibilities for an actual deployment;
-GitHub Actions stores no VPS credential and live external host availability is
-out of scope for merge readiness.
-
-### Check Mode Support
-Check mode is **not** reliably supported: several tasks use `command`/template
-preconditions that report synthetic success in `--check`. Run the role normally
-on a fresh host; do not rely on `--check` for change prediction.
-
-## Dependencies
-
-None.
+The role has no external Ansible role dependency. It must run before
+[`vps_orchestration`](../vps_orchestration/README.md).

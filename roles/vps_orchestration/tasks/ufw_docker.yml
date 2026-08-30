@@ -1,26 +1,43 @@
 ---
 # Critical step: ufw-docker is required because Docker published ports bypass UFW.
 - name: "UFW-Docker | Install | Download ufw-docker script"
-  get_url:
+  ansible.builtin.get_url:
     url: "https://raw.githubusercontent.com/chaifeng/ufw-docker/{{ ufw_docker_commit }}/ufw-docker"
     dest: /usr/local/bin/ufw-docker
     checksum: "{{ ufw_docker_checksum }}"
     mode: '0755'
   tags: [ufw_docker]
 
-- name: "UFW-Docker | State | Enable UFW before UFW-Docker install"
-  command: ufw --force enable  # noqa: command-instead-of-module
-  register: vps_orchestration_ufw_enable
-  changed_when: >
-    (vps_orchestration_ufw_enable.stdout ~ vps_orchestration_ufw_enable.stderr)
-    is regex('(?m)(Firewall is active and enabled|Firewall reloaded)', ignorecase=True)
+- name: "UFW-Docker | State | Read UFW status before enable"
+  ansible.builtin.command: ufw status verbose  # noqa: command-instead-of-module
+  register: vps_orchestration_ufw_status
+  changed_when: false
+  failed_when: >-
+    vps_orchestration_ufw_status.rc != 0
+    or vps_orchestration_ufw_status.stdout is not regex('(?mi)^Status:\\s+(active|inactive)\\s*$')
   when:
     - vps_orchestration_enable_ufw_before_ufw_docker | bool
     - ansible_facts["virtualization_type"] | default("") not in ["lxc", "openvz"]
   tags: [ufw_docker]
 
+- name: "UFW-Docker | State | Enable UFW before UFW-Docker install"
+  ansible.builtin.command: ufw --force enable  # noqa: command-instead-of-module
+  register: vps_orchestration_ufw_enable
+  changed_when: >-
+    (vps_orchestration_ufw_enable.stdout ~ vps_orchestration_ufw_enable.stderr)
+    is regex('(?mi)^Firewall is active and enabled')
+  failed_when: >-
+    vps_orchestration_ufw_enable.rc != 0
+    or ((vps_orchestration_ufw_enable.stdout ~ vps_orchestration_ufw_enable.stderr)
+    is not regex('(?mi)^Firewall is active and enabled'))
+  when:
+    - vps_orchestration_enable_ufw_before_ufw_docker | bool
+    - ansible_facts["virtualization_type"] | default("") not in ["lxc", "openvz"]
+    - vps_orchestration_ufw_status.stdout is not regex('(?mi)^Status:\\s+active\\s*$')
+  tags: [ufw_docker]
+
 - name: "UFW-Docker | Install | Run ufw-docker install"
-  command: ufw-docker install
+  ansible.builtin.command: ufw-docker install
   register: vps_orchestration_ufw_docker_install
   notify: reload ufw
   changed_when: >
@@ -29,18 +46,43 @@
   tags: [ufw_docker]
 
 - name: "UFW-Docker | Install | Apply UFW-Docker rules immediately"
-  meta: flush_handlers
+  ansible.builtin.meta: flush_handlers
+  tags: [ufw_docker]
+
+- name: "UFW-Docker | Allow | Read wg-easy WireGuard UDP rules"
+  ansible.builtin.command: "ufw-docker list wg-easy {{ wg_container_port }}/udp"
+  register: vps_orchestration_ufw_docker_wg_rules
+  changed_when: false
+  failed_when: vps_orchestration_ufw_docker_wg_rules.rc not in [0, 1]
   tags: [ufw_docker]
 
 - name: "UFW-Docker | Allow | wg-easy WireGuard UDP"
-  command: "ufw-docker allow wg-easy {{ wg_container_port }}/udp"
+  ansible.builtin.command: "ufw-docker allow wg-easy {{ wg_container_port }}/udp"
   register: vps_orchestration_ufw_docker_allow_wg
   notify: reload ufw
   changed_when: >
     ((vps_orchestration_ufw_docker_allow_wg.stdout ~ vps_orchestration_ufw_docker_allow_wg.stderr)
     is regex('(?m)(^ufw route allow|^Rule added|^Rule updated|Remove outdated rule)', ignorecase=True))
+  when: >-
+    vps_orchestration_ufw_docker_wg_rules.rc != 0
+    or (vps_orchestration_ufw_docker_wg_rules.stdout | regex_findall(
+    '(?m)^.*# allow wg-easy ' ~ (wg_container_port | string) ~ '/udp(?: [A-Za-z0-9_.-]+)?$') | length) != 1
+    or (vps_orchestration_ufw_docker_wg_rules.stdout | regex_findall(
+    '(?m)^.*# allow wg-easy/v6 ' ~ (wg_container_port | string) ~ '/udp(?: [A-Za-z0-9_.-]+)?$') | length) != 1
+  tags: [ufw_docker]
+
+- name: "UFW-Docker | Allow | Verify wg-easy WireGuard UDP rules"
+  ansible.builtin.command: "ufw-docker list wg-easy {{ wg_container_port }}/udp"
+  register: vps_orchestration_ufw_docker_wg_rules_after
+  changed_when: false
+  failed_when: >-
+    vps_orchestration_ufw_docker_wg_rules_after.rc != 0
+    or (vps_orchestration_ufw_docker_wg_rules_after.stdout | regex_findall(
+    '(?m)^.*# allow wg-easy ' ~ (wg_container_port | string) ~ '/udp(?: [A-Za-z0-9_.-]+)?$') | length) != 1
+    or (vps_orchestration_ufw_docker_wg_rules_after.stdout | regex_findall(
+    '(?m)^.*# allow wg-easy/v6 ' ~ (wg_container_port | string) ~ '/udp(?: [A-Za-z0-9_.-]+)?$') | length) != 1
   tags: [ufw_docker]
 
 - name: "UFW-Docker | Allow | Apply container allow rules immediately"
-  meta: flush_handlers
+  ansible.builtin.meta: flush_handlers
   tags: [ufw_docker]

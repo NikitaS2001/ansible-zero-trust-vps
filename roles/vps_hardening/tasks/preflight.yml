@@ -1,32 +1,80 @@
 ---
+- name: "VPS Hardening | Preflight | Require a supported OS release"
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          (ansible_facts.distribution | default(ansible_distribution | default('')) == 'Debian')
+          and (ansible_facts.distribution_major_version | default(ansible_distribution_major_version | default('')) == '12')
+        )
+        or
+        (
+          (ansible_facts.distribution | default(ansible_distribution | default('')) == 'Ubuntu')
+          and (ansible_facts.distribution_version | default(ansible_distribution_version | default('')) == '24.04')
+        )
+    fail_msg: >-
+      Unsupported OS release. This role supports Debian 12 and Ubuntu 24.04 only.
+    quiet: true
+  tags: [always, preflight]
+
+- name: "VPS Hardening | Preflight | Require amd64 architecture"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.architecture | default(ansible_architecture | default('')) == 'x86_64'
+    fail_msg: >-
+      Unsupported architecture. This role supports amd64 (x86_64) only.
+    quiet: true
+  tags: [always, preflight]
+
+- name: "VPS Hardening | Preflight | Require at least 900 MiB of available RAM"
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.memtotal_mb | default(ansible_memtotal_mb | default(0)) | int >= 900
+    fail_msg: >-
+      This role requires at least 900 MiB of RAM visible to the OS, which normally corresponds to a
+      1 GB VPS plan. Increase the VPS memory allocation before deployment; the role does not create
+      or modify swap or zram.
+    quiet: true
+  tags: [always, preflight]
+
+- name: "VPS Hardening | Preflight | Reject deprecated plaintext admin password"
+  ansible.builtin.assert:
+    that:
+      - admin_password is not defined
+    fail_msg: >-
+      admin_password is no longer accepted. Store an optional precomputed password hash as
+      admin_password_hash, or leave it empty for a locked key-only account.
+    quiet: true
+  tags: [always, preflight]
+
 - name: "VPS Hardening | Preflight | Check TUN device"
-  stat:
+  ansible.builtin.stat:
     path: /dev/net/tun
   register: vps_hardening_tun_device
   tags: [preflight]
 
 - name: "VPS Hardening | Preflight | Verify WireGuard module"
-  command: modinfo wireguard
+  ansible.builtin.command: modinfo wireguard
   changed_when: false
   failed_when: false
   register: vps_hardening_wireguard_module
   tags: [preflight]
 
 - name: "VPS Hardening | Preflight | Verify WireGuard netlink support"
-  command: ip link add dev wg-preflight type wireguard
+  ansible.builtin.command: ip link add dev wg-preflight type wireguard
   changed_when: false
   failed_when: false
   register: vps_hardening_wireguard_netlink
   tags: [preflight]
 
 - name: "VPS Hardening | Preflight | Remove temporary WireGuard interface"
-  command: ip link delete dev wg-preflight
+  ansible.builtin.command: ip link delete dev wg-preflight
   changed_when: false
   when: vps_hardening_wireguard_netlink.rc == 0
   tags: [preflight]
 
 - name: "VPS Hardening | Preflight | Fail when TUN is missing"
-  fail:
+  ansible.builtin.fail:
     msg: >-
       /dev/net/tun is not available. WireGuard requires TUN support; enable TUN in the VPS control panel
       or use a kernel/VPS type that exposes TUN.
@@ -34,7 +82,7 @@
   tags: [preflight]
 
 - name: "VPS Hardening | Preflight | Fail when WireGuard module is missing"
-  fail:
+  ansible.builtin.fail:
     msg: >-
       WireGuard support is unavailable. modinfo wireguard failed and creating a temporary WireGuard
       interface with ip link also failed. Install or enable WireGuard support, or use a VPS image/kernel

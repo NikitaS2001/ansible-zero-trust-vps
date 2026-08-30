@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Final E2E against a real VPS using the public installer exactly as documented:
-#
-#   curl -fsSL https://raw.githubusercontent.com/<repo>/<tag>/install.sh | sudo bash
+# Manual E2E against a real VPS using the installer from an explicit Git ref.
 #
 # Usage:
 #   VPS_IP=... VPS_SSH_KEY=... INSTALL_REF=v1.0.0 tests/e2e/run-public-install.sh [--reboot-test] [--client-test]
@@ -70,6 +68,11 @@ WG_PASS="${ZERO_TRUST_WG_PASSWORD:-$(openssl rand -hex 12)}"
 SSH_PORT_IN="${ZERO_TRUST_SSH_PORT:-${E2E_SSH_PORT}}"
 WG_PORT_IN="${ZERO_TRUST_WG_PORT:-${E2E_WG_PORT}}"
 INTERNAL_DOMAINS="${ZERO_TRUST_INTERNAL_DOMAINS:-${WG_INTERNAL_DOMAIN} ${ADGUARD_INTERNAL_DOMAIN}}"
+TRAFFIC_MODE="${ZERO_TRUST_WG_TRAFFIC_MODE:-services_only}"
+INSTALL_DEV_MODE="${ZERO_TRUST_DEV_MODE:-}"
+if [[ -z "${INSTALL_DEV_MODE}" && ! "${INSTALL_REF}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    INSTALL_DEV_MODE=1
+fi
 
 KNOWN_HOSTS="${VPS_KNOWN_HOSTS}"
 [[ -s "${KNOWN_HOSTS}" ]] || fail "VPS_KNOWN_HOSTS must contain a pinned host key"
@@ -82,9 +85,11 @@ run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
     "${KNOWN_HOSTS}" true
 require_wrong_host_key_rejected "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}"
 require_wrong_scp_host_key_rejected "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}"
+SWAP_BEFORE="$(run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
+    "${KNOWN_HOSTS}" "awk 'NR > 1 { print \$1, \$2, \$3, \$5 }' /proc/swaps")"
 
-# The documented one-liner pipes install.sh through curl into sudo bash on the
-# VPS; minimal Debian images ship neither curl nor sudo by default.
+# The harness downloads the installer before privileged execution; minimal
+# Debian images ship neither curl nor sudo by default.
 echo "[E2E] Ensuring curl and sudo are available on the VPS..."
 run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
     "${KNOWN_HOSTS}" \
@@ -96,21 +101,31 @@ echo "[E2E] Running the public installer from ${INSTALL_URL}"
 
 REMOTE_INSTALL=$(cat <<INNER_EOF
 set -euo pipefail
-curl -fsSL '${INSTALL_URL}' |
-sudo env \\
-    ZERO_TRUST_NONINTERACTIVE=1 \\
-    ZERO_TRUST_REPO_URL=https://github.com/NikitaS2001/ansible-zero-trust-vps.git \\
-    ZERO_TRUST_RELEASE_REF='${INSTALL_REF}' \\
-    ZERO_TRUST_SSH_PORT='${SSH_PORT_IN}' \\
-    ZERO_TRUST_WG_PORT='${WG_PORT_IN}' \\
-    ZERO_TRUST_ADMIN_USER='${ADMIN_USER}' \\
-    ZERO_TRUST_ADMIN_PASSWORD='${ADMIN_PASS}' \\
-    ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}' \\
-    ZERO_TRUST_WG_PASSWORD='${WG_PASS}' \\
-    ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX='${INTERNAL_DOMAIN_SUFFIX}' \\
-    ZERO_TRUST_INTERNAL_DOMAINS='${INTERNAL_DOMAINS}' \\
-    ZERO_TRUST_SSH_PUBKEY='${ADMIN_PUBKEY}' \\
-    bash
+installer_path=\$(mktemp /tmp/zero-trust-vps-install.XXXXXX)
+trap 'rm -f "\${installer_path}"' EXIT
+curl -fsSL '${INSTALL_URL}' -o "\${installer_path}"
+chmod 0700 "\${installer_path}"
+installer_env=(
+    ZERO_TRUST_NONINTERACTIVE=1
+    ZERO_TRUST_DEV_MODE='${INSTALL_DEV_MODE}'
+    ZERO_TRUST_REPO_URL=https://github.com/NikitaS2001/ansible-zero-trust-vps.git
+    ZERO_TRUST_RELEASE_REF='${INSTALL_REF}'
+)
+if ! sudo test -s /etc/zero-trust-vps/installer-vault.yml; then
+    installer_env+=(
+        ZERO_TRUST_SSH_PORT='${SSH_PORT_IN}'
+        ZERO_TRUST_WG_PORT='${WG_PORT_IN}'
+        ZERO_TRUST_ADMIN_USER='${ADMIN_USER}'
+        ZERO_TRUST_ADMIN_PASSWORD='${ADMIN_PASS}'
+        ZERO_TRUST_ADGUARD_PASSWORD='${ADGUARD_PASS}'
+        ZERO_TRUST_WG_PASSWORD='${WG_PASS}'
+        ZERO_TRUST_WG_TRAFFIC_MODE='${TRAFFIC_MODE}'
+        ZERO_TRUST_INTERNAL_DOMAIN_SUFFIX='${INTERNAL_DOMAIN_SUFFIX}'
+        ZERO_TRUST_INTERNAL_DOMAINS='${INTERNAL_DOMAINS}'
+        ZERO_TRUST_SSH_PUBKEY='${ADMIN_PUBKEY}'
+    )
+fi
+sudo env "\${installer_env[@]}" bash "\${installer_path}"
 INNER_EOF
 )
 run_remote_authenticated "${ROOT_TARGET}" "${VPS_SSH_PORT}" "${VPS_SSH_KEY}" \
@@ -127,6 +142,41 @@ require_wrong_host_key_rejected "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${AD
 export E2E_SSH_PORT="${SSH_PORT_IN}" E2E_WG_PORT="${WG_PORT_IN}"
 E2E_KNOWN_HOSTS="${KNOWN_HOSTS}" verify_deployment \
     "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
+E2E_KNOWN_HOSTS="${KNOWN_HOSTS}" verify_traffic_mode \
+    "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" "${TRAFFIC_MODE}"
+VAULT_PAIR_BEFORE="$(run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
+    "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" \
+    "sudo sha256sum /etc/zero-trust-vps/installer-vault.pass /etc/zero-trust-vps/installer-vault.yml")"
+echo "[E2E] Re-running the installer without any credential inputs..."
+REMOTE_RERUN=$(cat <<INNER_RERUN
+set -euo pipefail
+installer_path=\$(mktemp /tmp/zero-trust-vps-install.XXXXXX)
+trap 'rm -f "\${installer_path}"' EXIT
+curl -fsSL '${INSTALL_URL}' -o "\${installer_path}"
+chmod 0700 "\${installer_path}"
+sudo env \\
+    ZERO_TRUST_NONINTERACTIVE=1 \\
+    ZERO_TRUST_DEV_MODE='${INSTALL_DEV_MODE}' \\
+    ZERO_TRUST_REPO_URL=https://github.com/NikitaS2001/ansible-zero-trust-vps.git \\
+    ZERO_TRUST_RELEASE_REF='${INSTALL_REF}' \\
+    bash "\${installer_path}"
+INNER_RERUN
+)
+run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
+    "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" 'bash -s' <<<"${REMOTE_RERUN}"
+VAULT_PAIR_AFTER="$(run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
+    "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" \
+    "sudo sha256sum /etc/zero-trust-vps/installer-vault.pass /etc/zero-trust-vps/installer-vault.yml")"
+[[ "${VAULT_PAIR_BEFORE}" == "${VAULT_PAIR_AFTER}" ]] || fail "credential-free rerun changed the encrypted installer state"
+pass "credential-free installer rerun preserved encrypted secrets"
+SWAP_AFTER="$(run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
+    "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" "awk 'NR > 1 { print \$1, \$2, \$3, \$5 }' /proc/swaps")"
+[[ "${SWAP_BEFORE}" == "${SWAP_AFTER}" ]] || fail "installer changed provider swap configuration"
+pass "provider swap configuration unchanged"
+run_remote_authenticated "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" \
+    "${ADMIN_SSH_KEY}" "${KNOWN_HOSTS}" \
+    "sudo test '\$(stat -c %a /etc/zero-trust-vps)' = 700 && sudo test '\$(stat -c %a /etc/zero-trust-vps/installer-vault.yml)' = 600 && sudo grep -Fq '\$ANSIBLE_VAULT;' /etc/zero-trust-vps/installer-vault.yml"
+pass "installer secrets persisted only in a private encrypted vault"
 if command -v nc >/dev/null && nc -z -w 5 "${VPS_IP}" 443 >/dev/null 2>&1; then
     fail "public TCP/443 is reachable"
 fi
@@ -145,6 +195,8 @@ if [[ "${DO_REBOOT}" == "true" ]]; then
     sleep 20
     E2E_KNOWN_HOSTS="${KNOWN_HOSTS}" verify_deployment \
         "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}"
+    E2E_KNOWN_HOSTS="${KNOWN_HOSTS}" verify_traffic_mode \
+        "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" "${TRAFFIC_MODE}"
     echo "[E2E] Reboot survival verified"
 fi
 
@@ -154,7 +206,7 @@ if [[ "${DO_CLIENT_TEST}" == "true" ]]; then
         'sudo apt-get update -qq >/dev/null && sudo apt-get install -y -qq wireguard-tools jq openssl dnsutils resolvconf >/dev/null'
     echo "[E2E] Running the in-guest WireGuard client handshake test..."
     run_remote_stdin "${ADMIN_USER}@${VPS_IP}" "${SSH_PORT_IN}" "${ADMIN_SSH_KEY}" \
-        "sudo WG_PASSWORD='${WG_PASS}' WG_ENDPOINT='127.0.0.1:${WG_PORT_IN}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN}' bash -s" \
+        "sudo WG_PASSWORD='${WG_PASS}' WG_PORT='${WG_PORT_IN}' WG_TRAFFIC_MODE='${TRAFFIC_MODE}' WG_INTERNAL_DOMAIN='${WG_INTERNAL_DOMAIN}' ADGUARD_INTERNAL_DOMAIN='${ADGUARD_INTERNAL_DOMAIN}' bash -s" \
         < "${E2E_DIR}/client-in-guest.sh"
 fi
 

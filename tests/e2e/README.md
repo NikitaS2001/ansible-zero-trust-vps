@@ -1,65 +1,126 @@
-# E2E Testing of the Public Installer
+# End-to-end tests
 
-This directory contains end-to-end tests for the public `curl | sudo bash`
-installer. Three targets are supported:
+These tests use disposable QEMU/KVM guests. They prove repository-controlled
+host behavior; they do not prove a provider firewall, provider routing, or a
+real host lifecycle. GitHub Actions stores no VPS credentials.
 
-| Script | Target | Purpose |
-|---|---|---|
-| `qemu-install.sh` | Plain qemu/KVM VM | Public installer (`curl \| sudo bash`) — fast local iteration |
-| `qemu-remote-install.sh` | Plain qemu/KVM VM | Remote deployment mode (controller → VM via SSH + vault) |
-| `client-in-guest.sh` | Inside the deployed host | In-guest WireGuard handshake + DNS + internal HTTPS (used by the other tests) |
+Local prerequisites are `qemu-system-x86_64`, `qemu-img`, KVM,
+`genisoimage`, OpenSSH, curl, and the tools installed by
+[`scripts/bootstrap.sh`](../../scripts/bootstrap.sh).
 
-## Fast iteration: qemu/KVM
-
-Needs `qemu-system-x86_64`, `qemu-img`, `genisoimage`, `curl` and KVM
-support (`/dev/kvm`). No libvirt daemon required.
+## Standard entry points
 
 ```bash
-tests/e2e/qemu-install.sh --reboot-test
-# Ubuntu 24.04 is the default image; use a Debian image with:
-QEMU_IMAGE=https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2 QEMU_USER=debian tests/e2e/qemu-install.sh
+./scripts/check.sh --e2e
+./scripts/check.sh --release
 ```
 
-The VM is booted headless with a cloud-init NoCloud seed, the repository is
-copied in, and the installer runs non-interactively exactly like on a real
-host.
+`--e2e` runs the repository installer in explicit development-source mode on
+the CI-selected Debian 12 or Ubuntu 24.04 image. It exercises default
+`services_only` behavior with a real in-guest client, reruns idempotently, and
+reboots. Production tag and attestation verification are separate release
+contracts. `--release` adds the lifecycle upgrade/restore drill and those
+release contracts.
 
-- `--client-test` installs `wireguard-tools` inside the guest and runs a real
-  WireGuard client handshake there (create client via the wg-easy API, bring
-  up `wg-quick`, verify AdGuard DNS and the `.internal` HTTPS endpoints with
-  the trusted root CA). This avoids touching the host network.
-- `--idempotency-test` re-runs the installer on the same VM and re-verifies
-  the stack, checking that a second run completes cleanly.
-- Failure-mode coverage uses `--bootstrap-timeout-test`,
-  `--stopped-container-test`, and `--invalid-caddy-test`. Each case must fail
-  at the intended boundary, preserve recoverable state, and clean up.
+## Repository installer guest
 
-## Remote deployment mode (controller -> VM)
+```bash
+tests/e2e/qemu-install.sh \
+  --client-test --idempotency-test --reboot-test
+```
 
-`qemu-remote-install.sh` boots a VM as a stand-in VPS and deploys with the
-remote mode documented in the README: inventory + `group_vars` + encrypted
-vault files and `ansible-playbook` over SSH from this host (the controller).
-It covers the code paths the public installer does not: SSH-based connection,
-UFW enablement during hardening, vault decryption and the remote-only verify
-tasks (SSH reachable on the new port, external 443 closed).
-Use `--ssh-rollback-test --ufw-backend-failure-test` for the remote negative
-cases; both must retain the prior authenticated SSH path.
+Supported flags:
 
-## Release readiness matrix
+| Flag | Scenario |
+| --- | --- |
+| `--client-test` | WireGuard handshake, DNS, and internal HTTPS from an in-guest client |
+| `--idempotency-test` | No-change rerun and service identity/state preservation |
+| `--reboot-test` | Host reboot followed by full readiness verification |
+| `--bootstrap-timeout-test` | Interrupted initial wg-easy readiness and recoverable rerun |
+| `--stopped-container-test` | Readiness failure when a managed service is stopped |
+| `--invalid-caddy-test` | Invalid and reload-failing Caddy candidates preserve active state |
 
-Merge readiness requires disposable local public-QEMU coverage, disposable
-remote-QEMU coverage, the named negative cases, and the encrypted
-backup/restore drill. This matrix proves software merge readiness only.
-GitHub Actions stores no VPS credential, and live external host availability
-is out of scope for merge readiness.
+Environment controls include `QEMU_IMAGE`, `QEMU_USER`, `INSTALL_REF`,
+`E2E_SOURCE_MODE`, `ZERO_TRUST_WG_TRAFFIC_MODE`, guest service ports, and host
+forwarding ports. Ubuntu 24.04 is the default image. For Debian 12:
 
-The provider firewall remains the operator's responsibility. QEMU does not
-prove provider-firewall behavior, routing, or a provider's host lifecycle;
-verify those separately when operating a real deployment.
+```bash
+QEMU_IMAGE=https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2 \
+QEMU_USER=debian \
+tests/e2e/qemu-install.sh --client-test --idempotency-test
+```
 
-## Client test
+Set `ZERO_TRUST_WG_TRAFFIC_MODE=full_tunnel` only in a dual-stack test
+environment; preflight intentionally rejects missing IPv4 or IPv6 egress.
 
-`qemu-install.sh --client-test` runs `client-in-guest.sh` inside the deployed
-guest. It creates a client through the wg-easy API, brings up `wg-quick`, and
-verifies AdGuard (`10.66.0.2`) and the internal HTTPS endpoints with the trusted
-root CA. No TUN device is needed on the machine driving the test.
+## Remote controller guest
+
+```bash
+tests/e2e/qemu-remote-install.sh \
+  --ssh-cutover-test --ssh-rollback-test \
+  --ufw-backend-failure-test --reboot-test
+```
+
+| Flag | Scenario |
+| --- | --- |
+| `--ssh-cutover-test` | New login is proven before the old path is removed |
+| `--ssh-rollback-test` | Failed SSH candidate restores the authenticated path |
+| `--ufw-backend-failure-test` | Firewall backend failure preserves recovery access |
+| `--reboot-test` | Remote deployment remains ready after reboot |
+
+This harness creates ignored controller inventory and encrypted vault fixtures,
+deploys over SSH, and removes the controller fixtures during cleanup.
+
+## Lifecycle and restore
+
+```bash
+E2E_ARTIFACT_DIR=/absolute/private/path \
+  tests/e2e/lifecycle-qemu.sh
+```
+
+The lifecycle harness deploys the immutable baseline tag, upgrades the same
+guest to the exact working tree, performs a no-change rerun, runs encrypted
+backup/restore, and verifies the stack after each boundary. It accepts no
+command-line flags; use `--help` for its environment variables. Set
+`E2E_SOURCE_FIXTURE_ONLY=1` to validate the dual-ref fixture without a VM.
+
+`restore-drill.sh --self-test-age-provenance` exercises age-package provenance
+failure and interruption fixtures without a deployment target.
+
+## External client and real VPS harnesses
+
+`external-client-qemu.sh` connects a disposable client VM to an already
+deployed VPS. Its explicit lifecycle modes are:
+
+```bash
+tests/e2e/external-client-qemu.sh --prepare-only --state-dir <private-dir>
+tests/e2e/external-client-qemu.sh --cleanup --state-dir <private-dir>
+```
+
+Normal mode requires a pinned `VPS_KNOWN_HOSTS` file, private SSH key, VPS host,
+ports, and a provider environment. `--prepare-only` and `--cleanup` are mutually
+exclusive. This is manual operator evidence, not a merge requirement.
+
+`run-public-install.sh` exercises an explicit tag or development ref against a
+fresh real VPS and accepts `--client-test` and `--reboot-test`. It requires an
+explicit VPS address, key, source ref, and pinned known-hosts input. It is a
+maintainer harness, not a replacement for the verified release path in the
+root README. Never place live credentials in repository files, logs, or CI.
+
+## Evidence boundary
+
+Current pull-request CI runs the installer from the checked-out source in
+explicit development mode and `services_only` mode on Debian 12 and Ubuntu
+24.04. Nightly automation repeats that default-mode matrix to catch upstream
+image drift and adds the lifecycle upgrade/restore scenario on Ubuntu.
+Public-IPv6 packet proof for `full_tunnel` is a manual dual-stack scenario
+because generic GitHub-hosted runners do not guarantee IPv6 egress.
+
+The remote SSH/UFW negative cases and the repository-installer Caddy failure flags
+are available local harnesses; they are not currently part of the automated CI
+or release gate. Run them when a change touches the corresponding boundary and
+report the exact scenarios that actually completed. Persist logs only in a
+private evidence directory and scan them for credentials before sharing.
+
+The provider firewall remains the operator's responsibility. Keep console or
+rescue access during every real deployment.

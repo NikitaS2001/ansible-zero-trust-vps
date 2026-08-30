@@ -8,6 +8,7 @@ TMP_DIR=""
 PLAYBOOK_DIR=""
 INVENTORY_FILE=""
 PLAYBOOK_FILE=""
+VARS_FILE=""
 
 usage() {
     cat <<'EOF'
@@ -58,6 +59,7 @@ TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ansible-runtime.XXXXXX")"
 PLAYBOOK_DIR="${TMP_DIR}/playbook"
 INVENTORY_FILE="${PLAYBOOK_DIR}/inventory.yml"
 PLAYBOOK_FILE="${PLAYBOOK_DIR}/site.yml"
+VARS_FILE="${PLAYBOOK_DIR}/fixture-vars.yml"
 
 mkdir -p "${PLAYBOOK_DIR}"
 printf '%s\n' \
@@ -77,6 +79,12 @@ printf '%s\n' \
     '  roles:' \
     "    - role: ${ROOT_DIR}/roles/vps_orchestration" \
     '      tags: [orchestration]' >"${PLAYBOOK_FILE}"
+printf '%s\n' \
+    '---' \
+    'wg_easy_bootstrap_secret: runtime-fixture-only-secret' \
+    "vault_adguard_password_hash: \"\$2y\$12\$0123456789abcdefghijklmnopqrstuvABCDEFGHIJKLMNO\"" \
+    >"${VARS_FILE}"
+chmod 0600 "${VARS_FILE}"
 
 create_isolation_fixture() {
     local fixture_dir="${TMP_DIR}/unrelated-group-vars/group_vars/all"
@@ -110,6 +118,7 @@ run_case() {
     ansible-playbook \
         -i "${INVENTORY_FILE}" \
         --tags orchestration_domain_preflight \
+        -e "@${VARS_FILE}" \
         -e ansible_become=false \
         -e "wg_internal_domain=${wg_domain}" \
         -e "adguard_internal_domain=${adguard_domain}" \

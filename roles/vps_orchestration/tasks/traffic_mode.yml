@@ -1,0 +1,433 @@
+---
+- name: "Traffic mode | Validate project root safety"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import pathlib,sys;
+        value=sys.argv[1]; path=pathlib.PurePosixPath(value);
+        assert path.is_absolute() and value!='/' and not value.startswith('//');
+        assert '..' not in path.parts and value==str(path);
+        assert all(ord(char)>=32 and ord(char)!=127 for char in value)
+      - "{{ project_root }}"
+  changed_when: false
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Detect interrupted transactions"
+  ansible.builtin.find:
+    paths: "{{ project_root }}"
+    patterns:
+      - .wg-traffic-mode.transaction.*
+      - .wg-traffic-mode.new
+    file_type: any
+    hidden: true
+    recurse: false
+  register: vps_orchestration_interrupted_traffic_transactions
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Refuse ambiguous interrupted transaction"
+  ansible.builtin.assert:
+    that:
+      - vps_orchestration_interrupted_traffic_transactions.matched == 0
+    fail_msg: "interrupted traffic-mode transaction requires operator recovery"
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Inspect persisted mode"
+  ansible.builtin.stat:
+    path: "{{ project_root }}/.wg-traffic-mode"
+    follow: false
+  register: vps_orchestration_traffic_mode_state
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Validate persisted state identity"
+  ansible.builtin.assert:
+    that:
+      - not vps_orchestration_traffic_mode_state.stat.exists or vps_orchestration_traffic_mode_state.stat.isreg
+      - not vps_orchestration_traffic_mode_state.stat.exists or not vps_orchestration_traffic_mode_state.stat.islnk
+      - not vps_orchestration_traffic_mode_state.stat.exists or vps_orchestration_traffic_mode_state.stat.nlink == 1
+      - not vps_orchestration_traffic_mode_state.stat.exists or vps_orchestration_traffic_mode_state.stat.mode == '0600'
+    fail_msg: "persisted traffic mode has unsafe filesystem identity"
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Read persisted mode"
+  ansible.builtin.slurp:
+    src: "{{ project_root }}/.wg-traffic-mode"
+  register: vps_orchestration_traffic_mode_raw
+  when: vps_orchestration_traffic_mode_state.stat.exists
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Validate persisted state"
+  ansible.builtin.assert:
+    that:
+      - >-
+        not vps_orchestration_traffic_mode_state.stat.exists
+        or (vps_orchestration_traffic_mode_raw.content | b64decode | trim)
+           in ['services_only', 'full_tunnel']
+    fail_msg: "persisted traffic mode is malformed"
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Select persisted mode"
+  ansible.builtin.set_fact:
+    vps_orchestration_current_traffic_mode: >-
+      {{ (vps_orchestration_traffic_mode_raw.content | b64decode | trim)
+         if vps_orchestration_traffic_mode_state.stat.exists else '' }}
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Inspect wg-easy container"
+  ansible.builtin.command:
+    argv: [docker, inspect, --format, "{{ '{{ .Id }} {{ .State.Running }}' }}", wg-easy]
+  register: vps_orchestration_traffic_wg_container
+  changed_when: false
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Require running wg-easy container"
+  ansible.builtin.assert:
+    that:
+      - vps_orchestration_traffic_wg_container.stdout.split() | length == 2
+      - vps_orchestration_traffic_wg_container.stdout.split()[1] == 'true'
+    fail_msg: "wg-easy must be running before traffic policy reconciliation"
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Read authoritative wg-easy policy"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import json
+        import pathlib
+        import sqlite3
+        import sys
+
+        uri = pathlib.Path(sys.argv[1]).resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(uri, uri=True) as database:
+            user_rows = database.execute(
+                "SELECT default_allowed_ips FROM user_configs_table"
+            ).fetchall()
+            interface_rows = database.execute(
+                "SELECT firewall_enabled FROM interfaces_table WHERE name = 'wg0'"
+            ).fetchall()
+            client_rows = database.execute(
+                "SELECT firewall_ips FROM clients_table ORDER BY id"
+            ).fetchall()
+        if len(user_rows) != 1 or len(interface_rows) != 1:
+            raise RuntimeError("unexpected wg-easy policy row identity")
+        routes = json.loads(user_rows[0][0])
+        firewall_enabled = interface_rows[0][0]
+        if not isinstance(routes, list) or firewall_enabled not in (0, 1):
+            raise RuntimeError("unexpected wg-easy policy value")
+        client_firewall_ips = [json.loads(row[0]) if row[0] is not None else None for row in client_rows]
+        print(json.dumps({
+            "routes": routes,
+            "firewall_enabled": firewall_enabled,
+            "client_firewall_ips": client_firewall_ips,
+        }))
+      - "{{ project_root }}/volumes/wg-easy/wg-easy.db"
+  register: vps_orchestration_traffic_policy_raw
+  changed_when: false
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Select desired and current policy"
+  ansible.builtin.set_fact:
+    vps_orchestration_traffic_policy: "{{ vps_orchestration_traffic_policy_raw.stdout | from_json }}"
+    vps_orchestration_traffic_desired_routes: >-
+      {{ ['0.0.0.0/0', '::/0']
+         if wg_traffic_mode == 'full_tunnel'
+         else wg_services_only_ipv4_destinations + wg_services_only_ipv6_destinations }}
+    vps_orchestration_traffic_desired_firewall: "{{ 1 if wg_traffic_mode == 'services_only' else 0 }}"
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Select desired per-client firewall override"
+  ansible.builtin.set_fact:
+    vps_orchestration_traffic_desired_client_firewall: >-
+      {{ vps_orchestration_traffic_desired_routes if wg_traffic_mode == 'services_only' else none }}
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Select live policy validation"
+  ansible.builtin.set_fact:
+    vps_orchestration_traffic_live_validation: |
+      set -euo pipefail
+      validate_services_only_chain() {
+        local family="$1" allowed="$2" rules
+        rules="$(timeout 10 docker exec wg-easy "${family}" -S WG_CLIENTS)"
+        python3 - "${allowed}" "${rules}" <<'PY'
+      import json
+      import shlex
+      import sys
+
+      allowed = set(json.loads(sys.argv[1]))
+      rules = sys.argv[2].splitlines()
+      if not rules or rules[-1] != "-A WG_CLIENTS -j DROP":
+          raise SystemExit(1)
+      for rule in rules[1:-1]:
+          tokens = shlex.split(rule)
+          if (
+              tokens[:2] != ["-A", "WG_CLIENTS"]
+              or "-s" not in tokens
+              or "-d" not in tokens
+              or tokens[-2:] != ["-j", "ACCEPT"]
+              or tokens[tokens.index("-d") + 1] not in allowed
+          ):
+              raise SystemExit(1)
+      PY
+      }
+      for attempt in $(seq 1 {{ vps_orchestration_traffic_mode_readiness_retries }}); do
+        if timeout 10 docker exec wg-easy wg show wg0 >/dev/null; then
+          if [[ {{ wg_traffic_mode | quote }} == services_only ]]; then
+            timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS \
+              && timeout 10 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS \
+              && validate_services_only_chain iptables {{ wg_services_only_ipv4_destinations | to_json | quote }} \
+              && validate_services_only_chain ip6tables {{ wg_services_only_ipv6_destinations | to_json | quote }} \
+              && exit 0
+          else
+            ! timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null \
+              && ! timeout 10 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null \
+              && exit 0
+          fi
+        fi
+        sleep 2
+      done
+      exit 1
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Inspect live wg0 and pre-NAT firewall state"
+  ansible.builtin.shell: "{{ vps_orchestration_traffic_live_validation }}"
+  args:
+    executable: /bin/bash
+  register: vps_orchestration_traffic_live_policy
+  changed_when: false
+  failed_when: false
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Decide whether reconciliation is required"
+  ansible.builtin.set_fact:
+    vps_orchestration_traffic_reconcile: >-
+      {{ vps_orchestration_current_traffic_mode != wg_traffic_mode
+         or vps_orchestration_traffic_live_policy.rc != 0
+         or vps_orchestration_traffic_policy.routes != vps_orchestration_traffic_desired_routes
+         or (vps_orchestration_traffic_policy.firewall_enabled | int)
+            != (vps_orchestration_traffic_desired_firewall | int)
+         or (vps_orchestration_traffic_policy.client_firewall_ips
+             | reject('equalto', vps_orchestration_traffic_desired_client_firewall)
+             | list | length) > 0 }}
+  tags: [traffic_mode]
+
+- name: "Traffic mode | Reconcile wg-easy policy transaction"
+  when: vps_orchestration_traffic_reconcile | bool
+  tags: [traffic_mode]
+  block:
+    - name: "Traffic mode | Create private transaction directory"
+      ansible.builtin.tempfile:
+        path: "{{ project_root }}"
+        prefix: .wg-traffic-mode.transaction.
+        state: directory
+      register: vps_orchestration_traffic_transaction
+
+    - name: "Traffic mode | Preserve persisted mode bytes"
+      ansible.builtin.command:
+        argv:
+          - cp
+          - --archive
+          - --reflink=auto
+          - "{{ project_root }}/.wg-traffic-mode"
+          - "{{ vps_orchestration_traffic_transaction.path }}/persisted-mode"
+      when: vps_orchestration_traffic_mode_state.stat.exists
+      changed_when: true
+
+    - name: "Traffic mode | Stop wg-easy for a consistent snapshot"
+      ansible.builtin.command: timeout 30 docker stop --time 20 wg-easy
+      changed_when: true
+
+    - name: "Traffic mode | Preserve every wg-easy state byte"
+      ansible.builtin.command:
+        argv:
+          - cp
+          - --archive
+          - --reflink=auto
+          - "{{ project_root }}/volumes/wg-easy"
+          - "{{ vps_orchestration_traffic_transaction.path }}/wg-easy"
+      changed_when: true
+
+    - name: "Traffic mode | Mark snapshot complete"
+      ansible.builtin.file:
+        path: "{{ vps_orchestration_traffic_transaction.path }}/snapshot-complete"
+        state: touch
+        mode: '0600'
+
+    - name: "Traffic mode | Update routes and pre-NAT firewall policy"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import json
+            import sqlite3
+            import sys
+
+            path, routes_json, firewall_text = sys.argv[1:]
+            routes = json.loads(routes_json)
+            firewall_enabled = int(firewall_text)
+            with sqlite3.connect(path) as database:
+                user_columns = {
+                    row[1] for row in database.execute("PRAGMA table_info(user_configs_table)")
+                }
+                interface_columns = {
+                    row[1] for row in database.execute("PRAGMA table_info(interfaces_table)")
+                }
+                client_columns = {
+                    row[1] for row in database.execute("PRAGMA table_info(clients_table)")
+                }
+                if (
+                    "default_allowed_ips" not in user_columns
+                    or "firewall_enabled" not in interface_columns
+                    or "firewall_ips" not in client_columns
+                ):
+                    raise RuntimeError("wg-easy policy schema is incompatible")
+                client_count = database.execute("SELECT COUNT(*) FROM clients_table").fetchone()[0]
+                routes_result = database.execute(
+                    "UPDATE user_configs_table SET default_allowed_ips = ?",
+                    (json.dumps(routes, separators=(",", ":")),),
+                )
+                firewall_result = database.execute(
+                    "UPDATE interfaces_table SET firewall_enabled = ? WHERE name = 'wg0'",
+                    (firewall_enabled,),
+                )
+                client_policy = json.dumps(routes, separators=(",", ":")) if firewall_enabled else None
+                clients_result = database.execute(
+                    "UPDATE clients_table SET firewall_ips = ?",
+                    (client_policy,),
+                )
+                if (
+                    routes_result.rowcount != 1
+                    or firewall_result.rowcount != 1
+                    or clients_result.rowcount != client_count
+                ):
+                    raise RuntimeError("unexpected wg-easy policy row identity")
+                actual_routes = json.loads(database.execute(
+                    "SELECT default_allowed_ips FROM user_configs_table"
+                ).fetchone()[0])
+                actual_firewall = database.execute(
+                    "SELECT firewall_enabled FROM interfaces_table WHERE name = 'wg0'"
+                ).fetchone()[0]
+                actual_clients = database.execute(
+                    "SELECT firewall_ips FROM clients_table ORDER BY id"
+                ).fetchall()
+                expected_clients = [(client_policy,)] * client_count
+                if (
+                    actual_routes != routes
+                    or actual_firewall != firewall_enabled
+                    or actual_clients != expected_clients
+                ):
+                    raise RuntimeError("wg-easy policy verification failed")
+          - "{{ project_root }}/volumes/wg-easy/wg-easy.db"
+          - "{{ vps_orchestration_traffic_desired_routes | to_json }}"
+          - "{{ vps_orchestration_traffic_desired_firewall }}"
+      changed_when: true
+
+    - name: "Traffic mode | Restart preserved wg-easy container"
+      ansible.builtin.command: timeout 30 docker start wg-easy
+      changed_when: true
+
+    - name: "Traffic mode | Require wg0 and expected pre-NAT firewall state"
+      ansible.builtin.shell: "{{ vps_orchestration_traffic_live_validation }}"
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: "Traffic mode | Commit mode after readiness"
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import os
+            import pathlib
+            import sys
+
+            destination = pathlib.Path(sys.argv[1])
+            temporary = destination.with_name(destination.name + ".new")
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                os.write(fd, (sys.argv[2] + "\n").encode("ascii"))
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.replace(temporary, destination)
+            directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+          - "{{ project_root }}/.wg-traffic-mode"
+          - "{{ wg_traffic_mode }}"
+      changed_when: true
+
+    - name: "Traffic mode | Record committed transaction"
+      ansible.builtin.set_fact:
+        vps_orchestration_traffic_transaction_committed: true
+
+  rescue:
+    - name: "Traffic mode | Stop failed wg-easy runtime"
+      ansible.builtin.command: timeout 30 docker stop --time 20 wg-easy
+      failed_when: false
+      changed_when: true
+
+    - name: "Traffic mode | Inspect snapshot completion"
+      ansible.builtin.stat:
+        path: "{{ vps_orchestration_traffic_transaction.path | default('/nonexistent') }}/snapshot-complete"
+        follow: false
+      register: vps_orchestration_traffic_snapshot
+
+    - name: "Traffic mode | Restore every wg-easy state byte"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        find {{ project_root | quote }}/volumes/wg-easy -mindepth 1 -delete
+        cp --archive {{ vps_orchestration_traffic_transaction.path | quote }}/wg-easy/. {{ project_root | quote }}/volumes/wg-easy/
+      args:
+        executable: /bin/bash
+      when: vps_orchestration_traffic_snapshot.stat.isreg | default(false)
+      changed_when: true
+
+    - name: "Traffic mode | Restore persisted mode bytes"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        destination={{ (project_root + '/.wg-traffic-mode') | quote }}
+        if [[ {{ vps_orchestration_traffic_mode_state.stat.exists | bool | ternary('true', 'false') }} == true ]]; then
+          cp --archive {{ (vps_orchestration_traffic_transaction.path + '/persisted-mode') | quote }} "${destination}.new"
+          mv -f "${destination}.new" "${destination}"
+        else
+          find "${destination}" -delete 2>/dev/null || [[ ! -e "${destination}" ]]
+        fi
+      args:
+        executable: /bin/bash
+      when: vps_orchestration_traffic_snapshot.stat.isreg | default(false)
+      changed_when: true
+
+    - name: "Traffic mode | Restart restored wg-easy runtime"
+      ansible.builtin.command: timeout 30 docker start wg-easy
+      changed_when: true
+
+    - name: "Traffic mode | Record completed rollback"
+      ansible.builtin.set_fact:
+        vps_orchestration_traffic_rollback_complete: true
+
+    - name: "Traffic mode | Remove failed commit candidate"
+      ansible.builtin.file:
+        path: "{{ project_root }}/.wg-traffic-mode.new"
+        state: absent
+
+    - name: "Traffic mode | Report rolled-back reconciliation"
+      ansible.builtin.fail:
+        msg: "traffic-mode reconciliation failed; original wg-easy state was restored"
+
+  always:
+    - name: "Traffic mode | Remove transaction residue"
+      ansible.builtin.file:
+        path: "{{ vps_orchestration_traffic_transaction.path }}"
+        state: absent
+      when:
+        - vps_orchestration_traffic_transaction.path is defined
+        - >-
+          vps_orchestration_traffic_transaction_committed | default(false) | bool
+          or vps_orchestration_traffic_rollback_complete | default(false) | bool

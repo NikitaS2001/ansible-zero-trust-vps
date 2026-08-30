@@ -104,7 +104,9 @@ trap cleanup EXIT
 ssh-keygen -q -t ed25519 -N "" -f "${TMP_DIR}/id_ed25519" -C "e2e-ztvps-remote"
 PUBKEY="$(cat "${TMP_DIR}/id_ed25519.pub")"
 ADGUARD_PASS="$(openssl rand -hex 12)"
+ADMIN_PASS="$(openssl rand -hex 12)"
 WG_PASS="${ZERO_TRUST_WG_PASSWORD:-Twelve\$COMPOSE_PROBE}"
+ADMIN_HASH="$(openssl passwd -6 -stdin <<<"${ADMIN_PASS}")"
 ADGUARD_HASH="$(python3 - <<PY
 from passlib.hash import bcrypt
 print(bcrypt.using(ident='2y', rounds=10).hash('${ADGUARD_PASS}'))
@@ -147,6 +149,19 @@ pass "pre-cutover authenticated root SSH"
 
 # --- controller side: inventory + group_vars + vault --------------------------
 # These paths are gitignored in the repo, exactly like a real remote deploy.
+record_authenticated_guest_host_key() {
+    local destination_host="$1" destination_port="$2"
+    local destination guest_key
+    destination="[${destination_host}]:${destination_port}"
+    guest_key="$(run_remote_authenticated "root@127.0.0.1" "${QEMU_SSH_PORT}" \
+        "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
+        'cat /etc/ssh/ssh_host_ed25519_key.pub')"
+    [[ "${guest_key}" == ssh-ed25519\ * && "${guest_key}" != *$'\n'* ]] || \
+        fail "authenticated guest returned a malformed ED25519 host key"
+    printf '%s %s\n' "${destination}" "${guest_key}" >>"${TMP_DIR}/known_hosts"
+    chmod 0600 "${TMP_DIR}/known_hosts"
+}
+
 write_direct_inventory() {
     cat >"${ROOT_DIR}/inventory/hosts.yml" <<EOF
 ---
@@ -186,7 +201,9 @@ write_group_vars() {
     cat >"${ROOT_DIR}/group_vars/all/vars.yml" <<EOF
 ---
 # Network
+wg_traffic_mode: "${ZERO_TRUST_WG_TRAFFIC_MODE:-services_only}"
 ssh_port: ${configured_ssh_port}
+vps_hardening_controller_ssh_port: ${QEMU_ADMIN_PORT}
 wg_port: ${E2E_WG_PORT}
 wg_container_port: ${E2E_WG_PORT}
 wg_vpn_subnet: "10.8.0.0/24"
@@ -195,7 +212,8 @@ wg_client_dns: "10.66.0.2"
 
 # wg-easy initial setup (INIT_*)
 wg_easy_admin_user: "admin"
-wg_easy_admin_password: "${WG_PASS}"
+admin_password_hash: "{{ vault_admin_password_hash }}"
+wg_easy_bootstrap_secret: "{{ vault_wg_easy_bootstrap_secret }}"
 wg_public_host: "127.0.0.1"
 wg_allowed_ips:
   - "10.8.0.0/24"
@@ -232,7 +250,9 @@ vault_admin_ssh_pubkey: "${PUBKEY}"
 EOF
 cat >"${ROOT_DIR}/group_vars/all/vault_services.yml" <<EOF
 ---
+vault_admin_password_hash: "${ADMIN_HASH}"
 vault_adguard_password_hash: "${ADGUARD_HASH}"
+vault_wg_easy_bootstrap_secret: "${WG_PASS}"
 EOF
 echo 'test-vault-password' >"${TMP_DIR}/vault_pass"
 chmod 0600 "${TMP_DIR}/vault_pass"
@@ -257,6 +277,8 @@ run_successful_cutover() {
     local playbook_log="${TMP_DIR}/cutover-ansible.log"
     write_direct_inventory
     write_group_vars "${E2E_SSH_PORT}"
+    record_authenticated_guest_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}"
+    record_authenticated_guest_host_key "127.0.0.1" "${QEMU_CLEANUP_PORT}"
     echo "[E2E] Running SSH/UFW hardening cutover..."
     if ! run_playbook "${playbook_log}" "${TMP_DIR}/hardening.yml" \
         --tags packages,user,ufw,ssh; then
@@ -264,7 +286,6 @@ run_successful_cutover() {
             "${playbook_log}" >&2
         fail "SSH/UFW hardening cutover failed"
     fi
-    record_ssh_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}" "${TMP_DIR}/known_hosts"
     local sshd_effective
     sshd_effective="$(run_remote_authenticated "sysadmin@127.0.0.1" \
         "${QEMU_ADMIN_PORT}" "${TMP_DIR}/id_ed25519" "${TMP_DIR}/known_hosts" \
@@ -351,7 +372,6 @@ run_ufw_backend_probes() {
     local absent_log="${TMP_DIR}/ufw-absent.log"
     local failure_log="${TMP_DIR}/ufw-failure.log"
     local ready=false
-    record_ssh_host_key "127.0.0.1" "${QEMU_CLEANUP_PORT}" "${TMP_DIR}/known_hosts"
     write_cleanup_inventory
     cat >"${TMP_DIR}/ssh-cleanup.yml" <<EOF
 ---
@@ -459,6 +479,8 @@ fi
 if [[ "${DO_SSH_CUTOVER}" == "true" || "${DO_UFW_BACKEND_FAILURE}" == "true" ]]; then
     run_successful_cutover
 elif [[ "${DO_SSH_ROLLBACK}" != "true" ]]; then
+    record_authenticated_guest_host_key "127.0.0.1" "${QEMU_ADMIN_PORT}"
+    record_authenticated_guest_host_key "127.0.0.1" "${QEMU_CLEANUP_PORT}"
     echo "[E2E] Running the complete playbook in remote mode..."
     if ! run_playbook "${TMP_DIR}/full-ansible.log" "${ROOT_DIR}/site.yml"; then
         fail "remote-mode playbook failed"
@@ -466,7 +488,6 @@ elif [[ "${DO_SSH_ROLLBACK}" != "true" ]]; then
 fi
 
 if [[ "${DO_SSH_CUTOVER}" == "true" ]]; then
-    record_ssh_host_key 127.0.0.1 "${QEMU_CLEANUP_PORT}" "${TMP_DIR}/known_hosts"
     write_cleanup_inventory
     if ! run_playbook "${TMP_DIR}/full-after-cutover.log" "${ROOT_DIR}/site.yml"; then
         fail "remote-mode playbook failed after authenticated SSH cutover"
@@ -479,7 +500,6 @@ fi
 
 if [[ "${DO_SSH_ROLLBACK}" != "true" && "${DO_UFW_BACKEND_FAILURE}" != "true" ]]; then
     echo "[E2E] Verifying the deployed stack on the hardened SSH port ${QEMU_ADMIN_PORT}"
-    record_ssh_host_key 127.0.0.1 "${QEMU_ADMIN_PORT}" "${TMP_DIR}/known_hosts"
     require_wrong_host_key_rejected "sysadmin@127.0.0.1" "${QEMU_ADMIN_PORT}" \
         "${TMP_DIR}/id_ed25519"
     export E2E_SSH_PORT E2E_WG_PORT

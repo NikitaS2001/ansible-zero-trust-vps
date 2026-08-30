@@ -1,18 +1,21 @@
 ---
 - name: "VPS Hardening | Packages | Update apt cache"
-  apt:
+  ansible.builtin.apt:
     update_cache: yes
   tags: [packages]
 
 - name: "VPS Hardening | Packages | Apply package upgrades when enabled"
-  apt:
+  ansible.builtin.apt:
     upgrade: "{{ vps_hardening_package_upgrade_mode }}"
   when: vps_hardening_apply_package_upgrade | bool
   tags: [packages]
 
 - name: "VPS Hardening | Packages | Install required packages"
-  apt:
+  ansible.builtin.apt:
     name:
+      # This provides both sudo and visudo before user.yml creates a sudoers
+      # drop-in, including on minimal cloud images that omit sudo.
+      - sudo
       - ufw
       - fail2ban
       - unattended-upgrades
@@ -25,7 +28,7 @@
   tags: [packages]
 
 - name: "VPS Hardening | Packages | Configure unattended-upgrades (security only)"
-  copy:
+  ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/50unattended-upgrades
     content: |
       Unattended-Upgrade::Allowed-Origins {

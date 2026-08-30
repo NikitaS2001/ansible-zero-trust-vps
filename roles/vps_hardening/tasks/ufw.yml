@@ -42,13 +42,13 @@
   tags: [ufw]
 
 - name: "UFW | Debug | Skip enable on LXC/OpenVZ"
-  debug:
+  ansible.builtin.debug:
     msg: "Skipping UFW enable on LXC/OpenVZ - UFW may not be supported in container."
   when: ansible_facts["virtualization_type"] | default("") in ["lxc", "openvz"]
   tags: [ufw]
 
 - name: "UFW | Debug | Skip enable on local connection"
-  debug:
+  ansible.builtin.debug:
     msg: "Skipping UFW enable on local Ansible connection without explicit opt-in."
   when:
     - ansible_facts["virtualization_type"] | default("") not in ["lxc", "openvz"]

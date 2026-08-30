@@ -1,0 +1,65 @@
+---
+- name: "Compose | Detect | Check whether the wg-easy database exists"
+  ansible.builtin.stat:
+    path: "{{ project_root }}/volumes/wg-easy/wg-easy.db"
+  register: vps_orchestration_wg_easy_db
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Detect | Default wg-easy setup to incomplete"
+  ansible.builtin.set_fact:
+    wg_easy_initialized: false
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Detect | Read authoritative wg-easy setup state"
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import pathlib
+        import sqlite3
+        import sys
+
+        database_uri = pathlib.Path(sys.argv[1]).resolve().as_uri() + "?mode=ro"
+        with sqlite3.connect(database_uri, uri=True) as connection:
+            rows = connection.execute(
+                "SELECT setup_step FROM general_table"
+            ).fetchall()
+        if len(rows) != 1 or type(rows[0][0]) is not int:
+            raise RuntimeError("unexpected wg-easy setup state")
+        print("complete" if rows[0][0] == 0 else "incomplete")
+      - "{{ project_root }}/volumes/wg-easy/wg-easy.db"
+  register: vps_orchestration_wg_easy_setup_state
+  changed_when: false
+  when: vps_orchestration_wg_easy_db.stat.exists
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Detect | Record authoritative wg-easy setup state"
+  ansible.builtin.set_fact:
+    wg_easy_initialized: >-
+      {{ vps_orchestration_wg_easy_setup_state.stdout == 'complete' }}
+  when: vps_orchestration_wg_easy_db.stat.exists
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Detect | Select automated wg-easy bootstrap"
+  ansible.builtin.set_fact:
+    vps_orchestration_wg_easy_bootstrap_required: >-
+      {{ not wg_easy_initialized | bool }}
+  no_log: true
+  tags: [compose, wg_bootstrap_state]
+
+- name: "Compose | Deploy | Write docker-compose.yml"
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ project_root }}/docker-compose.yml"
+    # No backup here: on a first deploy this render contains the panel
+    # password in the INIT_* block and a .bak would preserve the secret.
+    backup: no
+    mode: >-
+      {{ '0600' if vps_orchestration_wg_easy_bootstrap_required | bool
+         else '0644' }}
+  no_log: true
+  vars:
+    wg_easy_include_init: >-
+      {{ vps_orchestration_wg_easy_bootstrap_required | bool }}
+  tags: [compose]

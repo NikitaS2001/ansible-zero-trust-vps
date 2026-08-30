@@ -1,28 +1,30 @@
 ---
 - name: "VPS Hardening | Main | Include preflight checks"
-  include_tasks: preflight.yml
-  tags: [preflight]
+  ansible.builtin.include_tasks: preflight.yml
+  # `always` makes the physical-memory gate run even when an operator selects
+  # a later tag such as `packages` or `user`.
+  tags: [always, preflight]
 
 - name: "VPS Hardening | Main | Include package setup"
-  include_tasks: packages.yml
+  ansible.builtin.include_tasks: packages.yml
   tags: [packages]
 
 - name: "VPS Hardening | Main | Include user setup"
-  include_tasks: user.yml
+  ansible.builtin.include_tasks: user.yml
   tags: [user]
 
 - name: "VPS Hardening | Main | Include sysctl hardening"
-  include_tasks: sysctl.yml
+  ansible.builtin.include_tasks: sysctl.yml
   tags: [sysctl]
 
 - name: "VPS Hardening | Main | Include UFW setup [C1]"
-  include_tasks: ufw.yml
+  ansible.builtin.include_tasks: ufw.yml
   tags: [ufw]
 
 - name: "VPS Hardening | Main | Include SSH hardening [C1]"
-  include_tasks: ssh.yml
+  ansible.builtin.include_tasks: ssh.yml
   tags: [ssh]
 
 - name: "VPS Hardening | Main | Include Fail2Ban setup"
-  include_tasks: fail2ban.yml
+  ansible.builtin.include_tasks: fail2ban.yml
   tags: [fail2ban]

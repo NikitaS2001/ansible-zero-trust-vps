@@ -1,16 +1,16 @@
 ---
 - name: Restart ssh
-  service:
+  ansible.builtin.service:
     name: "{{ ssh_service_name }}"
     state: restarted
   listen: restart sshd
 
 - name: Reload sysctl
-  command: sysctl --system
+  ansible.builtin.command: sysctl --system
   listen: reload sysctl
 
 - name: Restart fail2ban
-  service:
+  ansible.builtin.service:
     name: fail2ban
     state: restarted
   listen: restart fail2ban

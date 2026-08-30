@@ -1,12 +1,18 @@
 ---
 - name: Restart docker
-  service:
+  ansible.builtin.service:
     name: docker
     state: restarted
   listen: restart docker
 
 - name: Reload ufw
-  command: ufw reload  # noqa: command-instead-of-module
+  ansible.builtin.command: ufw reload  # noqa: command-instead-of-module
   register: vps_orchestration_ufw_reload
-  changed_when: "'Firewall reloaded' in (vps_orchestration_ufw_reload.stdout ~ vps_orchestration_ufw_reload.stderr)"
+  changed_when: >-
+    (vps_orchestration_ufw_reload.stdout ~ vps_orchestration_ufw_reload.stderr)
+    is regex('(?mi)^Firewall reloaded')
+  failed_when: >-
+    vps_orchestration_ufw_reload.rc != 0
+    or ((vps_orchestration_ufw_reload.stdout ~ vps_orchestration_ufw_reload.stderr)
+    is not regex('(?mi)^Firewall reloaded'))
   listen: reload ufw

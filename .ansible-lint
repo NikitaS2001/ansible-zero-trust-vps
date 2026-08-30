@@ -4,6 +4,7 @@ offline: true
 exclude_paths:
   - .agents/
   - .git/
+  - .omo/
   - .sisyphus/
   - fetched_certs/
   - volumes/
