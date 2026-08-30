@@ -40,7 +40,8 @@ git -C "${repo}" init -q
 git -C "${repo}" config user.name 'Release Fixture'
 git -C "${repo}" config user.email "${identity}"
 git -C "${repo}" add .
-GIT_AUTHOR_DATE=1700000000 GIT_COMMITTER_DATE=1700000000 git -C "${repo}" commit -qm fixture
+GIT_AUTHOR_DATE=1700000000 GIT_COMMITTER_DATE=1700000000 \
+    git -C "${repo}" -c commit.gpgsign=false commit -qm fixture
 sha="$(git -C "${repo}" rev-parse HEAD)"
 git -C "${repo}" -c gpg.format=ssh -c user.signingkey="${key}" tag -sam fixture v1.3.0
 

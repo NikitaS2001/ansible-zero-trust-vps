@@ -13,7 +13,7 @@ git -C "${TMP_DIR}" init -q -b main
 printf 'kept\n' >"${TMP_DIR}/kept"
 printf 'deleted\n' >"${TMP_DIR}/deleted"
 git -C "${TMP_DIR}" add kept deleted
-git -C "${TMP_DIR}" -c user.name=test -c user.email=test.invalid \
+git -C "${TMP_DIR}" -c user.name=test -c user.email=test.invalid -c commit.gpgsign=false \
     commit -qm fixture
 find "${TMP_DIR}/deleted" -delete
 printf 'untracked\n' >"${TMP_DIR}/untracked"

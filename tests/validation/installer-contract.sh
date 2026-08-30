@@ -255,7 +255,7 @@ init_release_fixture() {
     git -C "${FIXTURE_REPO}" config user.email "${FIXTURE_IDENTITY}"
     printf 'fixture\n' >"${FIXTURE_REPO}/payload.txt"
     git -C "${FIXTURE_REPO}" add payload.txt
-    git -C "${FIXTURE_REPO}" commit --quiet -m fixture
+    git -C "${FIXTURE_REPO}" -c commit.gpgsign=false commit --quiet -m fixture
     printf 'unrelated dirty content\n' >"${FIXTURE_REPO}/unrelated.txt"
     ssh-keygen -q -t ed25519 -N '' -f "${FIXTURE_KEY}"
     ssh-keygen -q -t ed25519 -N '' -f "${FIXTURE_WRONG_KEY}"
@@ -419,14 +419,14 @@ init_source_policy_fixture() {
     git -C "${SOURCE_FIXTURE_REPO}" config user.email 'nikitasmadych2001@gmail.com'
     printf 'first\n' >"${SOURCE_FIXTURE_REPO}/payload.txt"
     git -C "${SOURCE_FIXTURE_REPO}" add payload.txt
-    git -C "${SOURCE_FIXTURE_REPO}" commit --quiet -m first
+    git -C "${SOURCE_FIXTURE_REPO}" -c commit.gpgsign=false commit --quiet -m first
     SOURCE_FIXTURE_FIRST_SHA="$(git -C "${SOURCE_FIXTURE_REPO}" rev-parse HEAD)"
     ssh-keygen -q -t ed25519 -N '' -f "${SOURCE_FIXTURE_KEY}"
     GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -C "${SOURCE_FIXTURE_REPO}" \
         -c user.signingkey="${SOURCE_FIXTURE_KEY}" -c gpg.format=ssh \
         tag -s -a "${SOURCE_FIXTURE_TAG}" -m 'fixture release'
     printf 'second\n' >"${SOURCE_FIXTURE_REPO}/payload.txt"
-    git -C "${SOURCE_FIXTURE_REPO}" commit --quiet -am second
+    git -C "${SOURCE_FIXTURE_REPO}" -c commit.gpgsign=false commit --quiet -am second
     SOURCE_FIXTURE_SECOND_SHA="$(git -C "${SOURCE_FIXTURE_REPO}" rev-parse HEAD)"
     git -C "${SOURCE_FIXTURE_REPO}" branch dev-fixture
     sed "s|readonly INSTALL_ROOT=.*|readonly INSTALL_ROOT=\"${SOURCE_FIXTURE_INSTALL_ROOT}\"|" \

@@ -28,7 +28,8 @@ git -C "${repo}" init -q
 git -C "${repo}" config user.name fixture
 git -C "${repo}" config user.email fixture@example.invalid
 git -C "${repo}" add .
-GIT_AUTHOR_DATE=1700000000 GIT_COMMITTER_DATE=1700000000 git -C "${repo}" commit -qm fixture
+GIT_AUTHOR_DATE=1700000000 GIT_COMMITTER_DATE=1700000000 \
+    git -C "${repo}" -c commit.gpgsign=false commit -qm fixture
 sha="$(git -C "${repo}" rev-parse HEAD)"
 
 "${repo}/scripts/build-spdx-sbom.sh" --tag v9.9.9 --sha "${sha}" --output "${tmp}/one.json"
@@ -170,7 +171,7 @@ reject occupied-output "${repo}/scripts/build-spdx-sbom.sh" \
 sed -i 's/"bcrypt==4\.0\.1"/"bcrypt>=4.0.1"/' "${repo}/install.sh"
 git -C "${repo}" add install.sh
 GIT_AUTHOR_DATE=1700000001 GIT_COMMITTER_DATE=1700000001 \
-    git -C "${repo}" commit -qm unpinned-runtime
+    git -C "${repo}" -c commit.gpgsign=false commit -qm unpinned-runtime
 unpinned_sha="$(git -C "${repo}" rev-parse HEAD)"
 reject unpinned-installer-runtime "${repo}/scripts/build-spdx-sbom.sh" \
     --tag v9.9.9 --sha "${unpinned_sha}" --output "${tmp}/unpinned.json"

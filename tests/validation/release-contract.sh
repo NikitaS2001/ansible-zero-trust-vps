@@ -33,7 +33,7 @@ git -C "${repo}" init -q
 git -C "${repo}" config user.name 'Release Fixture'
 git -C "${repo}" config user.email "${identity}"
 git -C "${repo}" add .
-git -C "${repo}" commit -qm fixture
+git -C "${repo}" -c commit.gpgsign=false commit -qm fixture
 remote="${tmp}/remote.git"
 git init -q --bare "${remote}"
 git -C "${repo}" remote add origin "${remote}"
@@ -56,7 +56,7 @@ git -C "${repo}" tag -d v1.3.0 >/dev/null
 sed -i 's/^## \[v1\.3\.0\] - Unreleased$/## [v1.3.0] - 2026-08-28/' \
     "${repo}/CHANGELOG.md"
 git -C "${repo}" add CHANGELOG.md
-git -C "${repo}" commit -qm 'date release'
+git -C "${repo}" -c commit.gpgsign=false commit -qm 'date release'
 git -C "${repo}" push -q origin HEAD:main
 git -C "${repo}" fetch -q origin '+refs/heads/main:refs/remotes/origin/main'
 sha="$(git -C "${repo}" rev-parse HEAD)"
@@ -84,7 +84,7 @@ reject dirty-worktree run_tag
 rm "${repo}/untracked"
 printf 'new head\n' >>"${repo}/CHANGELOG.md"
 git -C "${repo}" add CHANGELOG.md
-git -C "${repo}" commit -qm 'new head'
+git -C "${repo}" -c commit.gpgsign=false commit -qm 'new head'
 reject tag-not-at-head run_tag
 git -C "${repo}" push -q origin HEAD:main
 git -C "${repo}" fetch -q origin '+refs/heads/main:refs/remotes/origin/main'

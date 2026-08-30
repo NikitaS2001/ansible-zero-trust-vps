@@ -13,3 +13,4 @@ check-tooling.sh|
 qemu-source-contract.sh|
 qemu-packet-contract.sh|
 sbom-contract.sh|
+fixture-git-signing-contract.sh|
