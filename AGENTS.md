@@ -34,18 +34,19 @@ Security-sensitive flows are deliberately fail-closed:
 - `roles/*/templates/` — Jinja2 configuration templates, including `docker-compose.yml.j2`, `Caddyfile.j2`, and `AdGuardHome.yaml.j2`.
 - `group_vars/all/` — operator variables and encrypted-vault examples. Copy `*.example` files; never commit real `vars.yml`, vault files, inventory, or fetched certificates.
 - `inventory/` — `hosts.yml.example` for remote hosts; `localhost.yml` for controlled local/smoke scenarios.
-- `scripts/` — operational backup, restore, synthetic-check, release-contract, and source-of-truth validation scripts.
-- `tests/validation/` — deterministic Bash/Ansible fixture contracts.
+- `scripts/` — contributor setup/check, operational backup, restore, synthetic-check, release-contract, and source-of-truth validation scripts.
+- `tests/validation/` — deterministic Bash/Ansible fixture contracts; `manifest.txt` enumerates the contracts run by `scripts/check.sh`.
 - `tests/e2e/` — QEMU/KVM and remote-install scenarios; not part of routine CI.
-- `.github/workflows/security.yml` — authoritative CI command sequence.
+- `.github/workflows/ci.yml` — CI workflow; its static job runs the contributor bootstrap and quick-check entrypoints.
+- `.github/workflows/release.yml` — tagged-release workflow; release validation is also available locally through `scripts/check.sh --release`.
 
 ## Development Commands
 
-Install the controller dependencies used by CI, then the pinned collections:
+Set up the pinned controller dependencies and collections, then run the same fast checks as CI:
 
 ```bash
-python3 -m pip install --user 'ansible-core==2.19.11' 'ansible-lint==26.6.0' yamllint 'passlib[bcrypt]' 'bcrypt<4.1'
-ansible-galaxy collection install -r requirements.yml
+scripts/bootstrap.sh
+scripts/check.sh
 ```
 
 Prepare an encrypted remote deployment from examples:
@@ -69,14 +70,13 @@ ansible-playbook --ask-vault-pass site.yml --tags orchestration -u root
 
 Do not rely on Ansible check mode for these roles: provisioning contains validation, stateful Docker bootstrap, service reloads, and SSH/UFW cutover logic that check mode cannot faithfully model.
 
-Development/contract checks:
+Use `scripts/check.sh --e2e` for the fast checks plus the supported-platform QEMU install test. Use `scripts/check.sh --release` for the fast checks, QEMU install and lifecycle coverage, and release contracts.
+
+For a focused validation, run the contract that covers the changed behavior directly. For example:
 
 ```bash
-pip install pre-commit
-pre-commit install
-pre-commit run --all-files
 bash scripts/verify-ssot.sh
-bash tests/validation/workflow-contract.sh .github/workflows/security.yml
+bash tests/validation/workflow-contract.sh
 ```
 
 ## Code Conventions & Common Patterns
@@ -100,20 +100,20 @@ bash tests/validation/workflow-contract.sh .github/workflows/security.yml
 - `README.md` — supported installation, remote deployment, operations, and development workflows.
 - `.ansible-lint`, `.yamllint`, `.pre-commit-config.yaml` — formatting/lint/QA policy.
 - `scripts/verify-ssot.sh` — source-of-truth cross-check; update its contracts when changing files or commands it validates.
-- `scripts/backup.sh`, `scripts/restore.sh`, `scripts/synthetic-check.sh` — production operational interfaces; preserve CLI and safety semantics.
-- `tests/validation/manifest.txt` — validation scripts executed by workflow-contract and pre-commit.
+- `scripts/bootstrap.sh`, `scripts/check.sh` — canonical contributor setup and validation entrypoints; `scripts/check.sh --release` adds release validation.
+- `tests/validation/manifest.txt` — validation contracts executed by `scripts/check.sh`.
 
 ## Runtime/Tooling Preferences
 
 - Use Python/Ansible tooling, not Node/Bun. There is no `package.json`, Makefile, or project package-manager manifest.
-- Match CI for controller behavior: `ansible-core==2.19.11`, `ansible-lint==26.6.0`, and collections pinned in `requirements.yml`.
+- `requirements-dev.txt` is the source of pinned controller and QA dependencies; `scripts/bootstrap.sh` installs it with the pinned collections in `requirements.yml`.
 - `install.sh` targets a fresh Debian/Ubuntu VPS and requires root, `apt-get`, `/dev/net/tun`, and interactive `/dev/tty` unless `ZERO_TRUST_NONINTERACTIVE=1` is supplied. Use it only against a disposable/test VPS during development.
 - `ansible.cfg` enables strict host-key checking. Do not weaken it to paper over connectivity failures.
 - Keep generated inventories, real vaults, `.vault_password`, persistent volumes, and fetched certificates untracked as configured by `.gitignore`.
 
 ## Testing & QA
 
-CI runs static, contract, and secret-scanning checks from `.github/workflows/security.yml`: syntax check, `ansible-lint`, `yamllint .`, ShellCheck, `bash -n`, workflow contract validation, SSOT validation, release contract validation, and gitleaks. Align any changed command or manifest entry with that workflow and `.pre-commit-config.yaml`.
+`.github/workflows/ci.yml` runs CI: its static job executes `scripts/bootstrap.sh` then `scripts/check.sh`, and its QEMU job runs the services-only install scenario. `.github/workflows/release.yml` owns tagged-release validation; run `scripts/check.sh --release` for the corresponding local release checks. Align changed commands or validation wiring with those entrypoints and `.pre-commit-config.yaml`.
 
 The test suite is Bash/Ansible fixture based—there is no Molecule, pytest, tox, or coverage setup. Run the narrow contract that covers a changed behavior, for example:
 
@@ -125,6 +125,10 @@ bash tests/validation/backup-sandbox.sh
 bash tests/validation/restore-sandbox.sh
 ```
 
-When changing validation wiring, update `tests/validation/manifest.txt` and verify it through `tests/validation/workflow-contract.sh`; this script enforces the CI workflow shape and command literals.
+`tests/validation/workflow-contract.sh` validates workflow and contributor-entrypoint structure. `scripts/check.sh` reads `tests/validation/manifest.txt` and runs every listed validation contract. When changing validation wiring, update the manifest as needed and verify the workflow/entrypoint structure with:
+
+```bash
+bash tests/validation/workflow-contract.sh
+```
 
 Use `tests/ansible-pull-smoke.yml` for the limited localhost `ansible-pull` inventory contract. Use the QEMU/KVM E2E scripts only for deployment/runtime changes that require real VM behavior; see `tests/e2e/README.md` and do not claim provider firewall/routing coverage from QEMU alone.
