@@ -49,19 +49,7 @@ removes, enables, disables, or tunes swap or zram.
 > new key-authenticated login before disconnecting. Keep provider console or
 > rescue access available.
 
-## Pre-publication setup
-
-The `v1.3.0` tag and GitHub release assets become available only after the
-maintainer merges this work and publishes that release. Until publication, do
-not use `releases/latest` asset paths or a release installer; prepare the VPS
-and follow the [remote Ansible path](docs/getting-started.md#remote-ansible-deployment)
-from a tagged checkout instead.
-
-## Verified release installation (after publication)
-
-Only after the maintainer publishes the `v1.3.0` tag and GitHub release, use
-the verified local installation path below. At that point the `v1.3.0` assets
-and `releases/latest` asset paths are available.
+## Verified release installation
 
 Install [GitHub CLI](https://cli.github.com/) on the VPS and authenticate it so
 GitHub can verify the release attestation. Run these commands from a directory

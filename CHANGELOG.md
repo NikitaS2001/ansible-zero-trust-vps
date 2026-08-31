@@ -2,7 +2,7 @@
 
 Notable changes are recorded here. The project follows Semantic Versioning.
 
-## [v1.3.0] - Unreleased
+## [v1.3.0] - 2026-08-30
 
 - Verify the official installer through an SSH-signed release tag and exact commit.
 - Pin automation, Ansible, collection, and OCI dependencies.
@@ -27,7 +27,7 @@ Notable changes are recorded here. The project follows Semantic Versioning.
 
 - Publish the first tagged release with the public installer.
 
-[v1.3.0]: https://github.com/NikitaS2001/ansible-zero-trust-vps/compare/v1.2.1...HEAD
+[v1.3.0]: https://github.com/NikitaS2001/ansible-zero-trust-vps/compare/v1.2.1...v1.3.0
 [v1.2.1]: https://github.com/NikitaS2001/ansible-zero-trust-vps/compare/v1.2.0...v1.2.1
 [v1.2.0]: https://github.com/NikitaS2001/ansible-zero-trust-vps/compare/v1.1.0...v1.2.0
 [v1.1.0]: https://github.com/NikitaS2001/ansible-zero-trust-vps/compare/v1.0.0...v1.1.0

@@ -88,6 +88,32 @@
       register: vps_orchestration_caddy_candidate_tree_hash
       changed_when: false
 
+    - name: "Compose | Caddy | Inspect validation image"
+      ansible.builtin.command:
+        argv:
+          - docker
+          - image
+          - inspect
+          - --format
+          - "{{ '{{ .Id }}' }}"
+          - caddy:{{ caddy_version }}@{{ caddy_image_digest }}
+      register: vps_orchestration_caddy_validation_image
+      changed_when: false
+      failed_when: false
+
+    - name: "Compose | Caddy | Pull missing validation image"
+      ansible.builtin.command:
+        argv:
+          - timeout
+          - --signal=TERM
+          - 5m
+          - docker
+          - pull
+          - caddy:{{ caddy_version }}@{{ caddy_image_digest }}
+      changed_when: true
+      no_log: true
+      when: vps_orchestration_caddy_validation_image.rc != 0
+
     - name: "Compose | Caddy | Validate complete candidate tree"
       ansible.builtin.command:
         argv:
