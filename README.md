@@ -23,9 +23,9 @@ roadmap.
 The host is hardened with key-only SSH, UFW, Fail2Ban, a non-root administrator,
 and conservative kernel settings. Containers run on a private Docker network.
 
-The default `services_only` mode lets VPN clients reach only the managed VPN
-and service networks. `full_tunnel` is an explicit dual-stack mode and is
-refused unless the host proves both IPv4 and IPv6 egress.
+The default `services` mode lets VPN clients reach only the managed VPN and
+service networks. `full` requires IPv4 egress; it adds IPv6 routing only when
+the host proves IPv6 egress.
 
 This is not a general-purpose hosting panel, multi-node VPN, cloud provisioning
 tool, or high-availability platform.
@@ -73,7 +73,7 @@ files:
 mkdir zero-trust-vps-install
 cd zero-trust-vps-install
 gh auth login
-gh release download v1.3.0 \
+gh release download v1.3.1 \
   --repo NikitaS2001/ansible-zero-trust-vps \
   --pattern install.sh \
   --pattern install.sh.sha256
@@ -81,7 +81,7 @@ gh attestation verify install.sh \
   --repo NikitaS2001/ansible-zero-trust-vps \
   --signer-workflow \
     NikitaS2001/ansible-zero-trust-vps/.github/workflows/release.yml \
-  --source-ref refs/tags/v1.3.0
+    --source-ref refs/tags/v1.3.1
 sha256sum --check install.sh.sha256
 # As root:
 bash ./install.sh

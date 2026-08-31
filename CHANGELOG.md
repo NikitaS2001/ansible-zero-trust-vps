@@ -2,6 +2,11 @@
 
 Notable changes are recorded here. The project follows Semantic Versioning.
 
+## [v1.3.1] - 2026-08-31
+
+- Permit `full` routing with IPv4 egress; add IPv6 routes only when the host has IPv6 egress.
+- Rename traffic modes from `services_only`/`full_tunnel` to `services`/`full`.
+
 ## [v1.3.0] - 2026-08-30
 
 - Verify the official installer through an SSH-signed release tag and exact commit.
@@ -26,6 +31,8 @@ Notable changes are recorded here. The project follows Semantic Versioning.
 ## [v1.0.0] - 2026-08-06
 
 - Publish the first tagged release with the public installer.
+
+[v1.3.1]: https://github.com/NikitaS2001/ansible-zero-trust-vps/compare/v1.3.0...v1.3.1
 
 [v1.3.0]: https://github.com/NikitaS2001/ansible-zero-trust-vps/compare/v1.2.1...v1.3.0
 [v1.2.1]: https://github.com/NikitaS2001/ansible-zero-trust-vps/compare/v1.2.0...v1.2.1

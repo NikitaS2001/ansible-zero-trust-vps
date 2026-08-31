@@ -118,7 +118,7 @@ cat >"${TMP}/playbook.yml" <<YAML
   become: false
   vars:
     project_root: "${PROJECT}"
-    wg_traffic_mode: services_only
+    wg_traffic_mode: services
     wg_services_only_ipv4_destinations: ["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32"]
     wg_services_only_ipv6_destinations: ["fd42:42:42::/64"]
     vps_orchestration_traffic_mode_readiness_retries: 1
@@ -153,7 +153,7 @@ PY
 }
 
 ansible-playbook "${TMP}/playbook.yml" >"${TMP}/services.log"
-[[ "$(<"${PROJECT}/.wg-traffic-mode")" == services_only ]]
+[[ "$(<"${PROJECT}/.wg-traffic-mode")" == services ]]
 [[ "$(read_policy)" == '{"client": ["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32", "fd42:42:42::/64"], "firewall": 1, "routes": ["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32", "fd42:42:42::/64"]}' ]]
 grep -Fq 'docker exec wg-easy wg show wg0' "${LOG}"
 grep -Fq 'docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS' "${LOG}"
@@ -196,9 +196,17 @@ unset TRAFFIC_TEST_BROAD_ACCEPT
 ansible-playbook "${TMP}/playbook.yml" >"${TMP}/drift.log"
 [[ "$(read_policy)" == '{"client": ["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32", "fd42:42:42::/64"], "firewall": 1, "routes": ["10.8.0.0/24", "10.66.0.2/32", "10.66.0.3/32", "fd42:42:42::/64"]}' ]]
 
-ansible-playbook "${TMP}/playbook.yml" -e wg_traffic_mode=full_tunnel >"${TMP}/full.log"
-[[ "$(<"${PROJECT}/.wg-traffic-mode")" == full_tunnel ]]
+ansible-playbook "${TMP}/playbook.yml" \
+  -e wg_traffic_mode=full \
+  -e vps_orchestration_full_ipv6_enabled=true >"${TMP}/full.log"
+[[ "$(<"${PROJECT}/.wg-traffic-mode")" == full ]]
 [[ "$(read_policy)" == '{"client": null, "firewall": 0, "routes": ["0.0.0.0/0", "::/0"]}' ]]
+
+ansible-playbook "${TMP}/playbook.yml" \
+  -e wg_traffic_mode=full \
+  -e vps_orchestration_full_ipv6_enabled=false >"${TMP}/full-ipv4-only.log"
+[[ "$(<"${PROJECT}/.wg-traffic-mode")" == full ]]
+[[ "$(read_policy)" == '{"client": null, "firewall": 0, "routes": ["0.0.0.0/0"]}' ]]
 
 cp "${DB}" "${TMP}/before-post-marker-fault.db"
 post_marker_db_sha="$(sha256sum "${DB}" | cut -d' ' -f1)"
@@ -211,8 +219,8 @@ if ansible-playbook "${TMP}/playbook.yml" >"${TMP}/post-marker-fault.log" 2>&1; 
 fi
 unset TRAFFIC_TEST_FAIL_AFTER_MARKER
 cmp "${DB}" "${TMP}/before-post-marker-fault.db"
-if [[ "$(<"${PROJECT}/.wg-traffic-mode")" != full_tunnel ]]; then
-  echo "post-marker rollback left marker=$(<"${PROJECT}/.wg-traffic-mode") with full_tunnel DB" >&2
+if [[ "$(<"${PROJECT}/.wg-traffic-mode")" != full ]]; then
+  echo "post-marker rollback left marker=$(<"${PROJECT}/.wg-traffic-mode") with full DB" >&2
   exit 1
 fi
 [[ -z "$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' -print -quit)" ]]
@@ -229,11 +237,11 @@ fi
 unset TRAFFIC_TEST_FAIL_SNAPSHOT
 cmp "${DB}" "${TMP}/before-snapshot.db"
 [[ "$(sha256sum "${PROJECT}/volumes/wg-easy/wg0.conf")" == "${wg_before_snapshot}" ]]
-[[ "$(<"${PROJECT}/.wg-traffic-mode")" == full_tunnel ]]
+[[ "$(<"${PROJECT}/.wg-traffic-mode")" == full ]]
 [[ -z "$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' -print -quit)" ]]
 
 touch "${PROJECT}/.wg-traffic-mode.new"
-if ansible-playbook "${TMP}/playbook.yml" -e wg_traffic_mode=full_tunnel >"${TMP}/residue.log" 2>&1; then
+if ansible-playbook "${TMP}/playbook.yml" -e wg_traffic_mode=full >"${TMP}/residue.log" 2>&1; then
   echo 'commit residue unexpectedly succeeded' >&2
   exit 1
 fi
@@ -297,7 +305,7 @@ absent_partial_start_count_after="$(<"${TRAFFIC_TEST_START_COUNT}")"
 absent_partial_restart_delta="$((absent_partial_start_count_after - absent_partial_start_count_before))"
 [[ "${absent_partial_restart_delta}" == 1 ]]
 [[ -z "$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' -print -quit)" ]]
-printf 'full_tunnel\n' >"${PROJECT}/.wg-traffic-mode"
+printf 'full\n' >"${PROJECT}/.wg-traffic-mode"
 chmod 0600 "${PROJECT}/.wg-traffic-mode"
 
 cp "${DB}" "${TMP}/before-rollback-failure.db"
@@ -310,7 +318,7 @@ if ansible-playbook "${TMP}/playbook.yml" >"${TMP}/rollback-failure.log" 2>&1; t
 fi
 unset TRAFFIC_TEST_FAIL_READINESS TRAFFIC_TEST_FAIL_START_AFTER
 cmp "${DB}" "${TMP}/before-rollback-failure.db"
-[[ "$(<"${PROJECT}/.wg-traffic-mode")" == full_tunnel ]]
+[[ "$(<"${PROJECT}/.wg-traffic-mode")" == full ]]
 retained_snapshot="$(find "${PROJECT}" -maxdepth 1 -name '.wg-traffic-mode.transaction.*' -type d -print -quit)"
 [[ -n "${retained_snapshot}" && -f "${retained_snapshot}/snapshot-complete" ]]
 find "${retained_snapshot}" -depth -delete
@@ -340,8 +348,8 @@ for required in ("firewall_enabled", "WG_CLIENTS", "wg show wg0"):
         raise SystemExit(f"missing pre-NAT policy invariant: {required}")
 PY
 
-printf '[PASS] services_only=private_routes,firewall_enabled,WG_CLIENTS_v4_v6_terminal_drop\n'
-printf '[PASS] full_tunnel=default_routes,firewall_disabled\n'
+printf '[PASS] services=private_routes,firewall_enabled,WG_CLIENTS_v4_v6_terminal_drop\n'
+printf '[PASS] full=default_routes,firewall_disabled\n'
 printf '[PASS] marker_drift=reconciled_from_database\n'
 printf '[PASS] converged_live_validation=exec_delta:%s; runtime_drift_repair=mutation_delta:%s\n' "${live_check_delta}" "${runtime_drift_mutation_delta}"
 printf '[PASS] existing_peer_catch_all=overridden_by_global_firewall_ips\n'

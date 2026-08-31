@@ -5,8 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ROLE="${ROOT}/roles/vps_orchestration"
 
 grep -q '^argument_specs:' "${ROLE}/meta/argument_specs.yml"
-grep -q 'choices: \[services_only, full_tunnel\]' "${ROLE}/meta/argument_specs.yml"
-grep -q '^wg_traffic_mode: "services_only"$' "${ROLE}/defaults/main.yml"
+grep -q 'choices: \[services, full\]' "${ROLE}/meta/argument_specs.yml"
+grep -q '^wg_traffic_mode: "services"$' "${ROLE}/defaults/main.yml"
 grep -q 'wg_easy_admin_password is not defined' "${ROLE}/tasks/main.yml"
 grep -q 'wg_easy_bootstrap_secret is defined' "${ROLE}/tasks/main.yml"
 

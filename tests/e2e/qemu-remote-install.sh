@@ -201,7 +201,7 @@ write_group_vars() {
     cat >"${ROOT_DIR}/group_vars/all/vars.yml" <<EOF
 ---
 # Network
-wg_traffic_mode: "${ZERO_TRUST_WG_TRAFFIC_MODE:-services_only}"
+wg_traffic_mode: "${ZERO_TRUST_WG_TRAFFIC_MODE:-services}"
 ssh_port: ${configured_ssh_port}
 vps_hardening_controller_ssh_port: ${QEMU_ADMIN_PORT}
 wg_port: ${E2E_WG_PORT}

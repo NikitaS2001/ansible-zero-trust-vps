@@ -36,8 +36,8 @@ services:
       INIT_DNS: {{ wg_client_dns | string | to_json }}
       INIT_IPV4_CIDR: {{ wg_vpn_subnet | default('10.8.0.0/24') | string | to_json }}
       INIT_IPV6_CIDR: {{ wg_vpn_ipv6_subnet | default('fd42:42:42::/64') | string | to_json }}
-{% if (wg_traffic_mode | default('services_only')) == 'full_tunnel' %}
-      INIT_ALLOWED_IPS: "0.0.0.0/0,::/0"
+{% if (wg_traffic_mode | default('services')) == 'full' %}
+      INIT_ALLOWED_IPS: "0.0.0.0/0{% if vps_orchestration_full_ipv6_enabled | default(false) | bool %},::/0{% endif %}"
 {% else %}
       INIT_ALLOWED_IPS: {{ (wg_services_only_ipv4_destinations + wg_services_only_ipv6_destinations) | join(',') | to_json }}
 {% endif %}

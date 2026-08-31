@@ -45,7 +45,7 @@ set_inputs() {
     WG_INTERNAL_DOMAIN='wg.internal'
     ADGUARD_INTERNAL_DOMAIN='adguard.internal'
     INTERNAL_DOMAIN_SUFFIX='internal'
-    WG_TRAFFIC_MODE='services_only'
+    WG_TRAFFIC_MODE='services'
     WG_TRAFFIC_MODE_INPUT=''
 }
 
@@ -66,7 +66,7 @@ clear_inputs() {
     ADGUARD_INTERNAL_DOMAIN=''
     WG_HOST=''
     INTERNAL_DOMAIN_SUFFIX=''
-    WG_TRAFFIC_MODE='services_only'
+    WG_TRAFFIC_MODE='services'
     WG_TRAFFIC_MODE_INPUT=''
 }
 
@@ -177,7 +177,7 @@ plain_one="$(view_vault)"
 [[ "${plain_one}" == *'admin_password_hash: "$6$'* ]] || fail 'random SHA-512 admin hash missing'
 [[ "${plain_one}" == *'vault_adguard_password_hash: "$2'* ]] || fail 'random bcrypt AdGuard hash missing'
 [[ "${plain_one}" == *'wg_easy_bootstrap_secret: "fixture-wireguard-value"'* ]] || fail 'wg-easy secret missing'
-[[ "${plain_one}" == *'wg_traffic_mode: "services_only"'* ]] || fail 'default traffic mode missing'
+[[ "${plain_one}" == *'wg_traffic_mode: "services"'* ]] || fail 'default traffic mode missing'
 for persisted_input in \
     'ssh_port: "2222"' \
     'wg_port: "51820"' \
@@ -227,18 +227,21 @@ adguard_two="$(sed -n 's/^vault_adguard_password_hash: //p' <<<"${plain_two}")"
 state_egress="${TMP}/egress"
 configure_fixture "${state_egress}"
 set_inputs
-WG_TRAFFIC_MODE='full_tunnel'
-WG_TRAFFIC_MODE_INPUT='full_tunnel'
-if (curl() { [[ " $* " != *' -6 '* ]]; }; prepare_installer_vault) >/dev/null 2>&1; then
-    fail 'fresh full-tunnel state was committed without IPv6 egress'
+WG_TRAFFIC_MODE='full'
+WG_TRAFFIC_MODE_INPUT='full'
+if ! (curl() { [[ " $* " != *' -6 '* ]]; }; prepare_installer_vault) >/dev/null 2>&1; then
+    fail 'fresh full-tunnel state unexpectedly required IPv6 egress'
 fi
-[[ ! -e "${VAULT_PASS_FILE}" && ! -e "${VAULT_FILE}" && ! -e "${VAULT_MARKER}" ]] \
-    || fail 'failed full-tunnel preflight persisted immutable installer state'
-printf '[PASS] full-tunnel preflight rejected before immutable state commit\n'
+[[ -e "${VAULT_PASS_FILE}" && -e "${VAULT_FILE}" && -e "${VAULT_MARKER}" ]] \
+    || fail 'IPv4-only full-tunnel preflight did not persist immutable installer state'
+plain_egress="$(view_vault)"
+[[ "${plain_egress}" == *'wg_traffic_mode: "full"'* ]] \
+    || fail 'IPv4-only full state did not persist its traffic mode'
+printf '[PASS] full preflight accepts IPv4-only egress before immutable state commit\n'
 
 configure_fixture "${state_two}"
 
-if (WG_TRAFFIC_MODE_INPUT=full_tunnel; prepare_installer_vault) >/dev/null 2>&1; then
+if (WG_TRAFFIC_MODE_INPUT=full; prepare_installer_vault) >/dev/null 2>&1; then
     fail 'implicit traffic-mode transition was accepted on rerun'
 fi
 for mismatch in \
@@ -409,7 +412,7 @@ if grep -En 'ZERO_TRUST_TEST_FAIL_AFTER|vault_crash_point' "${ROOT_DIR}/install.
     fail 'production installer still contains a test-only fault hook'
 fi
 grep -Fq 'this tag is required only by the release gate' "${ROOT_DIR}/install.sh" \
-    || fail 'v1.3.0 release-preparation contract is not documented in the installer'
+    || fail 'v1.3.1 release-preparation contract is not documented in the installer'
 rerun_block="$(sed -n '/^REMOTE_RERUN=/,/^INNER_RERUN$/p' "${ROOT_DIR}/tests/e2e/run-public-install.sh")"
 if grep -Eq 'ZERO_TRUST_(ADMIN_PASSWORD|ADGUARD_PASSWORD|WG_PASSWORD|SSH_PUBKEY)' <<<"${rerun_block}"; then
     fail 'public E2E rerun still supplies credential inputs'

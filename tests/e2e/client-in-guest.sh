@@ -9,7 +9,7 @@
 #   WG_ENDPOINT   endpoint to use in the client config (default: wg-easy container)
 #   WG_PORT       container WireGuard UDP port (default 51820)
 #   ROOT_CA       path to the fetched Caddy root CA (default installer path)
-#   WG_TRAFFIC_MODE  services_only or full_tunnel (default services_only)
+#   WG_TRAFFIC_MODE  services or full (default services)
 set -euo pipefail
 
 : "${WG_PASSWORD:?WG_PASSWORD is required}"
@@ -17,7 +17,7 @@ WG_USER="${WG_USER:-admin}"
 WG_ENDPOINT="${WG_ENDPOINT:-}"
 WG_PORT="${WG_PORT:-51820}"
 ROOT_CA="${ROOT_CA:-/opt/zero-trust-vps-installer/repo/fetched_certs/localhost/root.crt}"
-WG_TRAFFIC_MODE="${WG_TRAFFIC_MODE:-services_only}"
+WG_TRAFFIC_MODE="${WG_TRAFFIC_MODE:-services}"
 CLIENT_NAME="e2e-client-$(date +%s)"
 UI_PORT="${UI_PORT:-51821}"
 WG_DOMAIN="${WG_INTERNAL_DOMAIN:-wg.internal}"
@@ -28,8 +28,8 @@ command -v curl >/dev/null || { echo "[FAIL] curl is required" >&2; exit 1; }
 command -v jq >/dev/null || { echo "[FAIL] jq is required" >&2; exit 1; }
 command -v wg-quick >/dev/null || { echo "[FAIL] wireguard-tools are required" >&2; exit 1; }
 [[ -e /dev/net/tun ]] || { echo "[FAIL] /dev/net/tun is missing" >&2; exit 1; }
-[[ "${WG_TRAFFIC_MODE}" == services_only || "${WG_TRAFFIC_MODE}" == full_tunnel ]] \
-    || { echo "[FAIL] WG_TRAFFIC_MODE must be services_only or full_tunnel" >&2; exit 1; }
+[[ "${WG_TRAFFIC_MODE}" == services || "${WG_TRAFFIC_MODE}" == full ]] \
+    || { echo "[FAIL] WG_TRAFFIC_MODE must be services or full" >&2; exit 1; }
 if [[ -z "${WG_ENDPOINT}" ]]; then
     endpoint_host="$(
         docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' wg-easy
@@ -204,16 +204,19 @@ curl -fsS -u "${WG_USER}:${WG_PASSWORD}" \
 grep -q '^\[Interface\]' /tmp/zt-e2e.conf || { echo "[FAIL] downloaded configuration is not a WireGuard config" >&2; exit 1; }
 chmod 0600 /tmp/zt-e2e.conf
 sed -i -E "s|^Endpoint = .*|Endpoint = ${WG_ENDPOINT}|" /tmp/zt-e2e.conf
-if [[ "${WG_TRAFFIC_MODE}" == services_only ]]; then
+full_ipv6_enabled=false
+if [[ "${WG_TRAFFIC_MODE}" == services ]]; then
     # Model a malicious client that ignores the narrow generated policy. The
-    # server firewall, not the client route, must enforce services_only.
+    # server firewall, not the client route, must enforce services.
     sed -i -E 's|^AllowedIPs = .*|AllowedIPs = 0.0.0.0/0, ::/0|' /tmp/zt-e2e.conf
-    echo "[INFO] services_only adversarial client requests catch-all AllowedIPs"
-fi
-grep -Eq '^AllowedIPs = 0\.0\.0\.0/0, ?::/0$' /tmp/zt-e2e.conf || {
-    echo "[FAIL] packet-policy test requires catch-all client AllowedIPs" >&2
+    full_ipv6_enabled=true
+    echo "[INFO] services adversarial client requests catch-all AllowedIPs"
+elif grep -Eq '^AllowedIPs = 0\.0\.0\.0/0, ?::/0$' /tmp/zt-e2e.conf; then
+    full_ipv6_enabled=true
+elif ! grep -Eq '^AllowedIPs = 0\.0\.0\.0/0$' /tmp/zt-e2e.conf; then
+    echo "[FAIL] full client profile has unexpected AllowedIPs" >&2
     exit 1
-}
+fi
 
 # The API commits before the runtime WireGuard peer is guaranteed to be
 # visible. Wait for that boundary so a slow guest cannot race wg-quick.
@@ -247,9 +250,6 @@ if curl -6 --noproxy '*' --connect-timeout 8 --max-time 15 \
     -fsSk 'https://[2606:4700:4700::1111]/cdn-cgi/trace' -o /dev/null; then
     ipv6_direct_egress=true
     echo "[PASS] IPv6 direct-egress control works before WireGuard"
-elif [[ "${WG_TRAFFIC_MODE}" == full_tunnel ]]; then
-    echo "[FAIL] IPv6 direct-egress control is required for full_tunnel" >&2
-    exit 1
 else
     echo "[SKIP] IPv6 public-egress packet probe: test host has no direct IPv6"
 fi
@@ -307,33 +307,35 @@ probe_public_egress() {
 }
 
 if probe_public_egress 4 'https://1.1.1.1/cdn-cgi/trace'; then
-    [[ "${WG_TRAFFIC_MODE}" == full_tunnel ]] || {
-        echo "[FAIL] IPv4 public egress escaped services_only through WireGuard" >&2
+    [[ "${WG_TRAFFIC_MODE}" == full ]] || {
+        echo "[FAIL] IPv4 public egress escaped services through WireGuard" >&2
         exit 1
     }
-    echo "[PASS] IPv4 public egress works through full_tunnel"
+    echo "[PASS] IPv4 public egress works through full"
 else
-    [[ "${WG_TRAFFIC_MODE}" == services_only ]] || {
-        echo "[FAIL] IPv4 public egress failed through full_tunnel" >&2
+    [[ "${WG_TRAFFIC_MODE}" == services ]] || {
+        echo "[FAIL] IPv4 public egress failed through full" >&2
         exit 1
     }
-    echo "[PASS] IPv4 public egress is blocked through services_only"
+    echo "[PASS] IPv4 public egress is blocked through services"
 fi
 
-if [[ "${ipv6_direct_egress}" == true ]]; then
+if [[ "${ipv6_direct_egress}" == true && "${full_ipv6_enabled}" == true ]]; then
     if probe_public_egress 6 'https://[2606:4700:4700::1111]/cdn-cgi/trace'; then
-        [[ "${WG_TRAFFIC_MODE}" == full_tunnel ]] || {
-            echo "[FAIL] IPv6 public egress escaped services_only through WireGuard" >&2
+        [[ "${WG_TRAFFIC_MODE}" == full ]] || {
+            echo "[FAIL] IPv6 public egress escaped services through WireGuard" >&2
             exit 1
         }
-        echo "[PASS] IPv6 public egress works through full_tunnel"
+        echo "[PASS] IPv6 public egress works through full"
     else
-        [[ "${WG_TRAFFIC_MODE}" == services_only ]] || {
-            echo "[FAIL] IPv6 public egress failed through full_tunnel" >&2
+        [[ "${WG_TRAFFIC_MODE}" == services ]] || {
+            echo "[FAIL] IPv6 public egress failed through full" >&2
             exit 1
         }
-        echo "[PASS] IPv6 public egress is blocked through services_only"
+        echo "[PASS] IPv6 public egress is blocked through services"
     fi
+elif [[ "${ipv6_direct_egress}" == true ]]; then
+    echo "[SKIP] IPv6 is outside this IPv4-only full profile"
 fi
 
 echo "--- diagnostics: private CA, local domains, WireGuard handshake ---"

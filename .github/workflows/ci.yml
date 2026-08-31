@@ -52,9 +52,9 @@ jobs:
       - name: Enable KVM access
         run: sudo chmod a+rw /dev/kvm
 
-      - name: Run services-only E2E
+      - name: Run services E2E
         env:
           QEMU_IMAGE: ${{ matrix.image }}
           QEMU_USER: ${{ matrix.user }}
-          ZERO_TRUST_WG_TRAFFIC_MODE: services_only
+          ZERO_TRUST_WG_TRAFFIC_MODE: services
         run: tests/e2e/qemu-install.sh --client-test --idempotency-test --reboot-test

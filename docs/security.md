@@ -22,10 +22,11 @@ Only hardened SSH and WireGuard UDP are intended to be public. wg-easy and
 AdGuard bootstrap interfaces bind to localhost. Caddy provides HTTPS inside the
 private Docker/VPN network, while host TCP/443 remains closed.
 
-`services_only` is the default and applies IPv4/IPv6 destination policy on the
-server. `full_tunnel` is opt-in, requires dual-stack egress, and enables both
-families together to avoid an IPv6 bypass. UFW is integrated with Docker's own
-iptables rules; provider firewall rules remain an independent operator duty.
+`services` is the default and applies IPv4/IPv6 destination policy on the
+server. `full` requires IPv4 egress and includes IPv6 only when the host has
+IPv6 egress; on IPv4-only hosts, profiles omit `::/0` and client IPv6 is not
+tunneled. UFW is integrated with Docker's own iptables rules; provider firewall
+rules remain an independent operator duty.
 
 Fail2Ban does not trust the VPN subnet by default. A compromised peer therefore
 does not receive an SSH brute-force exemption.
