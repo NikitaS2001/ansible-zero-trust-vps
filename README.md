@@ -73,7 +73,7 @@ files:
 mkdir zero-trust-vps-install
 cd zero-trust-vps-install
 gh auth login
-gh release download v1.3.1 \
+gh release download v1.3.2 \
   --repo NikitaS2001/ansible-zero-trust-vps \
   --pattern install.sh \
   --pattern install.sh.sha256
@@ -81,7 +81,7 @@ gh attestation verify install.sh \
   --repo NikitaS2001/ansible-zero-trust-vps \
   --signer-workflow \
     NikitaS2001/ansible-zero-trust-vps/.github/workflows/release.yml \
-    --source-ref refs/tags/v1.3.1
+    --source-ref refs/tags/v1.3.2
 sha256sum --check install.sh.sha256
 # As root:
 bash ./install.sh

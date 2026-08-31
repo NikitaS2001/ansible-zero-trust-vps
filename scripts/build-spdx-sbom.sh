@@ -102,7 +102,7 @@ if not images:
 
 epoch = int(git("show", "-s", "--format=%ct", sha).strip())
 created = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-source_digest = hashlib.sha256(git("archive", "--format=tar", sha, text=False)).hexdigest()
+source_digest = hashlib.sha256(git("ls-tree", "-r", "-z", "--full-tree", sha, text=False)).hexdigest()
 
 def base_package(spdx_id: str, name: str, version: str, location: str) -> dict:
     return {

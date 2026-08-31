@@ -412,7 +412,7 @@ if grep -En 'ZERO_TRUST_TEST_FAIL_AFTER|vault_crash_point' "${ROOT_DIR}/install.
     fail 'production installer still contains a test-only fault hook'
 fi
 grep -Fq 'this tag is required only by the release gate' "${ROOT_DIR}/install.sh" \
-    || fail 'v1.3.1 release-preparation contract is not documented in the installer'
+    || fail 'v1.3.2 release-preparation contract is not documented in the installer'
 rerun_block="$(sed -n '/^REMOTE_RERUN=/,/^INNER_RERUN$/p' "${ROOT_DIR}/tests/e2e/run-public-install.sh")"
 if grep -Eq 'ZERO_TRUST_(ADMIN_PASSWORD|ADGUARD_PASSWORD|WG_PASSWORD|SSH_PUBKEY)' <<<"${rerun_block}"; then
     fail 'public E2E rerun still supplies credential inputs'
