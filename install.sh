@@ -9,7 +9,7 @@ umask 077
 readonly OFFICIAL_REPO_URL="https://github.com/NikitaS2001/ansible-zero-trust-vps.git"
 # Release-preparation target: this tag is required only by the release gate.
 # Before the tag exists, source-tree tests must use explicit ZERO_TRUST_DEV_MODE=1.
-readonly OFFICIAL_RELEASE_REF="v1.3.1"
+readonly OFFICIAL_RELEASE_REF="v1.3.2"
 readonly OFFICIAL_SIGNER_IDENTITY="nikitasmadych2001@gmail.com"
 readonly OFFICIAL_SIGNER_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcfC1Stku7YQ0mLYptkX+t0SZiziyukPRofvs0YHZbx"
 readonly OFFICIAL_SIGNER_FINGERPRINT="SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0"
@@ -149,7 +149,7 @@ Verify the release assets locally, then run:
 Interactive public installer for ansible-zero-trust-vps.
 
 Production mode accepts only:
-  https://github.com/NikitaS2001/ansible-zero-trust-vps.git at v1.3.1
+  https://github.com/NikitaS2001/ansible-zero-trust-vps.git at v1.3.2
   Its annotated SSH-signed tag must match nikitasmadych2001@gmail.com
   (SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0). The installer peels
   it to an exact SHA, detaches the checkout, and passes that SHA to ansible-pull.
