@@ -18,6 +18,8 @@ mkdir -p "${repo}/scripts" "${repo}/.github"
 cp "${ROOT_DIR}/scripts/release-contract.sh" "${repo}/scripts/"
 cp "${ROOT_DIR}/install.sh" "${ROOT_DIR}/requirements.yml" \
     "${ROOT_DIR}/CHANGELOG.md" "${repo}/"
+sed -i 's/^## \[v1\.3\.0\] - [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$/## [v1.3.0] - Unreleased/' \
+    "${repo}/CHANGELOG.md"
 key="${tmp}/signer"
 wrong_key="${tmp}/wrong"
 ssh-keygen -q -t ed25519 -N '' -f "${key}"
