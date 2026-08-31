@@ -34,7 +34,8 @@ tool, or high-availability platform.
 
 - A fresh Debian 12 or Ubuntu 24.04 VPS on amd64.
 - A 1 GB VPS plan with at least 900 MiB of RAM visible to the OS.
-- Root access for the first installation and an interactive SSH terminal.
+- Root access or a sudo-capable account for the first installation, and an
+  interactive SSH terminal.
 - `/dev/net/tun`, WireGuard, Docker-compatible iptables/NAT, and outbound
   access to the required package and image registries.
 - Provider-console or rescue access, plus provider firewall rules for the old
@@ -49,17 +50,29 @@ removes, enables, disables, or tunes swap or zram.
 > new key-authenticated login before disconnecting. Keep provider console or
 > rescue access available.
 
+## Pre-install checklist
+
+- In the provider firewall, open default SSH `TCP/2222` and WireGuard
+  `UDP/51820`. If you select custom ports, open them before installation; do
+  not remove the old SSH rule until a key-authenticated login succeeds.
+- Have the SSH public key for the administrator ready.
+- Choose a publicly reachable WireGuard endpoint: a stable IP address or DNS
+  name.
+- Prepare three distinct administrator secrets.
+
 ## Verified release installation
 
-Install [GitHub CLI](https://cli.github.com/) on the VPS and authenticate it so
-GitHub can verify the release attestation. Run these commands from a directory
-that does not already contain the downloaded files:
+Install [GitHub CLI](https://cli.github.com/) on the VPS, then run
+`gh auth login`. Authentication lets GitHub CLI verify the release attestation.
+Run these commands from a directory that does not already contain the downloaded
+files:
 
 <!-- ssot:verified-quickstart:start -->
 
 ```bash
 mkdir zero-trust-vps-install
 cd zero-trust-vps-install
+gh auth login
 gh release download v1.3.0 \
   --repo NikitaS2001/ansible-zero-trust-vps \
   --pattern install.sh \
@@ -70,6 +83,10 @@ gh attestation verify install.sh \
     NikitaS2001/ansible-zero-trust-vps/.github/workflows/release.yml \
   --source-ref refs/tags/v1.3.0
 sha256sum --check install.sh.sha256
+# As root:
+bash ./install.sh
+
+# As a normal user:
 sudo bash ./install.sh
 ```
 
@@ -92,17 +109,18 @@ ssh -p <ssh_port> -L 51821:127.0.0.1:51821 \
   <admin_user>@<vps-address>
 ```
 
-Open `http://127.0.0.1:51821`, sign in, create a client, and import its profile
-into WireGuard. Then connect the VPN and open `https://wg.internal` or
-`https://adguard.internal`. The complete sequence, including trusting the
-internal CA, is in [Getting started](docs/getting-started.md).
+Keep the SSH tunnel running while you sign in, create a client, and import its
+profile into WireGuard. Connect the VPN after importing the profile; the client
+must trust the generated Caddy root CA before opening `https://wg.internal` or
+`https://adguard.internal`. The complete sequence is in
+[Getting started](docs/getting-started.md).
 
 ## Documentation
 
 - [Documentation map](docs/README.md)
 - [Getting started](docs/getting-started.md)
 - [Configuration](docs/configuration.md)
-- [Operations and recovery](docs/operations.md)
+- [Operations and recovery: health, backup/restore, upgrades, SSH recovery](docs/operations.md)
 - [Security model](docs/security.md)
 - [Adding an internal service](docs/extensions.md)
 - [Release process](docs/releasing.md)
@@ -118,8 +136,11 @@ toolchain and `./scripts/check.sh` runs the fast project contracts.
 ## Contributing and security
 
 Small fixes that preserve the minimal design are welcome; see
-[CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities through the private
-channel described in [SECURITY.md](SECURITY.md), never through a public issue.
+[CONTRIBUTING.md](CONTRIBUTING.md). The [security model](docs/security.md)
+reduces public exposure: only hardened SSH and WireGuard UDP are public, while
+services stay inside the private Docker/VPN network. Report vulnerabilities
+through the private channel described in [SECURITY.md](SECURITY.md), never
+through a public issue.
 
 ## License
 
