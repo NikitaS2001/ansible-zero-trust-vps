@@ -318,7 +318,7 @@ verify_traffic_mode() {
     local target="$1" port="$2" key="$3" expected_mode="$4"
     local actual_mode
 
-    [[ "${expected_mode}" == services_only || "${expected_mode}" == full_tunnel ]] \
+    [[ "${expected_mode}" == services || "${expected_mode}" == full ]] \
         || fail "invalid expected traffic mode: ${expected_mode}"
     actual_mode="$(run_remote "${target}" "${port}" "${key}" \
         'sudo cat /opt/zero-trust-vps/.wg-traffic-mode')" \
@@ -326,7 +326,7 @@ verify_traffic_mode() {
     [[ "${actual_mode}" == "${expected_mode}" ]] \
         || fail "deployed traffic mode does not match ${expected_mode}"
 
-    if [[ "${expected_mode}" == services_only ]]; then
+    if [[ "${expected_mode}" == services ]]; then
         # shellcheck disable=SC2016
         run_remote "${target}" "${port}" "${key}" \
             'sudo bash -eu -o pipefail -c '\''
@@ -334,14 +334,14 @@ verify_traffic_mode() {
                 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS
                 test "$(docker exec wg-easy iptables -S WG_CLIENTS | tail -n 1)" = "-A WG_CLIENTS -j DROP"
                 test "$(docker exec wg-easy ip6tables -S WG_CLIENTS | tail -n 1)" = "-A WG_CLIENTS -j DROP"
-            '\''' || fail "services_only firewall is not active for both address families"
+            '\''' || fail "services firewall is not active for both address families"
     else
         # shellcheck disable=SC2016
         run_remote "${target}" "${port}" "${key}" \
             'sudo bash -eu -o pipefail -c '\''
-                ! docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null
+                ! docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null &&
                 ! docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS 2>/dev/null
-            '\''' || fail "full_tunnel unexpectedly retained services_only firewall hooks"
+            '\''' || fail "full unexpectedly retained services firewall hooks"
     fi
 }
 

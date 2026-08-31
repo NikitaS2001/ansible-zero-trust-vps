@@ -46,8 +46,8 @@
 - name: "VPS Orchestration | Preflight | Validate traffic mode"
   ansible.builtin.assert:
     that:
-      - wg_traffic_mode in ['services_only', 'full_tunnel']
-    fail_msg: "wg_traffic_mode must be exactly services_only or full_tunnel"
+      - wg_traffic_mode in ['services', 'full']
+    fail_msg: "wg_traffic_mode must be exactly services or full"
   tags: [compose, traffic_mode]
 
 - name: "VPS Orchestration | Preflight | Validate traffic subnets"
@@ -74,26 +74,6 @@
   changed_when: false
   tags: [compose, traffic_mode]
 
-- name: "VPS Orchestration | Preflight | Probe host IPv6 connectivity"
-  ansible.builtin.command: ip -6 route get 2606:4700:4700::1111
-  register: vps_orchestration_ipv6_probe
-  changed_when: false
-  failed_when: false
-  when: wg_traffic_mode == 'full_tunnel'
-  tags: [compose]
-
-- name: "VPS Orchestration | Preflight | Refuse IPv6 mode without host IPv6"
-  ansible.builtin.fail:
-    msg: >
-      wg_traffic_mode is full_tunnel but this host has no IPv6 connectivity
-      (ip -6 route get returned rc={{ vps_orchestration_ipv6_probe.rc }}).
-      The VPN cannot route IPv6 client traffic without host IPv6 egress.
-      Keep the default services_only mode or deploy on a dual-stack host.
-  when:
-    - wg_traffic_mode == 'full_tunnel'
-    - vps_orchestration_ipv6_probe.rc != 0
-  tags: [compose]
-
 - name: "VPS Orchestration | Preflight | Prove full-tunnel IPv4 egress"
   ansible.builtin.command:
     argv:
@@ -104,10 +84,10 @@
         s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);
         s.settimeout(8); s.connect(('1.1.1.1',443)); s.close()
   changed_when: false
-  when: wg_traffic_mode == 'full_tunnel'
+  when: wg_traffic_mode == 'full'
   tags: [compose, traffic_mode]
 
-- name: "VPS Orchestration | Preflight | Prove full-tunnel IPv6 egress"
+- name: "VPS Orchestration | Preflight | Probe optional full-tunnel IPv6 egress"
   ansible.builtin.command:
     argv:
       - python3
@@ -116,8 +96,17 @@
         import socket;
         s=socket.socket(socket.AF_INET6,socket.SOCK_STREAM);
         s.settimeout(8); s.connect(('2606:4700:4700::1111',443)); s.close()
+  register: vps_orchestration_full_ipv6_probe
   changed_when: false
-  when: wg_traffic_mode == 'full_tunnel'
+  failed_when: false
+  when: wg_traffic_mode == 'full'
+  tags: [compose, traffic_mode]
+
+- name: "VPS Orchestration | Preflight | Select full IPv6 routing"
+  ansible.builtin.set_fact:
+    vps_orchestration_full_ipv6_enabled: >-
+      {{ wg_traffic_mode == 'full'
+         and (vps_orchestration_full_ipv6_probe.rc | default(1) == 0) }}
   tags: [compose, traffic_mode]
 
 - name: "VPS Orchestration | Preflight | Require encrypted wg-easy bootstrap input"

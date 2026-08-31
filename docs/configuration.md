@@ -33,22 +33,23 @@ vault under `/etc/zero-trust-vps` and preserves them across reruns.
 ## Traffic policy
 
 ```yaml
-wg_traffic_mode: services_only
+wg_traffic_mode: services
 ```
 
-`services_only` is the default and is enforced on the server. Clients can reach
-only `wg_services_only_ipv4_destinations` and
+`services` is the default and is enforced on the server. Clients can reach only
+`wg_services_only_ipv4_destinations` and
 `wg_services_only_ipv6_destinations`; modifying AllowedIPs on a client does not
 bypass that policy.
 
 ```yaml
-wg_traffic_mode: full_tunnel
+wg_traffic_mode: full
 ```
 
-`full_tunnel` provides IPv4 and IPv6 internet egress through the VPS. The role
-refuses it unless both families work and applies the mode as a rollback-capable
-transaction. There is no `wg_enable_ipv6` input. Changing modes requires an
-explicit configuration change and updated client profiles.
+`full` provides IPv4 internet egress through the VPS and requires working IPv4
+egress. IPv6 is added when the host proves IPv6 egress; otherwise generated
+profiles omit `::/0`, so client IPv6 remains outside the VPN. The mode is applied
+as a rollback-capable transaction. There is no `wg_enable_ipv6` input. Changing
+modes requires an explicit configuration change and updated client profiles.
 
 ## Ports and identity
 

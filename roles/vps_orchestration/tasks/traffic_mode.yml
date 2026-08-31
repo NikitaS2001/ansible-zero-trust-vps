@@ -63,7 +63,7 @@
       - >-
         not vps_orchestration_traffic_mode_state.stat.exists
         or (vps_orchestration_traffic_mode_raw.content | b64decode | trim)
-           in ['services_only', 'full_tunnel']
+           in ['services', 'full']
     fail_msg: "persisted traffic mode is malformed"
   tags: [traffic_mode]
 
@@ -132,16 +132,17 @@
   ansible.builtin.set_fact:
     vps_orchestration_traffic_policy: "{{ vps_orchestration_traffic_policy_raw.stdout | from_json }}"
     vps_orchestration_traffic_desired_routes: >-
-      {{ ['0.0.0.0/0', '::/0']
-         if wg_traffic_mode == 'full_tunnel'
+      {{ ['0.0.0.0/0']
+         + (['::/0'] if (vps_orchestration_full_ipv6_enabled | default(false) | bool) else [])
+         if wg_traffic_mode == 'full'
          else wg_services_only_ipv4_destinations + wg_services_only_ipv6_destinations }}
-    vps_orchestration_traffic_desired_firewall: "{{ 1 if wg_traffic_mode == 'services_only' else 0 }}"
+    vps_orchestration_traffic_desired_firewall: "{{ 1 if wg_traffic_mode == 'services' else 0 }}"
   tags: [traffic_mode]
 
 - name: "Traffic mode | Select desired per-client firewall override"
   ansible.builtin.set_fact:
     vps_orchestration_traffic_desired_client_firewall: >-
-      {{ vps_orchestration_traffic_desired_routes if wg_traffic_mode == 'services_only' else none }}
+      {{ vps_orchestration_traffic_desired_routes if wg_traffic_mode == 'services' else none }}
   tags: [traffic_mode]
 
 - name: "Traffic mode | Select live policy validation"
@@ -174,7 +175,7 @@
       }
       for attempt in $(seq 1 {{ vps_orchestration_traffic_mode_readiness_retries }}); do
         if timeout 10 docker exec wg-easy wg show wg0 >/dev/null; then
-          if [[ {{ wg_traffic_mode | quote }} == services_only ]]; then
+          if [[ {{ wg_traffic_mode | quote }} == services ]]; then
             timeout 10 docker exec wg-easy iptables -C FORWARD -i wg0 -j WG_CLIENTS \
               && timeout 10 docker exec wg-easy ip6tables -C FORWARD -i wg0 -j WG_CLIENTS \
               && validate_services_only_chain iptables {{ wg_services_only_ipv4_destinations | to_json | quote }} \

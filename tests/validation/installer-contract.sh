@@ -412,7 +412,7 @@ init_source_policy_fixture() {
     SOURCE_FIXTURE_INSTALL_ROOT="${SOURCE_FIXTURE_DIR}/install-root"
     SOURCE_FIXTURE_INSTALLER="${SOURCE_FIXTURE_DIR}/install.sh"
     SOURCE_FIXTURE_KEY="${SOURCE_FIXTURE_DIR}/signing-key"
-    SOURCE_FIXTURE_TAG='v1.3.0'
+    SOURCE_FIXTURE_TAG='v1.3.1'
 
     git init --quiet "${SOURCE_FIXTURE_REPO}"
     git -C "${SOURCE_FIXTURE_REPO}" config user.name 'Release Fixture'

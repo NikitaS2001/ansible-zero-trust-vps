@@ -68,9 +68,9 @@ if static_runs.count("scripts/bootstrap.sh") != 1 or static_runs.count("scripts/
 includes = ci_jobs["qemu"].get("strategy", {}).get("matrix", {}).get("include", [])
 if {row.get("os") for row in includes} != {"debian-12", "ubuntu-24.04"}:
     sys.exit("workflow-contract: CI QEMU matrix is not Debian 12 plus Ubuntu 24.04")
-service_steps = [step for step in ci_jobs["qemu"].get("steps", []) if step.get("name") == "Run services-only E2E"]
-if len(service_steps) != 1 or "services_only" not in str(service_steps[0]):
-    sys.exit("workflow-contract: CI does not explicitly run services_only")
+service_steps = [step for step in ci_jobs["qemu"].get("steps", []) if step.get("name") == "Run services E2E"]
+if len(service_steps) != 1 or "services" not in str(service_steps[0]):
+    sys.exit("workflow-contract: CI does not explicitly run services")
 
 nightly = documents["nightly.yml"]
 if nightly.get("permissions") != {"contents": "read"}:
@@ -82,9 +82,9 @@ matrix = nightly_jobs["qemu"].get("strategy", {}).get("matrix", {})
 includes = matrix.get("include", [])
 if {row.get("os") for row in includes} != {"debian-12", "ubuntu-24.04"}:
     sys.exit("workflow-contract: nightly OS matrix is incomplete")
-service_steps = [step for step in nightly_jobs["qemu"].get("steps", []) if step.get("name") == "Run full E2E"]
-if len(service_steps) != 1 or service_steps[0].get("env", {}).get("ZERO_TRUST_WG_TRAFFIC_MODE") != "services_only":
-    sys.exit("workflow-contract: generic hosted nightly must use services_only")
+service_steps = [step for step in nightly_jobs["qemu"].get("steps", []) if step.get("name") == "Run services E2E"]
+if len(service_steps) != 1 or service_steps[0].get("env", {}).get("ZERO_TRUST_WG_TRAFFIC_MODE") != "services":
+    sys.exit("workflow-contract: generic hosted nightly must use services")
 lifecycle_runs = [step.get("run", "") for step in nightly_jobs["lifecycle"].get("steps", [])]
 if lifecycle_runs.count("tests/e2e/lifecycle-qemu.sh") != 1:
     sys.exit("workflow-contract: nightly lifecycle does not test upgrade and restore")

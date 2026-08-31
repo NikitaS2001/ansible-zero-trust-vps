@@ -1,6 +1,6 @@
 ---
 # Network
-wg_traffic_mode: "services_only"
+wg_traffic_mode: "services"
 ssh_port: 2222
 wg_port: 51820
 wg_container_port: 51820

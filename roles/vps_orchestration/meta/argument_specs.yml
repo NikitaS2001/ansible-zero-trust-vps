@@ -8,8 +8,8 @@ argument_specs:
         default: /opt/zero-trust-vps
       wg_traffic_mode:
         type: str
-        choices: [services_only, full_tunnel]
-        default: services_only
+        choices: [services, full]
+        default: services
       docker_network_subnet:
         type: str
         default: 10.66.0.0/24

@@ -26,7 +26,7 @@ published checksum, and runs only the verified local installer bytes.
 The installer verifies the signed release tag again before using its detached
 commit. It asks for:
 
-- `services_only` or `full_tunnel` traffic policy;
+- `services` or `full` traffic policy;
 - hardened SSH and WireGuard ports;
 - administrator name and password;
 - AdGuard and wg-easy passwords;
@@ -34,8 +34,8 @@ commit. It asks for:
 - public WireGuard endpoint;
 - administrator SSH public key.
 
-Defaults are shown at each prompt. `services_only` is the default. Choose
-`full_tunnel` only on a host with working IPv4 and IPv6 egress.
+Defaults are shown at each prompt. `services` is the default. `full` requires
+IPv4 egress; IPv6 routing is included only on hosts with IPv6 egress.
 
 The checkout and virtual environment remain under
 `/opt/zero-trust-vps-installer`. Deployment values are persisted under
@@ -101,9 +101,9 @@ ssh -p <ssh_port> -L 51821:127.0.0.1:51821 \
 ```
 
 Open `http://127.0.0.1:51821`, sign in, create a client, and import its profile.
-Connect the client before opening the internal sites. In `services_only` mode,
-the server enforces access only to the managed VPN and service destinations;
-editing the client profile cannot turn it into a full tunnel.
+Connect the client before opening the internal sites. In `services` mode, the
+server enforces access only to the managed VPN and service destinations; editing
+the client profile cannot turn it into a full tunnel.
 
 The internal sites default to `https://wg.internal` and
 `https://adguard.internal`. Trust the Caddy root certificate fetched by remote

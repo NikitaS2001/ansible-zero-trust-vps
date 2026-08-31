@@ -13,7 +13,7 @@ upstream artifacts are in [`defaults/main.yml`](defaults/main.yml).
 | Input | Default | Meaning |
 | --- | --- | --- |
 | `project_root` | `/opt/zero-trust-vps` | Managed Compose, Caddy, and service-data root |
-| `wg_traffic_mode` | `services_only` | Server-enforced `services_only` or dual-stack `full_tunnel` policy |
+| `wg_traffic_mode` | `services` | Server-enforced `services` or IPv4 `full` policy with optional IPv6 |
 | `docker_network_subnet` | `10.66.0.0/24` | Private service IPv4 network |
 | `docker_network_ipv6_subnet` | `fd00:67:0:0::/64` | Private service IPv6 network |
 | `wg_vpn_subnet` | `10.8.0.0/24` | WireGuard client IPv4 network |
@@ -36,14 +36,13 @@ mode `0600`; see [Configuration](../../docs/configuration.md).
 
 ## Traffic modes
 
-`services_only` is the default. IPv4 and IPv6 forwarding rules on the server
-restrict peers to explicit managed destinations, regardless of client-side
-AllowedIPs.
+`services` is the default. IPv4 and IPv6 forwarding rules on the server restrict
+peers to explicit managed destinations, regardless of client-side AllowedIPs.
 
-`full_tunnel` is an explicit mode transition. Before changing state, the role
-requires working host IPv4 and IPv6 egress. It snapshots the complete wg-easy
-state, applies the policy while wg-easy is stopped, and restores that snapshot
-if activation or readiness fails.
+`full` is an explicit mode transition. It requires working host IPv4 egress and
+adds IPv6 routing only when host IPv6 egress works. It snapshots the complete
+wg-easy state, applies the policy while wg-easy is stopped, and restores that
+snapshot if activation or readiness fails.
 
 ## Owned state and extension points
 

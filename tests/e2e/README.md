@@ -17,7 +17,7 @@ Local prerequisites are `qemu-system-x86_64`, `qemu-img`, KVM,
 
 `--e2e` runs the repository installer in explicit development-source mode on
 the CI-selected Debian 12 or Ubuntu 24.04 image. It exercises default
-`services_only` behavior with a real in-guest client, reruns idempotently, and
+`services` behavior with a real in-guest client, reruns idempotently, and
 reboots. Production tag and attestation verification are separate release
 contracts. `--release` adds the lifecycle upgrade/restore drill and those
 release contracts.
@@ -50,8 +50,9 @@ QEMU_USER=debian \
 tests/e2e/qemu-install.sh --client-test --idempotency-test
 ```
 
-Set `ZERO_TRUST_WG_TRAFFIC_MODE=full_tunnel` only in a dual-stack test
-environment; preflight intentionally rejects missing IPv4 or IPv6 egress.
+`ZERO_TRUST_WG_TRAFFIC_MODE=full` requires IPv4 egress. A dual-stack test
+environment additionally exercises IPv6 routing; IPv4-only hosts generate
+IPv4-only full-tunnel profiles.
 
 ## Remote controller guest
 
@@ -110,11 +111,11 @@ root README. Never place live credentials in repository files, logs, or CI.
 ## Evidence boundary
 
 Current pull-request CI runs the installer from the checked-out source in
-explicit development mode and `services_only` mode on Debian 12 and Ubuntu
-24.04. Nightly automation repeats that default-mode matrix to catch upstream
-image drift and adds the lifecycle upgrade/restore scenario on Ubuntu.
-Public-IPv6 packet proof for `full_tunnel` is a manual dual-stack scenario
-because generic GitHub-hosted runners do not guarantee IPv6 egress.
+explicit development mode and `services` mode on Debian 12 and Ubuntu 24.04.
+Nightly automation repeats that default-mode matrix to catch upstream image
+drift and adds the lifecycle upgrade/restore scenario on Ubuntu. Public-IPv6
+packet proof for `full` is a manual dual-stack scenario because generic
+GitHub-hosted runners do not guarantee IPv6 egress.
 
 The remote SSH/UFW negative cases and the repository-installer Caddy failure flags
 are available local harnesses; they are not currently part of the automated CI

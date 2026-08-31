@@ -17,7 +17,7 @@ wg_server_ip: "10.8.0.1"
 wg_client_dns: "10.66.0.2"
 wg_port: 51820
 wg_container_port: 51820
-wg_traffic_mode: "services_only"
+wg_traffic_mode: "services"
 wg_vpn_ipv6_subnet: "fd42:42:42::/64"
 docker_network_ipv6_subnet: "fd00:67:0:0::/64"
 wg_services_only_ipv4_destinations: "{{ wg_allowed_ips }}"

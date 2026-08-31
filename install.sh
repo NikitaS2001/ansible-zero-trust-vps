@@ -9,7 +9,7 @@ umask 077
 readonly OFFICIAL_REPO_URL="https://github.com/NikitaS2001/ansible-zero-trust-vps.git"
 # Release-preparation target: this tag is required only by the release gate.
 # Before the tag exists, source-tree tests must use explicit ZERO_TRUST_DEV_MODE=1.
-readonly OFFICIAL_RELEASE_REF="v1.3.0"
+readonly OFFICIAL_RELEASE_REF="v1.3.1"
 readonly OFFICIAL_SIGNER_IDENTITY="nikitasmadych2001@gmail.com"
 readonly OFFICIAL_SIGNER_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILcfC1Stku7YQ0mLYptkX+t0SZiziyukPRofvs0YHZbx"
 readonly OFFICIAL_SIGNER_FINGERPRINT="SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0"
@@ -59,7 +59,7 @@ ADGUARD_INTERNAL_DOMAIN=""
 SSH_PUBKEY=""
 WG_PASSWORD=""
 WG_HOST=""
-WG_TRAFFIC_MODE="services_only"
+WG_TRAFFIC_MODE="services"
 WG_TRAFFIC_MODE_INPUT=""
 INTERNAL_DOMAIN_SUFFIX=""
 NONINTERACTIVE=""
@@ -149,7 +149,7 @@ Verify the release assets locally, then run:
 Interactive public installer for ansible-zero-trust-vps.
 
 Production mode accepts only:
-  https://github.com/NikitaS2001/ansible-zero-trust-vps.git at v1.3.0
+  https://github.com/NikitaS2001/ansible-zero-trust-vps.git at v1.3.1
   Its annotated SSH-signed tag must match nikitasmadych2001@gmail.com
   (SHA256:m1EbotpPqWJ2dAhml0iska2ToWgeflq3cIAgyq9qSP0). The installer peels
   it to an exact SHA, detaches the checkout, and passes that SHA to ansible-pull.
@@ -178,8 +178,8 @@ Non-interactive mode for automated testing:
   ZERO_TRUST_SSH_PUBKEY        SSH public key for the admin user (required)
   ZERO_TRUST_WG_HOST           Public hostname/IP for clients (optional,
                                auto-detected when omitted)
-  ZERO_TRUST_WG_TRAFFIC_MODE   VPN routing: services_only or full_tunnel
-                               (optional, default services_only)
+  ZERO_TRUST_WG_TRAFFIC_MODE   VPN routing: services or full
+                          (optional, default services)
 
 On rerun, the encrypted installer state is authoritative. Omit credential
 inputs; any supplied non-secret input must match its persisted value.
@@ -263,17 +263,15 @@ report_existing_swap() {
 
 validate_traffic_mode() {
     case "${WG_TRAFFIC_MODE}" in
-        services_only|full_tunnel) ;;
-        *) error "ZERO_TRUST_WG_TRAFFIC_MODE must be services_only or full_tunnel." ;;
+        services|full) ;;
+        *) error "ZERO_TRUST_WG_TRAFFIC_MODE must be services or full." ;;
     esac
 }
 
 require_traffic_egress() {
-    [[ "${WG_TRAFFIC_MODE}" == full_tunnel ]] || return 0
+    [[ "${WG_TRAFFIC_MODE}" == full ]] || return 0
     curl -4 -fsS --max-time 10 -o /dev/null https://api.ipify.org \
         || error "Full-tunnel mode requires working IPv4 egress."
-    curl -6 -fsS --max-time 10 -o /dev/null https://api64.ipify.org \
-        || error "Full-tunnel mode requires working IPv6 egress."
 }
 
 open_tty() {
@@ -671,7 +669,7 @@ install_collections() {
 
 collect_configuration() {
     if [[ -n "${ZERO_TRUST_WG_ENABLE_IPV6:-}" ]]; then
-        error "ZERO_TRUST_WG_ENABLE_IPV6 is no longer accepted. Use ZERO_TRUST_WG_TRAFFIC_MODE; full_tunnel requires working IPv4 and IPv6 egress."
+        error "ZERO_TRUST_WG_ENABLE_IPV6 is no longer accepted. IPv6 full-tunnel routing is enabled automatically when host IPv6 egress is available."
     fi
     if [[ "${NONINTERACTIVE}" == "1" ]]; then
         collect_configuration_noninteractive
@@ -679,7 +677,7 @@ collect_configuration() {
     fi
 
     info "Starting interactive configuration..."
-    prompt_choice WG_TRAFFIC_MODE "VPN traffic mode (services_only or full_tunnel)" services_only
+    prompt_choice WG_TRAFFIC_MODE "VPN traffic mode (services or full)" services
     WG_TRAFFIC_MODE_INPUT="${WG_TRAFFIC_MODE}"
     prompt_optional SSH_PORT "SSH port"
     prompt_optional WG_PORT "WireGuard port"
@@ -746,7 +744,7 @@ collect_configuration_noninteractive() {
         error "ZERO_TRUST_WG_EASY_ADMIN_PASSWORD is no longer accepted. Use ZERO_TRUST_WG_PASSWORD; it is persisted only in the encrypted installer vault."
     fi
     WG_TRAFFIC_MODE_INPUT="${ZERO_TRUST_WG_TRAFFIC_MODE:-}"
-    WG_TRAFFIC_MODE="${WG_TRAFFIC_MODE_INPUT:-services_only}"
+    WG_TRAFFIC_MODE="${WG_TRAFFIC_MODE_INPUT:-services}"
     SSH_PORT="${ZERO_TRUST_SSH_PORT:-}"
     WG_PORT="${ZERO_TRUST_WG_PORT:-}"
     ADMIN_USER="${ZERO_TRUST_ADMIN_USER:-}"

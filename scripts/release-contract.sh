@@ -108,9 +108,9 @@ PY
     exit 0
 fi
 
-changelog_release_line="$(grep -E '^## \[v1\.3\.0\] - (Unreleased|[0-9]{4}-[0-9]{2}-[0-9]{2})$' CHANGELOG.md || true)"
+changelog_release_line="$(grep -E '^## \[v1\.3\.1\] - (Unreleased|[0-9]{4}-[0-9]{2}-[0-9]{2})$' CHANGELOG.md || true)"
 [[ "$(wc -l <<<"${changelog_release_line}")" -eq 1 && -n "${changelog_release_line}" ]] \
-    || fail "CHANGELOG must contain one v1.3.0 heading with Unreleased or an ISO release date"
+    || fail "CHANGELOG must contain one v1.3.1 heading with Unreleased or an ISO release date"
 grep -Fxq '## [v1.2.1] - 2026-08-20' CHANGELOG.md \
     || fail "CHANGELOG v1.2.1 date is incorrect"
 
@@ -126,7 +126,7 @@ pass "structural release contract"
 
 [[ "${mode}" == '--tag' ]] || exit 0
 
-[[ "${changelog_release_line}" =~ ^##\ \[v1\.3\.0\]\ -\ [0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+[[ "${changelog_release_line}" =~ ^##\ \[v1\.3\.1\]\ -\ [0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
     || fail "tagged CHANGELOG must replace Unreleased with the ISO release date"
 
 tag_name="${GITHUB_REF_NAME:-$(isolated_git describe --tags --exact-match 2>/dev/null || true)}"

@@ -134,7 +134,7 @@ run_e2e() {
     require genisoimage
     (
         cd "${ROOT_DIR}"
-        ZERO_TRUST_WG_TRAFFIC_MODE=services_only \
+        ZERO_TRUST_WG_TRAFFIC_MODE=services \
             tests/e2e/qemu-install.sh --client-test --idempotency-test --reboot-test
     )
 }

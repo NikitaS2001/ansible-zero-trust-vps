@@ -16,7 +16,7 @@
 #   INSTALL_REF      git ref to install (default: current branch)
 #   E2E_SSH_PORT     hardened SSH port configured by the installer (default 2222)
 #   E2E_WG_PORT      WireGuard UDP port configured by the installer (default 51820)
-#   ZERO_TRUST_WG_TRAFFIC_MODE  services_only or full_tunnel (default services_only)
+#   ZERO_TRUST_WG_TRAFFIC_MODE  services or full (default services)
 #   QEMU_SSH_PORT    host tcp port -> guest:22  (default 2223)
 #   QEMU_ADMIN_PORT  host tcp port -> guest:<E2E_SSH_PORT> (default 2222)
 #   QEMU_WG_PORT     host udp port -> guest:<E2E_WG_PORT> (default 51822)
@@ -158,7 +158,7 @@ PUBKEY="$(cat "${TMP_DIR}/id_ed25519.pub")"
 ADMIN_PASS="$(openssl rand -hex 12)"
 ADGUARD_PASS="$(openssl rand -hex 12)"
 WG_PASS="${ZERO_TRUST_WG_PASSWORD:-Twelve\$COMPOSE_PROBE}"
-WG_TRAFFIC_MODE="${ZERO_TRUST_WG_TRAFFIC_MODE:-services_only}"
+WG_TRAFFIC_MODE="${ZERO_TRUST_WG_TRAFFIC_MODE:-services}"
 
 copy_repo_to_guest() {
     local target="$1" port="$2" key="$3"

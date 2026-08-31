@@ -70,7 +70,7 @@ variables = {
     "wg_public_host": "vpn.example.test",
     "wg_services_only_ipv4_destinations": ["10.8.0.0/24", "10.66.0.2/32"],
     "wg_services_only_ipv6_destinations": ["fd42:42:42::/64"],
-    "wg_traffic_mode": "services_only",
+    "wg_traffic_mode": "services",
     "wg_vpn_ipv6_subnet": "fd42:42:42::/64",
 }
 Path(os.environ["VARS_PATH"]).write_text(json.dumps(variables), encoding="utf-8")
